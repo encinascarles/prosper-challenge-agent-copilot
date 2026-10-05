@@ -29,8 +29,27 @@ _Overview diagram and the main components. Filled in as the build progresses._
 
 ## Key decisions
 
-_One entry per decision: context, the options considered, the choice, and its
-trade-offs._
+### Frontend: Vite + React + TypeScript SPA
+
+**Context.** The backend already exists in Python: Pipecat's FastAPI server runs
+the voice pipeline, and the Copilot has to live next to `AgentBuilder` to work on
+the real agent format. The UI needs a graph editor and an in-page WebRTC call.
+
+**Options.**
+- *Full-stack JS framework (Next.js, Remix).* Rejected: it brings a second server
+  runtime, and logic would split between TypeScript and Python for no gain.
+- *Python UI (Streamlit, Gradio).* Rejected: no native graph editor (React Flow
+  would have to be wrapped anyway), a rerun-per-interaction model that fights a
+  stateful canvas plus a live call, and weak WebRTC integration.
+- *Client-only React SPA built with Vite.* Chosen.
+
+**Trade-offs.** Minimal tooling and one backend. The dev server proxies `/api` to
+FastAPI, so the browser sees one origin. Direct access to React Flow and Pipecat's
+React client. Cost: two dev servers locally, hidden behind `make dev`.
+
+**Styling: Tailwind + shadcn/ui.** The brief values judgement over polish, so the
+UI should look decent at near-zero design cost. shadcn copies accessible
+components into the repo (owned code, no runtime component library).
 
 ## How this was built
 
