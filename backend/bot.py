@@ -16,7 +16,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
-
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -40,7 +39,7 @@ from agent_builder import AgentBuilder
 load_dotenv(Path(__file__).parent / ".env", override=True)
 
 
-# The agent this bot runs. Point this at any agent JSON (the Phase 2 Composer
+# The agent this bot runs. Point this at any agent JSON (the Phase 2 Copilot
 # would generate one and drop it here).
 AGENT_FLOW = Path(__file__).parent / "example_flow.json"
 
