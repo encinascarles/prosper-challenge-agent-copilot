@@ -1,7 +1,7 @@
 [project]
 name = "prosper-challenge-agent"
 version = "0.1.0"
-description = "Voice AI agent composer for healthcare scheduling — a node-graph agent (Pipecat Flows) compiled into a runnable voice pipeline."
+description = "Voice AI agent builder for healthcare scheduling — a node-graph agent (Pipecat Flows) compiled into a runnable voice pipeline."
 requires-python = ">=3.11"
 dependencies = [
     # Pipecat voice agent stack (verified against pipecat-ai v1.4.0).
