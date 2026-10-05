@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A tiny node graph: the agent is a graph of conversation steps. -->
+  <g stroke="#171717" stroke-width="2.5" stroke-linecap="round">
+    <line x1="9" y1="9" x2="23" y2="16" />
+    <line x1="9" y1="23" x2="23" y2="16" />
+  </g>
+  <g fill="#171717">
+    <circle cx="8" cy="8" r="5" />
+    <circle cx="8" cy="24" r="5" />
+    <circle cx="24" cy="16" r="5" />
+  </g>
+</svg>

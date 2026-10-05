@@ -31,6 +31,7 @@ Design decisions and their rationale live in `solution.md`.
 | `backend/bot.py` | Voice pipeline (WebRTC + ElevenLabs STT/TTS + OpenAI LLM). Generic: loads an agent JSON and runs it. No graph logic here. |
 | `backend/agent_builder/schema.py` | The agent contract: `AgentConfig` / `Node` / `Edge`. What the UI edits and the Copilot reads and writes. |
 | `backend/agent_builder/builder.py` | `AgentBuilder`: validates an agent and compiles it into a Pipecat Flows graph. |
+| `frontend/` | Agent Builder UI: Vite + React + TypeScript, Tailwind, shadcn/ui. `src/components/ui/` is shadcn-generated, add components with `npx shadcn@latest add <name>` rather than hand-editing. |
 | `backend/example_flow.json` | Sample agent (clinic scheduler), only to illustrate the format. |
 | `solution.md` | Overview and key architectural decisions (part of the deliverable). |
 
@@ -39,10 +40,14 @@ Design decisions and their rationale live in `solution.md`.
 Run from the repo root.
 
 ```bash
-make install   # uv sync: create backend/.venv from uv.lock
-make run       # start the voice agent, then open http://localhost:7860/client
+make install   # backend (uv sync) + frontend (npm ci)
+make dev       # backend + frontend, open http://localhost:5173
+make run       # backend only; Pipecat's prebuilt client at http://localhost:7860/client
 make lint      # ruff check on the backend (same command CI runs)
 ```
+
+Frontend checks, from `frontend/`: `npm run lint` (oxlint) and `npm run build`
+(typecheck + build). CI runs both.
 
 API keys go in `backend/.env` (copy `backend/.env.example`). Never commit it.
 
@@ -59,6 +64,8 @@ API keys go in `backend/.env` (copy `backend/.env.example`). Never commit it.
 ## Conventions
 
 - Python 3.11, dependencies through `uv` only (never `pip install`). Lint with ruff.
+- Frontend: TypeScript, function components, Tailwind classes over custom CSS.
+  Backend calls go to relative `/api/...` URLs (proxied in dev), never a hard-coded host.
 - Comments explain *why*, not *what*. Each module opens with a short header
   saying what it is and why it exists, like the existing files.
 - Everything in the repo is written in English.
