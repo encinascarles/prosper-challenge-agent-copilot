@@ -11,4 +11,11 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  server: {
+    // One origin for the browser: API calls (and Pipecat's WebRTC signalling
+    // at /api/offer) go to the Pipecat FastAPI server, so no CORS setup.
+    proxy: {
+      '/api': 'http://localhost:7860',
+    },
+  },
 })
