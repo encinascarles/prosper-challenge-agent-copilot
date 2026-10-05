@@ -3,9 +3,12 @@ name: Claude PR review
 # An AI reviewer on every PR. Its instructions live here, versioned with the code,
 # and it reads AGENTS.md for the project's invariants and conventions.
 
+# Reviews when a PR is opened or marked ready, not on every push: a fresh review
+# per commit repeats itself. To ask for another pass, convert the PR to draft
+# and back to ready.
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened, ready_for_review, reopened]
 
 concurrency:
   group: claude-review-${{ github.event.pull_request.number }}
@@ -30,12 +33,20 @@ jobs:
           # The summary goes in a tracking comment that Claude edits through an MCP
           # tool, instead of a shell `gh pr comment --body "..."` call.
           track_progress: true
+          # One summary comment per PR, updated on each pass, instead of a new one.
+          use_sticky_comment: true
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
             Review this pull request. Read AGENTS.md first: it holds the project's goal,
             invariants and conventions, and the review is against those.
+
+            Then read the existing discussion before writing anything:
+            `gh pr view ${{ github.event.pull_request.number }} --comments` and the inline
+            threads with `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments`.
+            Do not raise again a point the author has already answered. If you still
+            disagree, reply in that thread with new evidence; otherwise drop it.
 
             Look for, in this order:
             1. Bugs and broken behaviour, including edge cases the change misses.
@@ -50,9 +61,12 @@ jobs:
 
             Rules:
             - Inline comments only for concrete, actionable problems; say why it matters.
+            - Call something a bug only if the code shows it. If it depends on something
+              you cannot check here (how a third-party package behaves, runtime output),
+              ask a question instead.
             - Do not comment on formatting or lint (CI runs ruff) or on taste.
             - At most 8 inline comments; prioritise.
             - Put the summary in your tracking comment. If nothing important is wrong,
               say so in one line instead of inventing findings.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Read,Grep,Glob"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(git diff:*),Bash(git log:*),Read,Grep,Glob"
