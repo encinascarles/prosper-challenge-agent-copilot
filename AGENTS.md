@@ -41,6 +41,7 @@ Run from the repo root.
 ```bash
 make install   # uv sync: create backend/.venv from uv.lock
 make run       # start the voice agent, then open http://localhost:7860/client
+make lint      # ruff check on the backend (same command CI runs)
 ```
 
 API keys go in `backend/.env` (copy `backend/.env.example`). Never commit it.
