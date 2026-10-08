@@ -15,9 +15,10 @@ import { Handle, Position, type Node as FlowNode, type NodeProps } from '@xyflow
 import { PhoneOff, Play } from 'lucide-react'
 
 import type { Edge } from '@/agents/types'
+import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
 
-import { handleId, humanize, type Card } from './model'
+import { handleId, type Card } from './model'
 
 export type CardNode = FlowNode<Card, 'card'>
 

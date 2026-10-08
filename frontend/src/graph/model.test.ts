@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { AgentConfig } from '@/agents/types'
 
-import { handleId, humanize, toGraph } from './model'
+import { handleId, toGraph } from './model'
 
 const edge = (target: string) => ({ function: `go_to_${target}`, description: '', target })
 
@@ -50,12 +50,5 @@ describe('toGraph', () => {
   it('shows no edges on an end node', () => {
     expect(graph.cards[2].edges).toEqual([])
     expect(graph.wires.some((wire) => wire.source === 'c')).toBe(false)
-  })
-})
-
-describe('humanize', () => {
-  it('shows a stored name as words', () => {
-    expect(humanize('collect_details')).toBe('Collect details')
-    expect(humanize('full_name')).toBe('Full name')
   })
 })

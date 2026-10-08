@@ -66,8 +66,3 @@ export function toGraph(config: AgentConfig, ids: string[]): Graph {
   )
   return { cards, wires }
 }
-
-/** A stored name as people read it: "collect_details" is shown as "Collect details". */
-export function humanize(name: string): string {
-  return name.replace(/_/g, ' ').replace(/^./, (first) => first.toUpperCase())
-}
