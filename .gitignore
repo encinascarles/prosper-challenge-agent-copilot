@@ -19,6 +19,9 @@ dist/
 venv/
 env/
 
+# ---- Local data (SQLite) ----
+backend/data/
+
 # ---- Node / frontend (Phase 1 UI later) ----
 node_modules/
 .next/
