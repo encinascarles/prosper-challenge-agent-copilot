@@ -62,10 +62,14 @@ export type AgentSummary = {
   updated_at: string
 }
 
-/** A stored agent: its id and the agent JSON. */
+/** Where the editor drew each node, by node name. Stored next to the agent, never in it. */
+export type Layout = Record<string, { x: number; y: number }>
+
+/** A stored agent: its id, the agent JSON and, next to it, its layout. */
 export type AgentRecord = {
   id: string
   config: AgentConfig
+  layout: Layout
   created_at: string
   updated_at: string
 }
