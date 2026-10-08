@@ -5,11 +5,12 @@
 # Thin on purpose: HTTP in, validate, store call, HTTP out. Persistence lives
 # in `store`, the agent contract in `agent_builder`.
 #
-# An agent is accepted only if AgentBuilder accepts it: the same code that
-# compiles the graph for a call decides what can be saved, so nothing stored
-# here can fail to start. That is also why the request body is a plain JSON
-# object and not a Pydantic model of the agent: schema.py already defines it,
-# and a second definition would drift.
+# An agent is accepted only if AgentBuilder accepts it: every agent saved
+# through here has passed the same validation the builder runs before a call.
+# That covers the shape of the document and the graph (names, targets, tool
+# names), not how the conversation goes. It is also why the request body is a
+# plain JSON object and not a Pydantic model of the agent: schema.py already
+# defines it, and a second definition would drift.
 #
 # Handlers are plain `def`: sqlite3 blocks, and FastAPI runs sync handlers in a
 # thread pool, which keeps them off the event loop the voice pipeline runs on.
