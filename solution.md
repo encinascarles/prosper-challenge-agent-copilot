@@ -82,7 +82,9 @@ signalling, and exposes its `app` for extra routes.
 
 **Trade-offs.** One backend, one port and one origin for the browser: calls and
 agents go through the same `/api`. `bot.py` only does the wiring; the routes are
-in `api/` and persistence in `store/`. Cost: the API starts with the runner, so
+in `api/` and persistence in `store/`. The bot runs in the same process, so it
+reads the agent being edited (and will save its calls) straight through `store`,
+with no HTTP between services. Cost: the API starts with the runner, so
 it is tied to how Pipecat builds its app. The tests avoid that by mounting the
 same router on a bare FastAPI app.
 
