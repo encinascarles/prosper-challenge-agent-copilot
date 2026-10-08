@@ -201,6 +201,22 @@ describe('fields', () => {
     expect(next.properties!.intent).toEqual({ type: 'number', description: 'What they want.' })
   })
 
+  it('keeps the allowed values of a field that was loaded without a type', () => {
+    const { draft, greeting } = open()
+    const untyped: Draft = {
+      ...draft,
+      config: {
+        ...draft.config,
+        nodes: draft.config.nodes.with(0, {
+          ...draft.config.nodes[0],
+          edges: [edge('pick', 'details', { properties: { slot: { enum: ['am', 'pm'] } } })],
+        }),
+      },
+    }
+    const next = first(updateField(untyped, greeting, 0, 'slot', { description: 'When.' }))
+    expect(next.properties!.slot).toEqual({ enum: ['am', 'pm'], description: 'When.' })
+  })
+
   it('sets the description and whether it is required', () => {
     const { draft, greeting } = open()
     const next = first(

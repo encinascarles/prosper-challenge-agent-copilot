@@ -17,12 +17,11 @@
 import { Handle, Position, type Node as FlowNode, type NodeProps } from '@xyflow/react'
 import { PhoneOff, Play } from 'lucide-react'
 
-import type { Edge } from '@/agents/types'
 import { nameTaken, renameNode, setEdgeDescription, setInstructions } from '@/draft/draft'
 import { useEditor } from '@/draft/editor'
-import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
 
+import { FieldChips } from './FieldChips'
 import { GrowingText, NameInput } from './inputs'
 import { handleId, type Card } from './model'
 
@@ -32,31 +31,6 @@ const dot = '!size-[11px] !rounded-full !border-2 !border-card'
 // Where a call enters and leaves the graph: a solid band across the card, on
 // top of the start node and under an end node, readable at any zoom.
 const band = 'flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium'
-
-/** The fields an edge collects, as chips. An enum shows its options inline. */
-function Fields({ edge }: { edge: Edge }) {
-  const fields = Object.entries(edge.properties ?? {})
-  if (fields.length === 0) return null
-  return (
-    <div className="mt-1 flex flex-wrap items-center gap-1">
-      {fields.map(([name, property]) => (
-        <span
-          key={name}
-          title={property.description}
-          className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-[11.5px]"
-        >
-          <span className="font-medium">{humanize(name)}</span>
-          {property.enum && property.enum.length > 0 && (
-            <span className="text-muted-foreground">{property.enum.join(' · ')}</span>
-          )}
-          {!edge.required?.includes(name) && (
-            <span className="text-muted-foreground">optional</span>
-          )}
-        </span>
-      ))}
-    </div>
-  )
-}
 
 export function NodeCard({ data }: NodeProps<CardNode>) {
   const { id, node, start, edges, connected } = data
@@ -143,7 +117,7 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
                   onBlur={seal}
                   className="text-[12.5px] leading-snug"
                 />
-                <Fields edge={edge} />
+                <FieldChips id={id} index={index} edge={edge} />
                 {!connected[index] && (
                   <div className="mt-1 text-[11.5px] font-medium text-bad">Not connected</div>
                 )}

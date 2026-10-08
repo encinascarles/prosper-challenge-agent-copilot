@@ -184,7 +184,10 @@ export function updateField(
     }
     if (change.type !== undefined) property.type = change.type
     if (change.options !== undefined) property.enum = change.options
-    if (property.type !== 'string' || property.enum?.length === 0) delete property.enum
+    // Only text has a list of values. A property with no type is taken as text.
+    if ((property.type ?? 'string') !== 'string' || property.enum?.length === 0) {
+      delete property.enum
+    }
 
     const required = (edge.required ?? []).filter((other) => other !== field)
     if (change.required ?? edge.required?.includes(field)) required.push(name)

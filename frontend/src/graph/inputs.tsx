@@ -62,7 +62,7 @@ type NameProps = {
   onBlur: (refused: boolean) => void
   label: string
   className?: string
-  autoFocus?: boolean
+  selectOnFocus?: boolean // for a name just created, to type over it
 }
 
 /**
@@ -73,7 +73,15 @@ type NameProps = {
  * typing towards a refused name stores the letters before it; leaving the
  * field on a refused name tells the caller, which takes the whole run back.
  */
-export function NameInput({ name, refuse, onRename, onBlur, label, className, autoFocus }: NameProps) {
+export function NameInput({
+  name,
+  refuse,
+  onRename,
+  onBlur,
+  label,
+  className,
+  selectOnFocus,
+}: NameProps) {
   // `stored` is the name the draft had after this text was typed. If the draft
   // has another (an undo), the text is stale and the stored name shows again.
   const [typed, setTyped] = useState<{ text: string; stored: string; problem: string | null }>()
@@ -91,7 +99,7 @@ export function NameInput({ name, refuse, onRename, onBlur, label, className, au
       <input
         aria-label={label}
         aria-invalid={current?.problem ? true : undefined}
-        autoFocus={autoFocus}
+        onFocus={selectOnFocus ? (event) => event.target.select() : undefined}
         value={current?.text ?? humanize(name)}
         onChange={(event) => type(event.target.value)}
         onBlur={() => {
