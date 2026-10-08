@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --directory backend --locked
       - name: Tests
-        run: make test
+        run: uv run --directory backend pytest
 
   frontend:
     runs-on: ubuntu-latest
@@ -39,5 +39,7 @@ jobs:
       - run: npm ci
       - name: Lint (oxlint)
         run: npm run lint
+      - name: Tests (Vitest)
+        run: npm test
       - name: Typecheck and build
         run: npm run build
