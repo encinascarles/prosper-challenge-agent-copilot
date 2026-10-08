@@ -308,6 +308,11 @@ export function addEdge(draft: Draft, id: string): Draft {
   })
 }
 
+/** Whether removing the edge loses nothing someone wrote: no condition and no fields. */
+export function edgeIsEmpty(edge: Edge): boolean {
+  return edge.description.trim() === '' && Object.keys(edge.properties ?? {}).length === 0
+}
+
 export function removeEdge(draft: Draft, id: string, index: number): Draft {
   return updateNode(draft, id, (node) =>
     node.edges?.[index] ? { ...node, edges: node.edges.toSpliced(index, 1) } : node,

@@ -183,8 +183,16 @@ function FieldEditor({ edge, name, property, change, onBlur, onRemove, onDone }:
   )
 }
 
+type ChipsProps = {
+  id: string
+  index: number
+  edge: Edge
+  /** A control of the edge itself, to end the row with at the right. */
+  trailing?: React.ReactNode
+}
+
 /** The chips of the edge at `index` of node `id`, and a "+" chip to collect one more. */
-export function FieldChips({ id, index, edge }: { id: string; index: number; edge: Edge }) {
+export function FieldChips({ id, index, edge, trailing }: ChipsProps) {
   const { apply, seal, cancel } = useEditor()
   // Which chip's editor is open, by position: a field's name is being edited.
   const [open, setOpen] = useState<number | null>(null)
@@ -252,6 +260,10 @@ export function FieldChips({ id, index, edge }: { id: string; index: number; edg
       >
         <Plus className="size-3" />
       </button>
+      {/* An item of the row like the chips: with no room left on the line it
+          takes the next one, and never sits over a chip. It leans into the
+          card's padding, so it needs less of the line and that happens less. */}
+      {trailing && <span className="-mr-2 ml-auto flex">{trailing}</span>}
     </div>
   )
 }

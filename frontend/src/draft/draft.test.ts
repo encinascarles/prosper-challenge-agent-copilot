@@ -8,6 +8,7 @@ import {
   addNode,
   connect,
   deleteNode,
+  edgeIsEmpty,
   fieldKind,
   moveNode,
   nameTaken,
@@ -362,6 +363,17 @@ describe('edges', () => {
     expect(addEdge(draft, goodbye)).toBe(draft)
     const open_ = setEnd(draft, goodbye, false)
     expect(node(addEdge(open_, goodbye), 'goodbye').edges).toHaveLength(1)
+  })
+
+  it('knows an edge with nothing written in it from one that has a condition or fields', () => {
+    const { draft, details } = open()
+    const added = node(addEdge(draft, details), 'details').edges![1]
+    expect(edgeIsEmpty(added)).toBe(true)
+    expect(edgeIsEmpty({ ...added, description: '  ' })).toBe(true)
+    // Where it goes is not something written in it.
+    expect(edgeIsEmpty({ ...added, target: 'goodbye' })).toBe(true)
+    expect(edgeIsEmpty({ ...added, description: 'If they ask.' })).toBe(false)
+    expect(edgeIsEmpty({ ...added, properties: { slot: { type: 'string' } } })).toBe(false)
   })
 
   it('removes one edge and keeps the others', () => {

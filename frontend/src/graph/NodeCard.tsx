@@ -15,10 +15,22 @@
 // a person reads.
 
 import { Handle, Position, type Node as FlowNode, type NodeProps } from '@xyflow/react'
-import { PhoneOff, Play, Plus, X } from 'lucide-react'
+import { PhoneOff, Play, Plus, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
   addEdge,
+  edgeIsEmpty,
   nameTaken,
   removeEdge,
   renameNode,
@@ -53,6 +65,15 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
   const { id, node, start, edges, connected, active, accepting } = data
   const { draft, apply, seal, cancel } = useEditor()
   const [instructions, ...more] = node.task_messages ?? []
+  // The edge being removed, while it waits for a yes: one with a condition or
+  // fields in it asks first. Undo would bring it back, but only if noticed.
+  const [removing, setRemoving] = useState<number | null>(null)
+  const remove = (index: number) => apply((current) => removeEdge(current, id, index))
+  const fields = removing === null ? 0 : Object.keys(edges[removing]?.properties ?? {}).length
+  const losing = [
+    removing !== null && edges[removing]?.description.trim() ? 'its condition' : null,
+    fields > 0 ? (fields === 1 ? 'its field' : `its ${fields} fields`) : null,
+  ].filter(Boolean)
   return (
     <div
       data-active={active || undefined}
@@ -149,14 +170,6 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
                   onBlur={seal}
                   className="min-w-0 flex-1 text-[12.5px] leading-snug"
                 />
-                <button
-                  aria-label="Remove this way to move on"
-                  title="Remove"
-                  onClick={() => apply((current) => removeEdge(current, id, index))}
-                  className={cn(hidden, 'nodrag rounded p-0.5 text-muted-foreground group-hover/edge:opacity-100 hover:text-bad')}
-                >
-                  <X className="size-3.5" />
-                </button>
                 {/* On the first line, beside the dot it is about. */}
                 {!connected[index] && (
                   <span className="shrink-0 pt-[3px] text-[11.5px] leading-snug font-medium whitespace-nowrap text-bad">
@@ -164,7 +177,27 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
                   </span>
                 )}
               </div>
-              <FieldChips id={id} index={index} edge={edge} />
+              <FieldChips
+                id={id}
+                index={index}
+                edge={edge}
+                trailing={
+                  // At the end of the chips row, shaped like the "+" that adds
+                  // a field: the same place for every edge, and away from the
+                  // dot, where a slip would be a wire dragged.
+                  <button
+                    aria-label="Remove this way to move on"
+                    title="Remove this way to move on"
+                    onClick={() => (edgeIsEmpty(edge) ? remove(index) : setRemoving(index))}
+                    className={cn(
+                      hidden,
+                      'nodrag inline-flex size-[23px] items-center justify-center rounded-full border border-dashed border-foreground/20 text-muted-foreground group-hover/edge:opacity-100 hover:border-bad/50 hover:text-bad focus-visible:border-bad/50',
+                    )}
+                  >
+                    <Trash2 className="size-3" />
+                  </button>
+                }
+              />
               <Handle
                 id={handleId(index)}
                 type="source"
@@ -191,6 +224,25 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
           </button>
         </div>
       )}
+      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this way to move on?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {losing.join(' and ').replace(/^i/, 'I')} will be removed with it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => removing !== null && remove(removing)}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
