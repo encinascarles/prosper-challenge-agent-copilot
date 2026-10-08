@@ -193,6 +193,11 @@ until "Tidy up", because ELK routes wires only as part of a full layout. The
 start node takes no wire, in the draft and on the canvas, and a wire dropped
 anywhere on a card connects to it.
 
+Which card is on top is not part of the agent, so it is not in the draft: the
+card last touched comes up and stays there, and its wires are highlighted, over
+the other wires and under the cards like all of them. It is how the canvas is
+being looked at, and undo and save never see it.
+
 Undo keeps whole drafts instead of inverse operations: an edit shares what it
 does not touch with the draft before, so a snapshot is cheap and undo cannot
 disagree with the edit. Typing in one field is one step. Cost: nothing is saved

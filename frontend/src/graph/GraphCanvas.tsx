@@ -3,8 +3,10 @@
 //
 // React Flow only draws. What the graph is and where the cards are comes from
 // the draft; what React Flow knows on its own is kept here and is not worth
-// undoing: the size it measured for each card, a drag in progress, and the
-// routes of the wires from the last layout.
+// undoing: the size it measured for each card, a drag in progress, the routes
+// of the wires from the last layout, and which card is on top. That last one
+// is how the canvas is being looked at, not what the agent is: it is never in
+// the draft, so it is neither undone nor saved.
 //
 // Cards are as tall as their text, so the layout needs their real size: the
 // graph renders once out of sight, React Flow measures the cards and their
@@ -24,6 +26,7 @@ import {
   type EdgeChange,
   type FinalConnectionState,
   type NodeChange,
+  type OnConnectStart,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { LayoutGrid, Plus } from 'lucide-react'
@@ -47,6 +50,11 @@ const tool =
 
 const ORIGIN = { x: 0, y: 0 }
 const DELETE_KEYS = ['Backspace', 'Delete']
+// What is drawn over what: wires, then the active card's wires, then the
+// cards, each card by when it was last touched.
+const WIRE = 0
+const LIT_WIRE = 1
+const CARD = 2
 // A new card before it is measured: its width, and the height of an empty one.
 const NEW_CARD = { width: 300, height: 130 }
 // Where a card's input dot is, from its top-left corner.
@@ -62,6 +70,15 @@ function Canvas() {
   // a wire that now goes elsewhere has no use for it.
   const [routes, setRoutes] = useState<Record<string, { target: string; points: Point[] }>>({})
   const [selected, setSelected] = useState<Record<string, boolean>>({})
+  // Which card is over which: each card's turn when it was last touched, and
+  // the one touched last. Touching is pressing or focusing anything in a card.
+  const [stack, setStack] = useState<{ turn: Record<string, number>; last: number; active: string | null }>(
+    { turn: {}, last: 0, active: null },
+  )
+  // The edge whose dot is being dragged, and the card under the pointer.
+  const [wiring, setWiring] = useState<{ source: string; index: number; over: string | null } | null>(
+    null,
+  )
   const wrapper = useRef<HTMLDivElement>(null)
   // The node just added, until its name has the focus.
   const fresh = useRef<string | null>(null)
@@ -73,25 +90,44 @@ function Canvas() {
         type: 'card',
         position: dragging[card.id] ?? draft.layout[card.node.name] ?? ORIGIN,
         measured: sizes[card.id],
-        data: card,
+        data: {
+          ...card,
+          active: card.id === stack.active,
+          // The draft decides what an edge may connect to: not the start node,
+          // not its own node.
+          accepting:
+            wiring?.over === card.id &&
+            connect(draft, wiring.source, wiring.index, card.id) !== draft,
+        },
+        zIndex: CARD + (stack.turn[card.id] ?? 0),
         // Only wires are selected, to disconnect them. A node is deleted from its menu.
         selectable: false,
         deletable: false,
       })),
-    [graph, draft.layout, dragging, sizes],
+    [graph, draft, dragging, sizes, stack, wiring],
   )
   const edges = useMemo<WireEdge[]>(
     () =>
-      graph.wires.map((wire) => ({
-        id: wire.id,
-        type: 'wire',
-        source: wire.source,
-        sourceHandle: wire.handle,
-        target: wire.target,
-        selected: selected[wire.id] ?? false,
-        data: { route: routes[wire.id]?.target === wire.target ? routes[wire.id].points : undefined },
-      })),
-    [graph, routes, selected],
+      graph.wires.map((wire) => {
+        // The wires of the active card, in and out, are dark and over the
+        // other wires. Every wire stays under the cards: over one, it would
+        // cross out the text it runs across.
+        const lit = wire.source === stack.active || wire.target === stack.active
+        return {
+          id: wire.id,
+          type: 'wire',
+          source: wire.source,
+          sourceHandle: wire.handle,
+          target: wire.target,
+          selected: selected[wire.id] ?? false,
+          className: lit ? 'active' : undefined,
+          zIndex: lit ? LIT_WIRE : WIRE,
+          data: {
+            route: routes[wire.id]?.target === wire.target ? routes[wire.id].points : undefined,
+          },
+        }
+      }),
+    [graph, routes, selected, stack.active],
   )
 
   const onNodesChange = useCallback((changes: NodeChange<CardNode>[]) => {
@@ -105,6 +141,35 @@ function Canvas() {
       }
     }
   }, [])
+  // A press or a focus inside a card brings it to the top, where it stays.
+  // On the empty canvas it leaves the cards as they are with none active.
+  const touch = (target: EventTarget) => {
+    if (!(target instanceof Element)) return
+    const id = target.closest<HTMLElement>('.react-flow__node')?.dataset.id ?? null
+    // Not a card and not the empty canvas: a wire (pressed to select it, and it
+    // may be one of the active card's), the toolbar, a popover.
+    if (id === null && (target.closest('.react-flow__edge') || !target.closest('.react-flow__pane'))) {
+      return
+    }
+    setStack((current) => {
+      if (id === null) return current.active === null ? current : { ...current, active: null }
+      if (current.active === id && current.turn[id] === current.last) return current
+      const last = current.last + 1
+      return { turn: { ...current.turn, [id]: last }, last, active: id }
+    })
+  }
+  const onConnectStart = useCallback<OnConnectStart>((_, { nodeId, handleId, handleType }) => {
+    if (nodeId && handleId && handleType === 'source') {
+      setWiring({ source: nodeId, index: edgeIndex(handleId), over: null })
+    }
+  }, [])
+  const onPointerMove = (event: React.PointerEvent) => {
+    if (!wiring) return
+    const under = document.elementFromPoint(event.clientX, event.clientY)
+    const over = under?.closest<HTMLElement>('.react-flow__node')?.dataset.id ?? null
+    if (over !== wiring.over) setWiring({ ...wiring, over })
+  }
+
   // Adds a node at `position` and hands the keyboard to its name. Nothing
   // else moves: the layout only runs on "Tidy up".
   const add = useCallback(
@@ -171,6 +236,7 @@ function Canvas() {
   // whole card is the target, not only its dot.
   const onConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connection: FinalConnectionState) => {
+      setWiring(null)
       const from = connection.fromHandle
       if (connection.isValid || !connection.fromNode || from?.type !== 'source' || !from.id) return
       const { clientX, clientY } = 'changedTouches' in event ? event.changedTouches[0] : event
@@ -265,7 +331,13 @@ function Canvas() {
   }, [measured, placed, tidy])
 
   return (
-    <div ref={wrapper} className={cn('relative size-full bg-muted/40', animating && 'graph-tidying')}>
+    <div
+      ref={wrapper}
+      onPointerDownCapture={(event) => touch(event.target)}
+      onFocusCapture={(event) => touch(event.target)}
+      onPointerMove={onPointerMove}
+      className={cn('relative size-full bg-muted/40', animating && 'graph-tidying')}
+    >
       <ReactFlow
         className={cn('transition-opacity', placed ? 'opacity-100' : 'opacity-0')}
         nodes={nodes}
@@ -276,6 +348,7 @@ function Canvas() {
         onNodeDragStop={onNodeDragStop}
         onEdgesChange={onEdgesChange}
         onEdgesDelete={onEdgesDelete}
+        onConnectStart={onConnectStart}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
         connectionLineStyle={{ stroke: 'var(--foreground)', strokeWidth: 1.5 }}

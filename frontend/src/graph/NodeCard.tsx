@@ -33,7 +33,12 @@ import { GrowingText, NameInput } from './inputs'
 import { handleId, type Card } from './model'
 import { NodeMenu } from './NodeMenu'
 
-export type CardNode = FlowNode<Card, 'card'>
+// What the canvas adds to a card for the moment: nothing of the agent.
+export type CardView = {
+  active: boolean // the card last touched: on top, its wires highlighted
+  accepting: boolean // a wire being dragged is over it and it would take it
+}
+export type CardNode = FlowNode<Card & CardView, 'card'>
 
 const dot = '!size-[11px] !rounded-full !border-2 !border-card'
 // Where a call enters and leaves the graph: a solid band across the card, on
@@ -45,14 +50,20 @@ const hidden =
   'opacity-0 outline-none transition-opacity focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
 
 export function NodeCard({ data }: NodeProps<CardNode>) {
-  const { id, node, start, edges, connected } = data
+  const { id, node, start, edges, connected, active, accepting } = data
   const { draft, apply, seal, cancel } = useEditor()
   const [instructions, ...more] = node.task_messages ?? []
   return (
     <div
+      data-active={active || undefined}
+      data-accepting={accepting || undefined}
       className={cn(
         'group/card w-[300px] rounded-2xl border bg-card text-left shadow-[0_1px_2px_rgba(0,0,0,0.04),0_10px_28px_-14px_rgba(0,0,0,0.14)]',
         start && 'border-brand/45',
+        active && !start && 'border-foreground/30',
+        active && 'shadow-[0_1px_2px_rgba(0,0,0,0.06),0_14px_32px_-12px_rgba(0,0,0,0.22)]',
+        // A ring, not the border: it must read on the start card's orange too.
+        accepting && 'ring-2 ring-foreground',
       )}
     >
       {start && (

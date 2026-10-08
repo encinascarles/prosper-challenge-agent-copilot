@@ -164,6 +164,13 @@
 .react-flow__controls-button svg {
   fill: currentColor;
 }
+/* The wires of the active card are dark; the selected one is also thicker. */
+.react-flow__edge.active .react-flow__edge-path {
+  stroke: var(--foreground);
+}
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 2.5;
+}
 /* Wires have square corners to round, and no fill. */
 .react-flow__edge-path {
   stroke-linejoin: round;
