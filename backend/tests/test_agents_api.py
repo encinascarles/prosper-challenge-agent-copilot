@@ -7,6 +7,7 @@
 #
 
 import json
+import sqlite3
 
 import pytest
 
@@ -149,3 +150,28 @@ def test_rejected_update_leaves_the_stored_agent_unchanged(client, agent):
 
     assert response.status_code == 422
     assert client.get(f"/api/agents/{agent_id}").json() == before
+
+
+def test_a_database_from_before_layouts_keeps_its_agents(tmp_path, monkeypatch, agent):
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE agents (id TEXT PRIMARY KEY, config TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO agents VALUES ('old', ?, '2026-01-01T00:00:00.000+00:00',"
+        " '2026-01-01T00:00:00.000+00:00')",
+        (json.dumps(agent),),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv(agent_store.DB_PATH_ENV, str(path))
+
+    store.init_db()
+    store.init_db()  # a second start finds the column and leaves it alone
+
+    [record] = store.list_agents()
+    assert (record["id"], record["config"], record["layout"]) == ("old", agent, {})
+    saved = store.update_agent("old", agent, {"greeting": {"x": 5, "y": 6}})
+    assert saved["layout"] == {"greeting": {"x": 5, "y": 6}}
