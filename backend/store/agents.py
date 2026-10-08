@@ -96,14 +96,22 @@ def _connect() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def _insert(conn: sqlite3.Connection, config: dict) -> str:
+def _prune(layout: dict, config: dict) -> dict:
+    # Done here rather than by the caller so the two columns cannot disagree,
+    # whoever writes: a save that removes a node also removes its position,
+    # in the same write.
+    names = {node["name"] for node in config["nodes"]}
+    return {name: position for name, position in layout.items() if name in names}
+
+
+def _insert(conn: sqlite3.Connection, config: dict, layout: Optional[dict] = None) -> str:
     # Random id rather than one derived from the name: the name is editable and
     # the id ends up in URLs, so it must not change or collide.
     agent_id = uuid.uuid4().hex
     now = _now()
     conn.execute(
-        "INSERT INTO agents (id, config, created_at, updated_at) VALUES (?, ?, ?, ?)",
-        (agent_id, json.dumps(config), now, now),
+        "INSERT INTO agents (id, config, layout, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        (agent_id, json.dumps(config), json.dumps(_prune(layout or {}, config)), now, now),
     )
     return agent_id
 
@@ -137,10 +145,10 @@ def get_agent(agent_id: str) -> Optional[dict]:
         return _select(conn, agent_id)
 
 
-def create_agent(config: dict) -> dict:
-    """Store a new agent and return its record, id included."""
+def create_agent(config: dict, layout: Optional[dict] = None) -> dict:
+    """Store a new agent, with its layout if given, and return its record, id included."""
     with _connect() as conn:
-        return _select(conn, _insert(conn, config))
+        return _select(conn, _insert(conn, config, layout))
 
 
 def update_agent(agent_id: str, config: dict, layout: Optional[dict] = None) -> Optional[dict]:
@@ -156,13 +164,8 @@ def update_agent(agent_id: str, config: dict, layout: Optional[dict] = None) -> 
             return None
         if layout is None:
             layout = current["layout"]
-        # Pruned here rather than by the caller so the two columns cannot
-        # disagree, whoever writes: a save that removes a node also removes
-        # its position, in the same write.
-        names = {node["name"] for node in config["nodes"]}
-        layout = {name: position for name, position in layout.items() if name in names}
         conn.execute(
             "UPDATE agents SET config = ?, layout = ?, updated_at = ? WHERE id = ?",
-            (json.dumps(config), json.dumps(layout), _now(), agent_id),
+            (json.dumps(config), json.dumps(_prune(layout, config)), _now(), agent_id),
         )
         return _select(conn, agent_id)
