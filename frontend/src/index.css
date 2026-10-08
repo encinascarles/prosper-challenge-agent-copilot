@@ -9,6 +9,8 @@
     --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
     --color-border-strong: var(--border-strong);
     --color-bad: var(--bad);
+    --color-warn: var(--warn);
+    --color-warn-tint: var(--warn-tint);
     --color-brand: var(--brand);
     --color-brand-tint: var(--brand-tint);
     --radius-sm: calc(var(--radius) * 0.6);
@@ -73,6 +75,9 @@
     --border-strong: oklch(0.87 0 0);
     /* Broken, missing or destructive: one crimson, which shadcn's components pick up too. */
     --bad: #be123c;
+    /* At risk: valid, but it may not work out. Yellow, kept apart from broken. */
+    --warn: #a16207;
+    --warn-tint: #fdf7e1;
     /* The one accent, the logo's orange, darkened to read as text on its tint. */
     --brand: #e2491d;
     --brand-tint: #fdf0eb;
@@ -112,6 +117,8 @@
     --border: oklch(1 0 0 / 10%);
     --border-strong: oklch(1 0 0 / 28%);
     --bad: #fb7185;
+    --warn: #eab308;
+    --warn-tint: #2a2410;
     --brand: #f47a52;
     --brand-tint: #2f1a12;
     --input: oklch(1 0 0 / 15%);

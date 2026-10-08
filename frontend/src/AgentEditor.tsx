@@ -5,7 +5,9 @@
 // and a new undo history.
 //
 // Saving sends the whole agent and its layout, and the backend takes all of it
-// or nothing. Two things can stop it. Edges that go nowhere are caught here,
+// or nothing. Two things can stop it, and both are things the backend refuses.
+// What could only leave a call stuck (draft/checks.ts) is shown and never stops
+// a save. Edges that go nowhere are caught here,
 // before sending: the canvas can show them, and the backend would only refuse
 // the first. Anything else the backend refuses comes back as its sentence and,
 // when it is about one node, that node's name, which is where the card shows it.
@@ -15,6 +17,7 @@ import { ApiError, updateAgent } from '@/agents/api'
 import type { AgentRecord, AgentSummary } from '@/agents/types'
 import { SaveControl } from '@/components/SaveControl'
 import { TopBar } from '@/components/TopBar'
+import { checkFlow } from '@/draft/checks'
 import { toLayout, type Draft } from '@/draft/draft'
 import { EditorContext, useNewEditor, type Refusal } from '@/draft/editor'
 import { GraphCanvas } from '@/graph/GraphCanvas'
@@ -52,6 +55,9 @@ export function AgentEditor({ record, agents, onPick, onSaved }: Props) {
 
   const loose = useMemo(() => looseEdges(toGraph(draft.config, draft.ids)), [draft.config, draft.ids])
   const showLoose = () => setFramed({ ids: [...new Set(loose.map((edge) => edge.card))] })
+  // Where a call could get stuck. Shown, never in the way of saving: an agent
+  // is saved many times before it is finished.
+  const warnings = useMemo(() => checkFlow(draft), [draft])
 
   const save = async () => {
     if (saving) return
@@ -101,7 +107,10 @@ export function AgentEditor({ record, agents, onPick, onSaved }: Props) {
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
 
-  const editor = useMemo(() => ({ ...core, refusal, framed }), [core, refusal, framed])
+  const editor = useMemo(
+    () => ({ ...core, warnings, refusal, framed }),
+    [core, warnings, refusal, framed],
+  )
   return (
     <EditorContext value={editor}>
       <div className="flex min-h-0 flex-1 flex-col">
@@ -120,9 +129,11 @@ export function AgentEditor({ record, agents, onPick, onSaved }: Props) {
             saving={saving}
             saved={saved}
             loose={loose.length}
+            warnings={warnings.length}
             problem={refusal && { message: refusal.message, onCard: refusal.node !== null }}
             onSave={() => void save()}
             onShowLoose={showLoose}
+            onShowWarnings={() => setFramed({ ids: [...new Set(warnings.map((w) => w.node))] })}
             onShowProblem={() => refusal?.node && setFramed({ ids: [refusal.node] })}
           />
         </TopBar>

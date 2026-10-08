@@ -247,6 +247,15 @@ sentence: the editor marks that card and shows the sentence on it, without
 reading names back out of text that may be reworded. The sentence is the
 backend's own, so it is the one place a function name can reach the screen.
 
+Saving is never blocked by unfinished work, only by what the backend refuses.
+A node with no way out, a node no call can reach and a flow with no reachable
+end are all valid agents, and they are what building one looks like, so they are
+warnings: a quiet line on the card and a count next to Save. Running is what
+they block. The checks are one pure function with the sentences in it
+(`draft/checks.ts`), so the editor and whatever starts a call say the same thing
+about the same draft. A loop is not a warning: some path has to end the call,
+not every path.
+
 Undo keeps whole drafts instead of inverse operations: an edit shares what it
 does not touch with the draft before, so a snapshot is cheap and undo cannot
 disagree with the edit. Typing in one field is one step. Cost: nothing is saved

@@ -15,7 +15,7 @@
 // a person reads.
 
 import { Handle, Position, type Node as FlowNode, type NodeProps } from '@xyflow/react'
-import { ArrowRight, PhoneOff, Play, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { ArrowRight, PhoneOff, Play, Plus, RotateCcw, Trash2, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 
 import {
@@ -90,7 +90,8 @@ function LooseWire({ side, className }: { side: 'in' | 'out'; className?: string
 
 export function NodeCard({ data }: NodeProps<CardNode>) {
   const { id, node, start, edges, connected, reached, active, accepting } = data
-  const { draft, apply, seal, cancel, refusal } = useEditor()
+  const { draft, apply, seal, cancel, refusal, warnings } = useEditor()
+  const warned = warnings.filter((warning) => warning.node === id)
   // What the backend said when it refused to save, if it was about this node.
   const refused = refusal?.node === id ? refusal : null
   const [instructions, ...more] = node.task_messages ?? []
@@ -171,6 +172,18 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
           </p>
         )}
       </div>
+      {/* Where a call would get stuck or never arrive. Quiet, and not crimson:
+          nothing is broken, the flow is not finished. */}
+      {warned.map((warning) => (
+        <p
+          key={warning.kind}
+          data-warning={warning.kind}
+          className="flex items-start gap-1.5 border-t border-warn/15 bg-warn-tint px-4 py-1.5 text-[12px] leading-snug text-warn"
+        >
+          <TriangleAlert className="mt-[2px] size-3 shrink-0" />
+          {warning.message}
+        </p>
+      ))}
       {/* In the backend's own words: it is the one that knows what it refused. */}
       {refused && (
         <p role="alert" className="border-t border-bad/20 bg-bad/10 px-4 py-2 text-[12px] leading-snug text-bad">

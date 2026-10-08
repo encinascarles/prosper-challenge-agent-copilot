@@ -6,6 +6,7 @@ import { createContext, use, useMemo, useReducer } from 'react'
 
 import type { AgentConfig, Layout } from '@/agents/types'
 
+import type { Warning } from './checks'
 import { openDraft, type Draft, type Point } from './draft'
 import { historyReducer, startHistory } from './history'
 
@@ -37,6 +38,8 @@ export type Refusal = {
 
 /** What the editor shares with the canvas and its cards. */
 export type Editor = EditorCore & {
+  /** What could leave a call stuck in the draft as it is: see draft/checks.ts. */
+  warnings: Warning[]
   refusal: Refusal | null
   /** The cards last asked to be brought into view. A new object asks again. */
   framed: { ids: string[] } | null

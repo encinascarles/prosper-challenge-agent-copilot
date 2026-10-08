@@ -60,8 +60,10 @@ const DELETE_KEYS = ['Backspace', 'Delete']
 const WIRE = 0
 const LIT_WIRE = 1
 const CARD = 2
-// A new card before it is measured: its width, and the height of an empty one.
-const NEW_CARD = { width: 300, height: 130 }
+// A new card before it is measured: its width, and the height of an empty one
+// (its name, the question of what happens next, and the warning that no call
+// gets to it yet).
+const NEW_CARD = { width: 300, height: 216 }
 // Where a card's input dot is, from its top-left corner.
 const INPUT_DOT = { x: -6, y: 26 }
 
