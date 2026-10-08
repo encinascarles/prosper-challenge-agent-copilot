@@ -1,5 +1,5 @@
-// The editor's state, for the components that draw it: the current draft and
-// the ways to change it. One editor per open agent, shared through context so a
+// The editor's state, for the components that draw it: the current draft, the
+// ways to change it, and what the last save said about it. One editor per open agent, shared through context so a
 // card deep in the canvas can edit without props threaded through React Flow.
 
 import { createContext, use, useMemo, useReducer } from 'react'
@@ -9,7 +9,8 @@ import type { AgentConfig, Layout } from '@/agents/types'
 import { openDraft, type Draft, type Point } from './draft'
 import { historyReducer, startHistory } from './history'
 
-export type Editor = {
+/** The draft and the ways to change it. */
+export type EditorCore = {
   draft: Draft
   /** Makes an edit. Edits with the same `merge` key are undone together. */
   apply: (edit: (draft: Draft) => Draft, merge?: string) => void
@@ -27,6 +28,20 @@ export type Editor = {
   markSaved: (draft: Draft) => void
 }
 
+/** Why the backend refused the draft as it is now, placed on the node it named. */
+export type Refusal = {
+  message: string // the backend's sentence
+  node: string | null // the node's id, when the problem is in one
+  edge: number | null // which of that node's edges, when it is in one
+}
+
+/** What the editor shares with the canvas and its cards. */
+export type Editor = EditorCore & {
+  refusal: Refusal | null
+  /** The cards last asked to be brought into view. A new object asks again. */
+  framed: { ids: string[] } | null
+}
+
 export const EditorContext = createContext<Editor | null>(null)
 
 export function useEditor(): Editor {
@@ -36,7 +51,7 @@ export function useEditor(): Editor {
 }
 
 /** An editor over the draft of a loaded agent and its layout. Create one per open agent. */
-export function useNewEditor(config: AgentConfig, layout: Layout): Editor {
+export function useNewEditor(config: AgentConfig, layout: Layout): EditorCore {
   const [history, dispatch] = useReducer(historyReducer, null, () =>
     startHistory(openDraft(config, layout)),
   )

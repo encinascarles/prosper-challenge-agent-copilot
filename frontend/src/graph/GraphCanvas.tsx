@@ -66,7 +66,7 @@ const NEW_CARD = { width: 300, height: 130 }
 const INPUT_DOT = { x: -6, y: 26 }
 
 function Canvas() {
-  const { draft, apply, place } = useEditor()
+  const { draft, apply, place, framed } = useEditor()
   const flow = useReactFlow<CardNode, WireEdge>()
   const graph = useMemo(() => toGraph(draft.config, draft.ids), [draft.config, draft.ids])
   const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({})
@@ -280,6 +280,18 @@ function Canvas() {
     fitting.current = null
     void flow.fitView({ padding: 0.15, maxZoom: 1, duration })
   }, [draft.positions, flow])
+
+  // Brings the cards someone was pointed at into view: the loose wires that
+  // stop a save, or the node the backend refused.
+  useEffect(() => {
+    if (!framed || framed.ids.length === 0) return
+    void flow.fitView({
+      nodes: framed.ids.map((id) => ({ id })),
+      padding: 0.6,
+      maxZoom: 1,
+      duration: TIDY_MS,
+    })
+  }, [framed, flow])
 
   const measured = useNodesInitialized()
   const [placed, setPlaced] = useState(false)

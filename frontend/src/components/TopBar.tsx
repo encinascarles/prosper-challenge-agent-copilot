@@ -1,6 +1,6 @@
 // The bar at the top of every screen: where you are (Prosper, then the agent,
-// which is also how you switch to another one). The right side is left for the
-// agent's actions, which come with editing and the test call.
+// which is also how you switch to another one). The right side is for the open
+// agent's actions: saving now, the test call later.
 
 import { ChevronsUpDown } from 'lucide-react'
 
@@ -18,9 +18,11 @@ type Props = {
   agents: AgentSummary[]
   agentId: string | null
   onPick: (id: string) => void
+  /** The open agent's actions, at the right. */
+  children?: React.ReactNode
 }
 
-export function TopBar({ agents, agentId, onPick }: Props) {
+export function TopBar({ agents, agentId, onPick, children }: Props) {
   const agent = agents.find((candidate) => candidate.id === agentId)
   return (
     <header className="flex h-12 shrink-0 items-center gap-1.5 border-b px-4">
@@ -52,6 +54,7 @@ export function TopBar({ agents, agentId, onPick }: Props) {
           </DropdownMenu>
         </>
       )}
+      {children}
     </header>
   )
 }

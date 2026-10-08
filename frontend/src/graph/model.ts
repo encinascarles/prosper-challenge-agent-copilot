@@ -70,3 +70,10 @@ export function toGraph(config: AgentConfig, ids: string[]): Graph {
   }))
   return { cards, wires }
 }
+
+/** The edges that go nowhere: what each card shows as a loose wire out. */
+export function looseEdges(graph: Graph): { card: string; index: number }[] {
+  return graph.cards.flatMap((card) =>
+    card.connected.flatMap((connected, index) => (connected ? [] : [{ card: card.id, index }])),
+  )
+}

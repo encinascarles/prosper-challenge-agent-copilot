@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { AgentConfig } from '@/agents/types'
 
-import { edgeIndex, handleId, toGraph } from './model'
+import { edgeIndex, handleId, looseEdges, toGraph } from './model'
 
 const edge = (target: string) => ({ function: `go_to_${target}`, description: '', target })
 
@@ -67,5 +67,19 @@ describe('toGraph', () => {
 describe('edgeIndex', () => {
   it('reads back the edge a dot belongs to', () => {
     expect(edgeIndex(handleId(7))).toBe(7)
+  })
+})
+
+describe('looseEdges', () => {
+  it('lists the edges that go to no node, or to the start node', () => {
+    expect(looseEdges(toGraph(config, ids))).toEqual([
+      { card: 'a', index: 1 },
+      { card: 'b', index: 1 },
+    ])
+  })
+
+  it('does not count a node nothing leads to: that is a card, not an edge', () => {
+    const lonely = { ...config, nodes: [...config.nodes, { name: 'lonely', end: true }] }
+    expect(looseEdges(toGraph(lonely, [...ids, 'd']))).toHaveLength(2)
   })
 })

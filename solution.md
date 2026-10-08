@@ -185,7 +185,10 @@ has to be made in both places.
 
 What is missing is drawn, not written: an edge with no target and a node nothing
 leads to both end in a short dashed crimson stub, a wire that goes nowhere, so
-the gap shows where it is. A list of allowed values is a field type of its own,
+the gap shows where it is. An edge that goes nowhere also stops a save, in
+the editor, before anything is sent: the button then counts the loose wires and
+frames them. A node nothing leads to is drawn the same way but saves: the
+schema accepts it, and it is how a flow looks halfway through being built. A list of allowed values is a field type of its own,
 Choice, though the agent JSON keeps it as a string with an `enum`: a type plus a
 separate "only these values" asked for two decisions to say one thing. A node
 with no way out and no end is where a call would stay for good, so its card asks
@@ -209,7 +212,8 @@ has to be undoable. The backend only accepts an agent that is valid as a whole.
   Chosen.
 
 **Trade-offs.** The draft is the agent JSON, an id per node and the card
-positions by node name. Each edit is a function from a draft to the next
+positions by that id (they are stored by node name; keeping them by id is what
+lets a rename carry the position). Each edit is a function from a draft to the next
 (`draft/draft.ts`), so every rule is in one place with a test: renaming a node
 updates the edges into it, its position and the agent's start; making a node the
 start disconnects the edges into it; a deleted node leaves the edges into it
@@ -233,6 +237,15 @@ Which card is on top is not part of the agent, so it is not in the draft: the
 card last touched comes up and stays there, and its wires are highlighted, over
 the other wires and under the cards like all of them. It is how the canvas is
 being looked at, and undo and save never see it.
+
+Saving sends the whole agent and its layout in one request, and the backend
+stores both or neither. "Unsaved changes" is the draft not being the very one
+that was loaded or last saved, so a save moves a marker and leaves undo alone,
+and undoing back to the saved draft is clean again. When the backend refuses, its
+422 carries the node's name and the edge's function as fields next to the
+sentence: the editor marks that card and shows the sentence on it, without
+reading names back out of text that may be reworded. The sentence is the
+backend's own, so it is the one place a function name can reach the screen.
 
 Undo keeps whole drafts instead of inverse operations: an edit shares what it
 does not touch with the draft before, so a snapshot is cheap and undo cannot

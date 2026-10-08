@@ -2,7 +2,7 @@
 //
 // Which agent is open lives in the URL (?agent=<id>), so a reload or a shared
 // link opens the same one. Without it, the first agent of the list opens.
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { AgentEditor } from '@/AgentEditor'
 import { getAgent, listAgents } from '@/agents/api'
@@ -26,9 +26,10 @@ export default function App() {
   const [record, setRecord] = useState<AgentRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const loadAgents = useCallback(() => {
     listAgents().then(setAgents, (failure: Error) => setError(failure.message))
   }, [])
+  useEffect(loadAgents, [loadAgents])
 
   const agentId = picked ?? agents?.[0]?.id ?? null
   useEffect(() => {
@@ -53,14 +54,24 @@ export default function App() {
   }
 
   const open = record?.id === agentId ? record : null
+  // An open agent is the editor's page: it has the top bar too, with saving in it.
+  if (open && !error) {
+    return (
+      <AgentEditor
+        key={open.id}
+        record={open}
+        agents={agents ?? []}
+        onPick={pick}
+        onSaved={loadAgents}
+      />
+    )
+  }
   return (
     <div className="flex h-dvh flex-col">
       <TopBar agents={agents ?? []} agentId={agentId} onPick={pick} />
       <main className="flex min-h-0 flex-1">
         {error ? (
           <Notice error>{error}</Notice>
-        ) : open ? (
-          <AgentEditor key={open.id} record={open} />
         ) : agents?.length === 0 ? (
           <Notice>No agents yet.</Notice>
         ) : (
