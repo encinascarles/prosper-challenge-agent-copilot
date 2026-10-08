@@ -124,13 +124,18 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
       ) : (
         <div className="rounded-b-2xl border-t bg-muted/35 pb-1.5">
           {edges.length > 0 && (
-            <div className="px-4 pt-2.5 pb-0.5 text-[10.5px] font-medium tracking-wide text-muted-foreground uppercase">
+            <div className="px-4 pt-2.5 text-[10.5px] font-medium tracking-wide text-muted-foreground uppercase">
               Moves on when
             </div>
           )}
           {edges.map((edge, index) => (
-            <div key={index} className="group/edge relative px-4 py-1.5">
-              <div className="flex items-start gap-1">
+            // One block per edge, with a line between them: an edge is a
+            // condition, what it collects and where it goes, read together.
+            <div
+              key={index}
+              className={cn('group/edge relative px-4 py-2.5', index > 0 && 'border-t border-border/70')}
+            >
+              <div className="flex items-start gap-1.5">
                 <GrowingText
                   label="Moves on when"
                   value={edge.description}
@@ -148,15 +153,18 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
                   aria-label="Remove this way to move on"
                   title="Remove"
                   onClick={() => apply((current) => removeEdge(current, id, index))}
-                  className={cn(hidden, 'nodrag -mr-1.5 rounded p-0.5 text-muted-foreground group-hover/edge:opacity-100 hover:text-bad')}
+                  className={cn(hidden, 'nodrag rounded p-0.5 text-muted-foreground group-hover/edge:opacity-100 hover:text-bad')}
                 >
                   <X className="size-3.5" />
                 </button>
+                {/* On the first line, beside the dot it is about. */}
+                {!connected[index] && (
+                  <span className="shrink-0 pt-[3px] text-[11.5px] leading-snug font-medium whitespace-nowrap text-bad">
+                    Not connected
+                  </span>
+                )}
               </div>
               <FieldChips id={id} index={index} edge={edge} />
-              {!connected[index] && (
-                <div className="mt-1 text-[11.5px] font-medium text-bad">Not connected</div>
-              )}
               <Handle
                 id={handleId(index)}
                 type="source"
@@ -164,7 +172,8 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
                 isConnectableEnd={false}
                 className={cn(
                   dot,
-                  '!top-[17px] !right-[-6px]',
+                  // Level with the first line of the description.
+                  '!top-[25px] !right-[-6px]',
                   connected[index] ? '!bg-foreground' : '!bg-bad',
                 )}
               />
@@ -172,7 +181,10 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
           ))}
           <button
             onClick={() => apply((current) => addEdge(current, id))}
-            className="nodrag mx-3 mt-0.5 flex items-center gap-1 rounded-md px-1 py-1 text-[12px] text-muted-foreground/80 hover:text-foreground"
+            className={cn(
+              'nodrag flex w-full items-center gap-1 px-4 pt-2 pb-1 text-[12px] text-muted-foreground/80 hover:text-foreground',
+              edges.length > 0 && 'border-t border-border/70',
+            )}
           >
             <Plus className="size-3" />
             {edges.length > 0 ? 'Another way to move on' : 'Add a way to move on'}

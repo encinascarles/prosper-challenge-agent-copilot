@@ -5,7 +5,7 @@
 // is required. A choice is the type whose value must be one of a list of
 // options; the chip on the card shows them next to the name.
 
-import { Trash2, X } from 'lucide-react'
+import { Plus, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 
 import type { Edge, EdgeProperty } from '@/agents/types'
@@ -31,6 +31,9 @@ const KINDS = [
   ['boolean', 'Yes / no'],
   ['choice', 'Choice'],
 ]
+
+// How many options of a choice a chip shows before it says how many more.
+const SHOWN = 3
 
 const label = 'text-[11px] font-medium text-muted-foreground'
 const input =
@@ -180,7 +183,7 @@ function FieldEditor({ edge, name, property, change, onBlur, onRemove, onDone }:
   )
 }
 
-/** The chips of the edge at `index` of node `id`, with "+ Collect" to add one. */
+/** The chips of the edge at `index` of node `id`, and a "+" chip to collect one more. */
 export function FieldChips({ id, index, edge }: { id: string; index: number; edge: Edge }) {
   const { apply, seal, cancel } = useEditor()
   // Which chip's editor is open, by position: a field's name is being edited.
@@ -188,24 +191,32 @@ export function FieldChips({ id, index, edge }: { id: string; index: number; edg
   const fields = Object.entries(edge.properties ?? {})
 
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1">
+    // The chips wrap as a row; a chip never wraps inside.
+    <div className="mt-1.5 flex flex-wrap items-center gap-1">
       {fields.map(([name, property], at) => {
         const key = (part: string) => `field:${id}:${index}:${at}:${part}`
+        const options = property.enum ?? []
         return (
           <Popover key={at} open={open === at} onOpenChange={(next) => setOpen(next ? at : null)}>
             <PopoverTrigger
               title={property.description}
               className={cn(
-                'nodrag inline-flex max-w-full items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-left text-[11.5px] outline-none hover:border-foreground/30 focus-visible:border-foreground/40',
+                'nodrag inline-flex max-w-full items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-left text-[11.5px] whitespace-nowrap outline-none hover:border-foreground/30 focus-visible:border-foreground/40',
                 open === at && 'border-foreground/40',
               )}
             >
-              <span className="font-medium">{humanize(name)}</span>
-              {property.enum && property.enum.length > 0 && (
-                <span className="text-muted-foreground">{property.enum.join(' · ')}</span>
+              <span className="shrink-0 font-medium">{humanize(name)}</span>
+              {/* A glance at a choice, not its list: that is in the popover. */}
+              {options.length > 0 && (
+                <span className="truncate text-muted-foreground">
+                  {options.slice(0, SHOWN).join(' · ')}
+                </span>
+              )}
+              {options.length > SHOWN && (
+                <span className="shrink-0 text-muted-foreground">+{options.length - SHOWN}</span>
               )}
               {!edge.required?.includes(name) && (
-                <span className="text-muted-foreground">optional</span>
+                <span className="shrink-0 text-muted-foreground">optional</span>
               )}
             </PopoverTrigger>
             <PopoverContent align="start" sideOffset={6} className="w-64 p-3">
@@ -231,13 +242,15 @@ export function FieldChips({ id, index, edge }: { id: string; index: number; edg
         )
       })}
       <button
+        aria-label="Collect a field"
+        title="Collect a field"
         onClick={() => {
           apply((current) => addField(current, id, index))
           setOpen(fields.length)
         }}
-        className="nodrag rounded-full px-1.5 py-0.5 text-[11.5px] text-muted-foreground/70 hover:bg-muted hover:text-foreground"
+        className="nodrag inline-flex size-[23px] items-center justify-center rounded-full border border-dashed border-foreground/20 text-muted-foreground outline-none hover:border-foreground/40 hover:text-foreground focus-visible:border-foreground/40"
       >
-        + Collect
+        <Plus className="size-3" />
       </button>
     </div>
   )
