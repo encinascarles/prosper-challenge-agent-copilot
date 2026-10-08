@@ -1,0 +1,25 @@
+#!/bin/sh
+# tools/wt/list: every worktree of the repo and where it stands against origin/main, after a narrow fetch. Read only.
+#   ahead = commits not on main yet, behind = main commits it lacks, dirty = uncommitted or untracked files.
+set -eu
+. "$(dirname "$0")/lib.sh"
+fetch_base 2>/dev/null || echo "(offline: origin/$base may be stale)"
+git -C "$root" worktree list --porcelain | awk '
+  /^worktree /{ if (p) print p "\t" b; p = substr($0, 10); b = "(detached)" }
+  /^branch /{ b = substr($0, 8) }
+  END { if (p) print p "\t" b }' | while IFS="$(printf '\t')" read -r path ref; do
+  br="${ref#refs/heads/}"
+  case "$path" in
+    "$root") rel="(main checkout)" ;;
+    "$HOME"/*) rel="~/${path#"$HOME"/}" ;;
+    *) rel="$path" ;;
+  esac
+  if [ -d "$path" ]; then
+    d="$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"; st=""; [ "$d" = 0 ] || st=" dirty:$d"
+    a="$(git -C "$path" rev-list --count "origin/$base..HEAD")"; b="$(git -C "$path" rev-list --count "HEAD..origin/$base")"
+    st="$st ahead:$a behind:$b"
+  else
+    st=" missing (git worktree prune)"
+  fi
+  printf '%-52s %-32s%s\n' "$rel" "$br" "$st"
+done

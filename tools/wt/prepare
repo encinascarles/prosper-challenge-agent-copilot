@@ -1,0 +1,39 @@
+#!/bin/sh
+# tools/wt/prepare: make a new worktree ready to work in. T3 Code runs it from t3.json ("Prepare worktree",
+# runOnWorktreeCreate) with T3CODE_WORKTREE_PATH set; without it, it prepares the worktree of the current folder.
+#   1. A worktree with no work of its own yet moves to a freshly fetched origin/main (T3 may cut it from a stale
+#      local main). One with commits or edits is left where it is.
+#   2. Copies the .worktreeinclude files it lacks (backend/.env) from the main checkout. Never overwrites.
+#   3. Installs dependencies (tools/wt/deps).
+# Idempotent. Never touches the main checkout.
+set -eu
+die() { echo "wt prepare: $*" >&2; exit 1; }
+tools="$(cd "$(dirname "$0")" && pwd)"
+wt="${T3CODE_WORKTREE_PATH:-}"
+[ -n "$wt" ] || wt="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run it inside a worktree of the repo"
+[ -d "$wt" ] || die "worktree folder not found: $wt"
+cd "$wt"
+wt="$(git rev-parse --show-toplevel)"
+. "$tools/lib.sh"
+if [ "$(cd "$wt" && pwd -P)" = "$root" ]; then
+  echo "prepare: this is the main checkout: nothing to do (T3 Code threads start in their own worktree)."
+  exit 0
+fi
+
+br="$(git branch --show-current 2>/dev/null || true)"
+echo "worktree $wt (${br:-detached})"
+if fetch_base 2>/dev/null; then
+  head="$(git rev-parse HEAD)"; target="$(git rev-parse "origin/$base")"
+  if [ "$head" = "$target" ]; then
+    echo "base     origin/$base $(git rev-parse --short HEAD)"
+  elif [ -z "$(git status --porcelain)" ] && git merge-base --is-ancestor "$head" "$target"; then
+    git merge --ff-only --quiet "$target"
+    echo "base     moved to origin/$base $(git rev-parse --short HEAD) (it was cut from an older commit)"
+  else
+    echo "base     left as is: it has commits or edits of its own"
+  fi
+else
+  echo "base     offline: could not fetch origin/$base"
+fi
+echo "config   $(copy_config "$wt") local files copied from .worktreeinclude"
+sh "$tools/deps"

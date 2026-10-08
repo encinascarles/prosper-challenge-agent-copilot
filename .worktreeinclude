@@ -1,0 +1,3 @@
+# Local files a new worktree copies from the main checkout so it runs there (tools/wt/prepare and tools/wt/deps).
+# Gitignored files only; never overwritten.
+backend/.env
