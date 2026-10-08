@@ -122,7 +122,9 @@ def test_broken_graph_is_422_naming_the_edge(client, agent):
 
     assert response.status_code == 422
     assert response.json() == {
-        "detail": "Edge 'record_details' in node 'collect_details' targets unknown node 'x'."
+        "detail": "Edge 'record_details' in node 'collect_details' targets unknown node 'x'.",
+        "node": "collect_details",
+        "edge": "record_details",
     }
 
 
@@ -142,8 +144,49 @@ def test_missing_required_field_inside_the_graph_is_422(client, agent):
 
     assert response.status_code == 422
     assert response.json() == {
-        "detail": "Missing required field 'target' in edge 'choose_intent' of node 'greeting'."
+        "detail": "Missing required field 'target' in edge 'choose_intent' of node 'greeting'.",
+        "node": "greeting",
+        "edge": "choose_intent",
     }
+
+
+def test_problem_in_a_node_names_the_node_and_no_edge(client, agent):
+    agent["nodes"][2]["task_messages"] = "Offer two times."
+
+    response = client.post("/api/agents", json={"config": agent})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "'task_messages' in node 'offer_times' must be a list, got a string.",
+        "node": "offer_times",
+    }
+
+
+def test_duplicate_node_names_the_node(client, agent):
+    agent["nodes"][3]["name"] = "greeting"
+
+    response = client.post("/api/agents", json={"config": agent})
+
+    assert response.status_code == 422
+    assert response.json()["node"] == "greeting"
+    assert "edge" not in response.json()
+
+
+def test_rejected_update_names_the_node_and_edge(client, agent):
+    created = client.post("/api/agents", json={"config": agent}).json()
+    agent["nodes"][0]["edges"][0]["target"] = ""
+
+    response = client.put(f"/api/agents/{created['id']}", json={"config": agent})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "Edge 'choose_intent' in node 'greeting' targets unknown node ''.",
+        "node": "greeting",
+        "edge": "choose_intent",
+    }
+    # And the stored agent is still the valid one.
+    stored = client.get(f"/api/agents/{created['id']}").json()
+    assert stored["config"]["nodes"][0]["edges"][0]["target"] == "collect_details"
 
 
 def test_rejected_create_stores_nothing(client, agent):

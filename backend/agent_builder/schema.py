@@ -18,6 +18,29 @@ from typing import Optional
 DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # ElevenLabs "Rachel"
 DEFAULT_MODEL = "gpt-4o"
 
+class AgentError(ValueError):
+    """What is wrong with an agent, and where: the node and the edge, by name.
+
+    The sentence is for a person. The names are for a program (the editor marks
+    the card), so it does not have to read them back out of the sentence. `edge`
+    is the edge's function name, which is what identifies it within its node.
+    """
+
+    def __init__(self, message: str, node: Optional[str] = None, edge: Optional[str] = None):
+        super().__init__(message)
+        self.node = node
+        self.edge = edge
+
+
+def _located(error: ValueError, node: Optional[str] = None, edge: Optional[str] = None):
+    """`error` as an AgentError that also says where, keeping what it already knew."""
+    return AgentError(
+        str(error),
+        node=node or getattr(error, "node", None),
+        edge=edge or getattr(error, "edge", None),
+    )
+
+
 _MISSING = object()
 # Named as JSON names them: the reader of the message wrote JSON, not Python.
 _JSON_NAMES = {
@@ -81,13 +104,16 @@ class Edge:
         d = _as_object(d, where + of_node)
         function = _read(d, "function", str, where + of_node)
         where = f"edge '{function}'{of_node}"
-        return cls(
-            function=function,
-            description=_read(d, "description", str, where),
-            target=_read(d, "target", str, where),
-            properties=_read(d, "properties", dict, where, default={}),
-            required=_read(d, "required", list, where, default=[], items=str),
-        )
+        try:
+            return cls(
+                function=function,
+                description=_read(d, "description", str, where),
+                target=_read(d, "target", str, where),
+                properties=_read(d, "properties", dict, where, default={}),
+                required=_read(d, "required", list, where, default=[], items=str),
+            )
+        except ValueError as error:
+            raise _located(error, edge=function) from error
 
 
 @dataclass
@@ -106,6 +132,13 @@ class Node:
     def from_dict(cls, d: dict, where: str = "the node") -> "Node":
         d = _as_object(d, where)
         name = _read(d, "name", str, where)
+        try:
+            return cls._named(d, name)
+        except ValueError as error:
+            raise _located(error, node=name) from error
+
+    @classmethod
+    def _named(cls, d: dict, name: str) -> "Node":
         where = f"node '{name}'"
         edges = _read(d, "edges", list, where, default=[])
         task_messages = _read(d, "task_messages", list, where, default=[], items=dict)

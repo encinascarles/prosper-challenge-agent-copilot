@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import store
@@ -83,23 +84,42 @@ class Problem(BaseModel):
     detail: str  # one sentence naming what is wrong
 
 
+class InvalidAgent(Problem):
+    # Where the problem is, when it is in one place, so a client can point at
+    # it without reading the names back out of the sentence.
+    node: str | None = None  # the node's name
+    edge: str | None = None  # the edge's function, within that node
+
+
 _NOT_FOUND = {404: {"model": Problem, "description": "No agent has this id."}}
-_INVALID = {422: {"model": Problem, "description": "The agent is not valid; says why."}}
+_INVALID = {
+    422: {
+        "model": InvalidAgent,
+        "description": "The agent is not valid; says why, and which node and edge.",
+    }
+}
 
 
-def _validate(config: dict) -> None:
-    """Raise a 422 with the reason unless `config` is an agent the bot could run."""
+def _problem(config: dict) -> JSONResponse | None:
+    """The 422 that says why `config` is not an agent the bot could run, or None if it is."""
     try:
         AgentBuilder.from_dict(config)
+        return None
     except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+        problem = {"detail": str(error)}
+        # Only the fields that apply: a problem with the agent as a whole
+        # (no nodes, no start) names neither.
+        for field in ("node", "edge"):
+            if getattr(error, field, None) is not None:
+                problem[field] = getattr(error, field)
     except (KeyError, TypeError) as error:
         # agent_builder reports problems as ValueError. This is the net under
         # it: a shape it did not foresee is still the client's 422, not a 500.
         reason = (
             f"missing field {error}" if isinstance(error, KeyError) else f"wrong type ({error})"
         )
-        raise HTTPException(status_code=422, detail=f"Invalid agent: {reason}.") from error
+        problem = {"detail": f"Invalid agent: {reason}."}
+    return JSONResponse(status_code=422, content=problem)
 
 
 def _not_found(agent_id: str) -> HTTPException:
@@ -130,16 +150,18 @@ def get_agent(agent_id: str) -> dict:
 
 
 @router.post("", status_code=201, response_model=AgentRecord, responses=_INVALID)
-def create_agent(save: AgentSave) -> dict:
-    _validate(save.config)
+def create_agent(save: AgentSave) -> Any:
+    if problem := _problem(save.config):
+        return problem
     return store.create_agent(save.config, save.positions())
 
 
 @router.put("/{agent_id}", response_model=AgentRecord, responses=_NOT_FOUND | _INVALID)
-def update_agent(agent_id: str, save: AgentSave) -> dict:
+def update_agent(agent_id: str, save: AgentSave) -> Any:
     # Replaces the whole agent: the editor always holds the full graph, and a
     # partial update could leave edges pointing at nodes that are gone.
-    _validate(save.config)
+    if problem := _problem(save.config):
+        return problem
     record = store.update_agent(agent_id, save.config, save.positions())
     if record is None:
         raise _not_found(agent_id)
