@@ -45,7 +45,8 @@ make install   # backend (uv sync) + frontend (npm ci)
 make dev       # backend + frontend, open http://localhost:5173
 make run       # backend only; Pipecat's prebuilt client at http://localhost:7860/client
 make lint      # ruff check on the backend (same command CI runs)
-make check     # everything CI runs: ruff, oxlint, typecheck, build
+make test      # backend tests (pytest): no network, no LLM calls
+make check     # everything CI runs: ruff, pytest, oxlint, typecheck, build
 ```
 
 Frontend checks, from `frontend/`: `npm run lint` (oxlint) and `npm run build`

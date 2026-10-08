@@ -116,6 +116,14 @@ async def bot(runner_args: RunnerArguments):
 
 
 if __name__ == "__main__":
-    from pipecat.runner.run import main
+    from pipecat.runner.run import app, main
+
+    import store
+    from api import router
+
+    # The builder API shares the runner's FastAPI server: one backend, one port,
+    # and the browser reaches calls and agents through the same origin.
+    store.init_db()
+    app.include_router(router)
 
     main()
