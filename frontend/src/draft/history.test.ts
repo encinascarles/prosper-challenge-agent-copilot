@@ -90,10 +90,58 @@ describe('historyReducer', () => {
     expect(run(typed, { type: 'cancel', merge: 'other' })).toBe(typed)
   })
 
-  it('places the cards without making it something to undo', () => {
+  it('places the cards without making it something to undo or to save', () => {
     const history = start()
-    const placed = run(history, { type: 'place', layout: { greeting: { x: 1, y: 2 } } })
-    expect(placed.present.layout).toEqual({ greeting: { x: 1, y: 2 } })
+    const [greeting, goodbye] = history.present.ids
+    const placed = run(history, { type: 'place', positions: { [greeting]: { x: 1, y: 2 } } })
+    expect(placed.present.positions).toEqual({ [greeting]: { x: 1, y: 2 } })
     expect(placed.past).toEqual([])
+    expect(placed.saved).toBe(placed.present)
+    // A card that already has a position keeps it.
+    const again = run(placed, {
+      type: 'place',
+      positions: { [greeting]: { x: 9, y: 9 }, [goodbye]: { x: 3, y: 4 } },
+    })
+    expect(again.present.positions).toEqual({ [greeting]: { x: 1, y: 2 }, [goodbye]: { x: 3, y: 4 } })
+  })
+
+  it('has something to save after an edit, and nothing after saving or undoing it', () => {
+    const history = start()
+    const [greeting] = history.present.ids
+    const dirty = (h: History) => h.present !== h.saved
+    const edited = run(history, apply((d) => renameNode(d, greeting, 'welcome')))
+    expect(dirty(history)).toBe(false)
+    expect(dirty(edited)).toBe(true)
+    expect(dirty(run(edited, undo))).toBe(false)
+    const saved = run(edited, { type: 'saved', draft: edited.present })
+    expect(dirty(saved)).toBe(false)
+    // Undoing past the save is a change again, and redo is back to saved.
+    expect(dirty(run(saved, undo))).toBe(true)
+    expect(dirty(run(saved, undo, redo))).toBe(false)
+  })
+
+  it('keeps the whole undo history through a save', () => {
+    const history = start()
+    const [greeting] = history.present.ids
+    const edited = run(
+      history,
+      apply((d) => renameNode(d, greeting, 'welcome')),
+      apply((d) => renameNode(d, greeting, 'hello')),
+      undo,
+    )
+    const saved = run(edited, { type: 'saved', draft: edited.present })
+    expect(saved.past).toBe(edited.past)
+    expect(saved.future).toBe(edited.future)
+    expect(names(run(saved, undo))).toEqual(['greeting', 'goodbye'])
+    expect(names(run(saved, redo))).toEqual(['hello', 'goodbye'])
+  })
+
+  it('still has something to save when the draft changed while the save was on its way', () => {
+    const history = start()
+    const [greeting] = history.present.ids
+    const sent = run(history, apply((d) => renameNode(d, greeting, 'welcome')))
+    const typed = run(sent, apply((d) => renameNode(d, greeting, 'hello')))
+    const saved = run(typed, { type: 'saved', draft: sent.present })
+    expect(saved.present !== saved.saved).toBe(true)
   })
 })

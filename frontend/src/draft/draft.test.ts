@@ -20,6 +20,7 @@ import {
   setEnd,
   setInstructions,
   setStart,
+  toLayout,
   updateField,
   type Draft,
 } from './draft'
@@ -61,16 +62,36 @@ const config: AgentConfig = {
   ],
 }
 
+const LAYOUT = { greeting: { x: 0, y: 0 }, details: { x: 400, y: 0 }, goodbye: { x: 800, y: 0 } }
+
 // Every test starts from the same draft, with positions, and by id.
 function open(): { draft: Draft; greeting: string; details: string; goodbye: string } {
-  const opened = openDraft(config)
-  const [greeting, details, goodbye] = opened.ids
-  const layout = { greeting: { x: 0, y: 0 }, details: { x: 400, y: 0 }, goodbye: { x: 800, y: 0 } }
-  return { draft: { ...opened, layout }, greeting, details, goodbye }
+  const draft = openDraft(config, LAYOUT)
+  const [greeting, details, goodbye] = draft.ids
+  return { draft, greeting, details, goodbye }
 }
 
 const node = (draft: Draft, name: string) => draft.config.nodes.find((n) => n.name === name)!
 const VALID = /^[a-zA-Z0-9_-]{1,64}$/
+
+describe('layout', () => {
+  it('opens with the cards where the stored layout says, and saves them back the same', () => {
+    const { draft } = open()
+    expect(toLayout(draft)).toEqual(LAYOUT)
+  })
+
+  it('ignores a position for a name that is not a node, and leaves an unplaced node without one', () => {
+    const draft = openDraft(config, { greeting: { x: 1, y: 2 }, gone: { x: 9, y: 9 } })
+    expect(toLayout(draft)).toEqual({ greeting: { x: 1, y: 2 } })
+    expect(Object.keys(draft.positions)).toEqual([draft.ids[0]])
+  })
+
+  it('saves under the names the nodes have when it is saved', () => {
+    const { draft, greeting, details } = open()
+    const edited = deleteNode(renameNode(draft, details, 'ask'), greeting)
+    expect(toLayout(edited)).toEqual({ ask: { x: 400, y: 0 }, goodbye: { x: 800, y: 0 } })
+  })
+})
 
 describe('openDraft', () => {
   it('gives every node an id of its own', () => {
@@ -101,10 +122,12 @@ describe('renameNode', () => {
     functions.forEach((name) => expect(name).toMatch(VALID))
   })
 
-  it('moves its position to the new name', () => {
+  it('carries its position to the new name', () => {
     const { draft, details } = open()
     const next = renameNode(draft, details, 'collect_details')
-    expect(next.layout).toEqual({
+    // Kept by id, so nothing moved; saved by name, so it is under the new one.
+    expect(next.positions).toBe(draft.positions)
+    expect(toLayout(next)).toEqual({
       greeting: { x: 0, y: 0 },
       collect_details: { x: 400, y: 0 },
       goodbye: { x: 800, y: 0 },
@@ -323,7 +346,8 @@ describe('deleteNode', () => {
     const next = deleteNode(draft, details)
     expect(next.config.nodes.map((n) => n.name)).toEqual(['greeting', 'goodbye'])
     expect(next.ids).toEqual([greeting, goodbye])
-    expect(Object.keys(next.layout)).toEqual(['greeting', 'goodbye'])
+    expect(Object.keys(toLayout(next))).toEqual(['greeting', 'goodbye'])
+    expect(details in next.positions).toBe(false)
   })
 
   it('disconnects the edges that went to it, and keeps them', () => {
@@ -424,7 +448,7 @@ describe('addNode', () => {
     const two = addNode(one, 'new-2', { x: 30, y: 40 })
     expect(two.config.nodes.slice(3)).toEqual([{ name: 'step_4' }, { name: 'step_5' }])
     expect(two.ids.slice(3)).toEqual(['new-1', 'new-2'])
-    expect(two.layout.step_4).toEqual({ x: 10, y: 20 })
+    expect(toLayout(two).step_4).toEqual({ x: 10, y: 20 })
     expect(two.config.initial_node).toBe('greeting')
   })
 
@@ -446,7 +470,7 @@ describe('addNode', () => {
   it('leaves the other cards where they are', () => {
     const { draft } = open()
     const next = addNode(draft, 'new-1', { x: 10, y: 20 })
-    expect(next.layout).toMatchObject(draft.layout)
+    expect(next.positions).toMatchObject(draft.positions)
   })
 
   it('starts the agent at its first node', () => {
@@ -457,9 +481,9 @@ describe('addNode', () => {
 })
 
 describe('moveNode', () => {
-  it('stores the position under the node name', () => {
+  it('puts the card there, saved under the node name', () => {
     const { draft, details } = open()
-    expect(moveNode(draft, details, { x: 5, y: 6 }).layout.details).toEqual({ x: 5, y: 6 })
+    expect(toLayout(moveNode(draft, details, { x: 5, y: 6 })).details).toEqual({ x: 5, y: 6 })
     expect(moveNode(draft, details, { x: 400, y: 0 })).toBe(draft)
   })
 })

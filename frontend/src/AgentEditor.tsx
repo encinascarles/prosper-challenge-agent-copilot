@@ -4,12 +4,12 @@
 // and a new undo history.
 import { useEffect } from 'react'
 
-import type { AgentConfig } from '@/agents/types'
+import type { AgentRecord } from '@/agents/types'
 import { EditorContext, useNewEditor } from '@/draft/editor'
 import { GraphCanvas } from '@/graph/GraphCanvas'
 
-export function AgentEditor({ config }: { config: AgentConfig }) {
-  const editor = useNewEditor(config)
+export function AgentEditor({ record }: { record: AgentRecord }) {
+  const editor = useNewEditor(record.config, record.layout)
   const { undo, redo } = editor
 
   // One undo for the whole editor, also while typing: the browser's own undo

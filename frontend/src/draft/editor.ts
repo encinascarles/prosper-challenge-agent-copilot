@@ -4,7 +4,7 @@
 
 import { createContext, use, useMemo, useReducer } from 'react'
 
-import type { AgentConfig } from '@/agents/types'
+import type { AgentConfig, Layout } from '@/agents/types'
 
 import { openDraft, type Draft, type Point } from './draft'
 import { historyReducer, startHistory } from './history'
@@ -17,10 +17,14 @@ export type Editor = {
   seal: () => void
   /** Takes back the run of edits merged under `merge`: the field was left in a state that cannot stay. */
   cancel: (merge: string) => void
-  /** Puts the cards of a just opened agent in their first positions. */
-  place: (layout: Record<string, Point>) => void
+  /** Puts the cards of a just opened agent that have no position yet where the layout says. */
+  place: (positions: Record<string, Point>) => void
   undo: () => void
   redo: () => void
+  /** Whether the draft differs from what was loaded or last saved. */
+  dirty: boolean
+  /** Records that `draft` reached the backend. */
+  markSaved: (draft: Draft) => void
 }
 
 export const EditorContext = createContext<Editor | null>(null)
@@ -31,10 +35,10 @@ export function useEditor(): Editor {
   return editor
 }
 
-/** An editor over the draft of `config`. Create one per open agent. */
-export function useNewEditor(config: AgentConfig): Editor {
-  const [history, dispatch] = useReducer(historyReducer, config, (loaded) =>
-    startHistory(openDraft(loaded)),
+/** An editor over the draft of a loaded agent and its layout. Create one per open agent. */
+export function useNewEditor(config: AgentConfig, layout: Layout): Editor {
+  const [history, dispatch] = useReducer(historyReducer, null, () =>
+    startHistory(openDraft(config, layout)),
   )
   const actions = useMemo(
     () => ({
@@ -42,11 +46,16 @@ export function useNewEditor(config: AgentConfig): Editor {
         dispatch({ type: 'apply', edit, merge }),
       seal: () => dispatch({ type: 'seal' }),
       cancel: (merge: string) => dispatch({ type: 'cancel', merge }),
-      place: (layout: Record<string, Point>) => dispatch({ type: 'place', layout }),
+      place: (positions: Record<string, Point>) => dispatch({ type: 'place', positions }),
       undo: () => dispatch({ type: 'undo' }),
       redo: () => dispatch({ type: 'redo' }),
+      markSaved: (draft: Draft) => dispatch({ type: 'saved', draft }),
     }),
     [],
   )
-  return useMemo(() => ({ draft: history.present, ...actions }), [history.present, actions])
+  const dirty = history.present !== history.saved
+  return useMemo(
+    () => ({ draft: history.present, dirty, ...actions }),
+    [history.present, dirty, actions],
+  )
 }

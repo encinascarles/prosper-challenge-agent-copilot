@@ -22,9 +22,13 @@ export type Draft = {
   // One id per node, in the order of `config.nodes`. A name is text being
   // edited; the id is what stays the same while it is.
   ids: string[]
-  // Where each card is, by node name: the shape it will be saved in.
-  layout: Record<string, Point>
+  // Where each card is, by node id: a rename then carries the position along
+  // without anyone moving it. It is saved by node name (see `toLayout`).
+  positions: Record<string, Point>
 }
+
+/** Card positions as they are stored and sent: by node name. */
+export type Layout = Record<string, Point>
 
 /** A target that is no node: the edge is not connected. */
 export const NOWHERE = ''
@@ -36,9 +40,24 @@ export function newNodeId(): string {
   return `node-${++lastId}`
 }
 
-/** The draft of a loaded agent. */
-export function openDraft(config: AgentConfig): Draft {
-  return { config, ids: config.nodes.map(newNodeId), layout: {} }
+/** The draft of a loaded agent, with its cards where `layout` says. A node it does not place has no position yet. */
+export function openDraft(config: AgentConfig, layout: Layout = {}): Draft {
+  const ids = config.nodes.map(newNodeId)
+  const positions: Draft['positions'] = {}
+  config.nodes.forEach((node, i) => {
+    if (layout[node.name]) positions[ids[i]] = layout[node.name]
+  })
+  return { config, ids, positions }
+}
+
+/** The draft's card positions by node name, to save next to the agent. */
+export function toLayout(draft: Draft): Layout {
+  const layout: Layout = {}
+  draft.config.nodes.forEach((node, i) => {
+    const position = draft.positions[draft.ids[i]]
+    if (position) layout[node.name] = position
+  })
+  return layout
 }
 
 export function nodeOf(draft: Draft, id: string): Node | undefined {
@@ -96,8 +115,9 @@ function retarget(nodes: Node[], from: string, to: string): Node[] {
 }
 
 /**
- * Renames a node. Its edges, its position and the start of the agent follow
- * the name. Refused (nothing changes) if the name is empty or another node has it.
+ * Renames a node. The edges into it and the start of the agent follow the
+ * name; its position is kept by id, so it needs no following. Refused (nothing
+ * changes) if the name is empty or another node has it.
  */
 export function renameNode(draft: Draft, id: string, name: string): Draft {
   const old = nodeOf(draft, id)?.name
@@ -107,7 +127,6 @@ export function renameNode(draft: Draft, id: string, name: string): Draft {
   const nodes = retarget(draft.config.nodes, old, name).map((node, i) =>
     draft.ids[i] === id ? { ...node, name } : node,
   )
-  const { [old]: position, ...layout } = draft.layout
   return {
     ...draft,
     config: {
@@ -115,7 +134,6 @@ export function renameNode(draft: Draft, id: string, name: string): Draft {
       nodes,
       initial_node: draft.config.initial_node === old ? name : draft.config.initial_node,
     },
-    layout: position ? { ...layout, [name]: position } : layout,
   }
 }
 
@@ -281,14 +299,14 @@ export function deleteNode(draft: Draft, id: string): Draft {
   const index = draft.ids.indexOf(id)
   const node = draft.config.nodes[index]
   if (!node) return draft
-  const { [node.name]: _removed, ...layout } = draft.layout
+  const { [id]: _removed, ...positions } = draft.positions
   const rest: Draft = {
     config: {
       ...draft.config,
       nodes: retarget(draft.config.nodes.toSpliced(index, 1), node.name, NOWHERE),
     },
     ids: draft.ids.toSpliced(index, 1),
-    layout,
+    positions,
   }
   if (draft.config.initial_node !== node.name) return rest
   const next = rest.ids[0]
@@ -361,21 +379,20 @@ export function addNode(
       initial_node: draft.config.nodes.length === 0 ? name : draft.config.initial_node,
     },
     ids: [...draft.ids, id],
-    layout: { ...draft.layout, [name]: position },
+    positions: { ...draft.positions, [id]: position },
   }
   return from ? connect(added, from.id, from.index, id) : added
 }
 
 /** Puts a node's card at `position`. */
 export function moveNode(draft: Draft, id: string, position: Point): Draft {
-  const name = nodeOf(draft, id)?.name
-  if (name === undefined) return draft
-  const current = draft.layout[name]
+  if (!draft.ids.includes(id)) return draft
+  const current = draft.positions[id]
   if (current?.x === position.x && current.y === position.y) return draft
-  return { ...draft, layout: { ...draft.layout, [name]: position } }
+  return { ...draft, positions: { ...draft.positions, [id]: position } }
 }
 
-/** Puts every card where `layout` says, by node name. */
-export function setLayout(draft: Draft, layout: Record<string, Point>): Draft {
-  return { ...draft, layout }
+/** Puts every card where `positions` says, by node id. */
+export function setPositions(draft: Draft, positions: Record<string, Point>): Draft {
+  return { ...draft, positions }
 }

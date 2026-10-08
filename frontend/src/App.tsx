@@ -60,7 +60,7 @@ export default function App() {
         {error ? (
           <Notice error>{error}</Notice>
         ) : open ? (
-          <AgentEditor key={open.id} config={open.config} />
+          <AgentEditor key={open.id} record={open} />
         ) : agents?.length === 0 ? (
           <Notice>No agents yet.</Notice>
         ) : (

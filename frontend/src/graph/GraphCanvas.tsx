@@ -13,6 +13,11 @@
 // dots, ELK places them and routes the wires, and only then is the canvas
 // shown. After that the layout runs only on "Tidy up": editing makes a card
 // grow where it is, and nothing else moves.
+//
+// An agent saved with its positions opens with its cards where they were. The
+// layout still runs once, for the wires: a route is only drawn for a wire whose
+// ends meet it, so the cards that are still where the layout would put them get
+// their routed wires back and the ones that were moved by hand get curves.
 
 import {
   Background,
@@ -32,7 +37,7 @@ import '@xyflow/react/dist/style.css'
 import { LayoutGrid, Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { addNode, connect, moveNode, newNodeId, setLayout, type Point } from '@/draft/draft'
+import { addNode, connect, moveNode, newNodeId, setPositions, type Point } from '@/draft/draft'
 import { useEditor } from '@/draft/editor'
 import { cn } from '@/lib/utils'
 
@@ -88,7 +93,7 @@ function Canvas() {
       graph.cards.map((card) => ({
         id: card.id,
         type: 'card',
-        position: dragging[card.id] ?? draft.layout[card.node.name] ?? ORIGIN,
+        position: dragging[card.id] ?? draft.positions[card.id] ?? ORIGIN,
         measured: sizes[card.id],
         data: {
           ...card,
@@ -274,7 +279,7 @@ function Canvas() {
     if (duration === null) return
     fitting.current = null
     void flow.fitView({ padding: 0.15, maxZoom: 1, duration })
-  }, [draft.layout, flow])
+  }, [draft.positions, flow])
 
   const measured = useNodesInitialized()
   const [placed, setPlaced] = useState(false)
@@ -298,16 +303,12 @@ function Canvas() {
         }
       }
       const layout = await layoutGraph(graph, boxes)
-      const byName = Object.fromEntries(
-        graph.cards.flatMap((card) =>
-          layout.positions[card.id] ? [[card.node.name, layout.positions[card.id]]] : [],
-        ),
-      )
       fitting.current = duration
       setAnimating(duration > 0)
-      // The first layout is where the cards are; "Tidy up" is an edit to undo.
-      if (first) place(byName)
-      else apply((current) => setLayout(current, byName))
+      // On opening, the layout only places the cards the agent was saved
+      // without a position for; "Tidy up" moves them all, and is an edit to undo.
+      if (first) place(layout.positions)
+      else apply((current) => setPositions(current, layout.positions))
       setRoutes(
         Object.fromEntries(
           graph.wires.flatMap((wire) =>

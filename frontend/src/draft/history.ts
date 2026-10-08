@@ -15,12 +15,19 @@ export type History = {
   present: Draft
   future: Draft[]
   merging: string | null // the merge key of the last edit, while it can still grow
+  // The draft as it was loaded or last saved. Saving moves this and nothing
+  // else: what can be undone is the same before and after a save, and undoing
+  // back to this draft is back to "nothing to save".
+  saved: Draft
 }
 
 export type Action =
   | { type: 'apply'; edit: (draft: Draft) => Draft; merge?: string }
-  // The first layout of a just opened agent: where the cards are, not an edit.
-  | { type: 'place'; layout: Record<string, Point> }
+  // Where the layout puts the cards of a just opened agent that have no
+  // position yet: not an edit, and nothing to save.
+  | { type: 'place'; positions: Record<string, Point> }
+  // `draft` reached the backend.
+  | { type: 'saved'; draft: Draft }
   | { type: 'seal' }
   // Takes back the run of edits merged under `merge`, as if never typed.
   | { type: 'cancel'; merge: string }
@@ -30,7 +37,7 @@ export type Action =
 const LIMIT = 200
 
 export function startHistory(draft: Draft): History {
-  return { past: [], present: draft, future: [], merging: null }
+  return { past: [], present: draft, future: [], merging: null, saved: draft }
 }
 
 export function historyReducer(history: History, action: Action): History {
@@ -43,10 +50,15 @@ export function historyReducer(history: History, action: Action): History {
       if (merging !== null && merging === history.merging) {
         return { ...history, present: next }
       }
-      return { past: [...past, present].slice(-LIMIT), present: next, future: [], merging }
+      return { ...history, past: [...past, present].slice(-LIMIT), present: next, future: [], merging }
     }
-    case 'place':
-      return { ...history, present: { ...present, layout: action.layout } }
+    case 'place': {
+      // A position the agent was saved with wins over the layout's.
+      const placed = { ...present, positions: { ...action.positions, ...present.positions } }
+      return { ...history, present: placed, saved: history.saved === present ? placed : history.saved }
+    }
+    case 'saved':
+      return history.saved === action.draft ? history : { ...history, saved: action.draft }
     case 'seal':
       return history.merging === null ? history : { ...history, merging: null }
     case 'cancel':
@@ -55,6 +67,7 @@ export function historyReducer(history: History, action: Action): History {
     case 'undo':
       if (past.length === 0) return history
       return {
+        ...history,
         past: past.slice(0, -1),
         present: past[past.length - 1],
         future: [present, ...future],
@@ -63,6 +76,7 @@ export function historyReducer(history: History, action: Action): History {
     case 'redo':
       if (future.length === 0) return history
       return {
+        ...history,
         past: [...past, present],
         present: future[0],
         future: future.slice(1),
