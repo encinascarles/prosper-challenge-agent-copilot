@@ -63,7 +63,7 @@ export function RoutedWire(props: EdgeProps<WireEdge>) {
   const { sourceX, sourceY, targetX, targetY, data } = props
   const points =
     data?.route && fitted(data.route, { x: sourceX, y: sourceY }, { x: targetX, y: targetY })
-  if (points) return <BaseEdge id={props.id} path={roundedPath(points)} />
-  const [curve] = getBezierPath(props)
-  return <BaseEdge id={props.id} path={curve} />
+  const [curve] = points ? [roundedPath(points)] : getBezierPath(props)
+  // A wide invisible stroke over the wire, so it can be clicked to select it.
+  return <BaseEdge id={props.id} path={curve} interactionWidth={20} />
 }

@@ -65,7 +65,8 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
         <Handle
           type="target"
           position={Position.Left}
-          isConnectable={false}
+          // Wires end here; they start at an edge's own dot.
+          isConnectableStart={false}
           className={cn(dot, '!top-[26px] !left-[-6px] !bg-muted-foreground')}
         />
       )}
@@ -149,7 +150,7 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
                 id={handleId(index)}
                 type="source"
                 position={Position.Right}
-                isConnectable={false}
+                isConnectableEnd={false}
                 className={cn(
                   dot,
                   '!top-[17px] !right-[-6px]',

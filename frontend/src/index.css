@@ -145,6 +145,7 @@
   --xy-background-color: transparent;
   --xy-edge-stroke: var(--border-strong);
   --xy-edge-stroke-width: 1.5;
+  --xy-edge-stroke-selected: var(--foreground);
 }
 .react-flow__controls {
   box-shadow: none;

@@ -20,18 +20,21 @@ import {
   ReactFlowProvider,
   useNodesInitialized,
   useReactFlow,
+  type Connection,
+  type EdgeChange,
+  type FinalConnectionState,
   type NodeChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { LayoutGrid } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { moveNode, setLayout, type Point } from '@/draft/draft'
+import { connect, moveNode, setLayout, type Point } from '@/draft/draft'
 import { useEditor } from '@/draft/editor'
 import { cn } from '@/lib/utils'
 
 import { layoutGraph, type Box } from './layout'
-import { toGraph } from './model'
+import { edgeIndex, toGraph } from './model'
 import { NodeCard, type CardNode } from './NodeCard'
 import { RoutedWire, type WireEdge } from './RoutedWire'
 
@@ -40,6 +43,7 @@ const edgeTypes = { wire: RoutedWire }
 const TIDY_MS = 300
 
 const ORIGIN = { x: 0, y: 0 }
+const DELETE_KEYS = ['Backspace', 'Delete']
 
 function Canvas() {
   const { draft, apply, place } = useEditor()
@@ -47,7 +51,10 @@ function Canvas() {
   const graph = useMemo(() => toGraph(draft.config, draft.ids), [draft.config, draft.ids])
   const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({})
   const [dragging, setDragging] = useState<Record<string, Point>>({})
-  const [routes, setRoutes] = useState<Record<string, Point[]>>({})
+  // The route of each wire from the last layout, and the card it led to then:
+  // a wire that now goes elsewhere has no use for it.
+  const [routes, setRoutes] = useState<Record<string, { target: string; points: Point[] }>>({})
+  const [selected, setSelected] = useState<Record<string, boolean>>({})
 
   const nodes = useMemo<CardNode[]>(
     () =>
@@ -57,6 +64,9 @@ function Canvas() {
         position: dragging[card.id] ?? draft.layout[card.node.name] ?? ORIGIN,
         measured: sizes[card.id],
         data: card,
+        // Only wires are selected, to disconnect them. A node is deleted from its menu.
+        selectable: false,
+        deletable: false,
       })),
     [graph, draft.layout, dragging, sizes],
   )
@@ -68,9 +78,10 @@ function Canvas() {
         source: wire.source,
         sourceHandle: wire.handle,
         target: wire.target,
-        data: { route: routes[wire.id] },
+        selected: selected[wire.id] ?? false,
+        data: { route: routes[wire.id]?.target === wire.target ? routes[wire.id].points : undefined },
       })),
-    [graph, routes],
+    [graph, routes, selected],
   )
 
   const onNodesChange = useCallback((changes: NodeChange<CardNode>[]) => {
@@ -84,6 +95,50 @@ function Canvas() {
       }
     }
   }, [])
+  const onEdgesChange = useCallback((changes: EdgeChange<WireEdge>[]) => {
+    for (const change of changes) {
+      if (change.type === 'select') {
+        const { id, selected: on } = change
+        setSelected((current) => ({ ...current, [id]: on }))
+      }
+    }
+  }, [])
+  // Backspace or Delete on a selected wire: the edge stays, with no target.
+  const onEdgesDelete = useCallback(
+    (deleted: WireEdge[]) => {
+      apply((current) =>
+        deleted.reduce(
+          (next, wire) =>
+            wire.sourceHandle ? connect(next, wire.source, edgeIndex(wire.sourceHandle), null) : next,
+          current,
+        ),
+      )
+      setSelected({})
+    },
+    [apply],
+  )
+  // A wire dropped on a card's input dot.
+  const onConnect = useCallback(
+    ({ source, sourceHandle, target }: Connection) => {
+      if (sourceHandle) apply((current) => connect(current, source, edgeIndex(sourceHandle), target))
+    },
+    [apply],
+  )
+  // A wire dropped anywhere else. On a card it connects to that card: the
+  // whole card is the target, not only its dot.
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent, connection: FinalConnectionState) => {
+      const from = connection.fromHandle
+      if (connection.isValid || !connection.fromNode || from?.type !== 'source' || !from.id) return
+      const { clientX, clientY } = 'changedTouches' in event ? event.changedTouches[0] : event
+      const under = document.elementFromPoint(clientX, clientY)
+      const card = under?.closest<HTMLElement>('.react-flow__node')?.dataset.id
+      const source = connection.fromNode.id
+      const index = edgeIndex(from.id)
+      if (card) apply((current) => connect(current, source, index, card))
+    },
+    [apply],
+  )
   // A drag becomes one edit when the card is dropped, not one per pixel.
   const onNodeDragStop = useCallback(
     (_: unknown, __: CardNode, dropped: CardNode[]) => {
@@ -138,7 +193,15 @@ function Canvas() {
       // The first layout is where the cards are; "Tidy up" is an edit to undo.
       if (first) place(byName)
       else apply((current) => setLayout(current, byName))
-      setRoutes(layout.routes)
+      setRoutes(
+        Object.fromEntries(
+          graph.wires.flatMap((wire) =>
+            layout.routes[wire.id]
+              ? [[wire.id, { target: wire.target, points: layout.routes[wire.id] }]]
+              : [],
+          ),
+        ),
+      )
       if (duration > 0) setTimeout(() => setAnimating(false), duration)
       setPlaced(true)
     },
@@ -162,10 +225,13 @@ function Canvas() {
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onNodeDragStop={onNodeDragStop}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        // Nodes are deleted from their menu. A key would also fire while typing.
-        deleteKeyCode={null}
+        onEdgesChange={onEdgesChange}
+        onEdgesDelete={onEdgesDelete}
+        onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
+        connectionLineStyle={{ stroke: 'var(--foreground)', strokeWidth: 1.5 }}
+        // For a selected wire. React Flow ignores these keys while typing in an input.
+        deleteKeyCode={DELETE_KEYS}
         minZoom={0.3}
         maxZoom={1.5}
       >

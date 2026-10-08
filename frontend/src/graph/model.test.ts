@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { AgentConfig } from '@/agents/types'
 
-import { handleId, toGraph } from './model'
+import { edgeIndex, handleId, toGraph } from './model'
 
 const edge = (target: string) => ({ function: `go_to_${target}`, description: '', target })
 
@@ -33,6 +33,7 @@ describe('toGraph', () => {
     expect(graph.wires).toContainEqual({
       id: `a:${handleId(0)}`,
       source: 'a',
+      index: 0,
       handle: handleId(0),
       target: 'b',
     })
@@ -50,5 +51,11 @@ describe('toGraph', () => {
   it('shows no edges on an end node', () => {
     expect(graph.cards[2].edges).toEqual([])
     expect(graph.wires.some((wire) => wire.source === 'c')).toBe(false)
+  })
+})
+
+describe('edgeIndex', () => {
+  it('reads back the edge a dot belongs to', () => {
+    expect(edgeIndex(handleId(7))).toBe(7)
   })
 })

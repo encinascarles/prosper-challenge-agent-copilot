@@ -20,6 +20,7 @@ export type Card = {
 export type Wire = {
   id: string
   source: string // card id
+  index: number // which of the source node's edges it is
   handle: string // the dot it leaves from
   target: string // card id
 }
@@ -29,6 +30,11 @@ export type Graph = { cards: Card[]; wires: Wire[] }
 /** The id of the dot of a card's edge. By position: an edge has no identity of its own. */
 export function handleId(index: number): string {
   return `edge-${index}`
+}
+
+/** Which edge a dot belongs to: the reverse of `handleId`. */
+export function edgeIndex(handle: string): number {
+  return Number(handle.slice('edge-'.length))
 }
 
 export function toGraph(config: AgentConfig, ids: string[]): Graph {
@@ -54,7 +60,9 @@ export function toGraph(config: AgentConfig, ids: string[]): Graph {
     card.edges.flatMap((edge, index) => {
       const target = idOf.get(edge.target)
       const handle = handleId(index)
-      return target ? [{ id: `${card.id}:${handle}`, source: card.id, handle, target }] : []
+      return target
+        ? [{ id: `${card.id}:${handle}`, source: card.id, index, handle, target }]
+        : []
     }),
   )
   return { cards, wires }
