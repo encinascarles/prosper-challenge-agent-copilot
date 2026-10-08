@@ -49,20 +49,26 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
+def init_db() -> None:
+    """Create the schema and seed an empty table. Call once when the server starts."""
+    db_path().parent.mkdir(parents=True, exist_ok=True)
+    with _connect() as conn:
+        conn.execute(_SCHEMA)
+        # A fresh checkout should open on a working agent rather than an empty list.
+        if not conn.execute("SELECT 1 FROM agents LIMIT 1").fetchone():
+            _insert(conn, json.loads(SEED_FLOW.read_text()))
+
+
 @contextmanager
 def _connect() -> Iterator[sqlite3.Connection]:
-    """Open the database, creating and seeding it on first use.
+    """Open the database for one operation, committing on success.
 
     One short-lived connection per operation: FastAPI runs sync handlers in a
     thread pool and a sqlite3 connection must stay on the thread that opened it.
     """
-    path = db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(db_path())
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute(_SCHEMA)
-        _seed_if_empty(conn)
         yield conn
         conn.commit()
     except BaseException:
@@ -70,18 +76,6 @@ def _connect() -> Iterator[sqlite3.Connection]:
         raise
     finally:
         conn.close()
-
-
-def _seed_if_empty(conn: sqlite3.Connection) -> None:
-    # A fresh checkout should open on a working agent rather than an empty list.
-    if conn.execute("SELECT 1 FROM agents LIMIT 1").fetchone():
-        return
-    # Take the write lock before looking again, so two first requests arriving
-    # together do not both insert the sample.
-    conn.execute("BEGIN IMMEDIATE")
-    if not conn.execute("SELECT 1 FROM agents LIMIT 1").fetchone():
-        _insert(conn, json.loads(SEED_FLOW.read_text()))
-    conn.commit()
 
 
 def _insert(conn: sqlite3.Connection, config: dict) -> str:

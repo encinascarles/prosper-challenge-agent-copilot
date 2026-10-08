@@ -29,4 +29,4 @@ line-length = 100
 select = ["E", "F", "I", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["agent_builder", "store"]
+known-first-party = ["agent_builder", "api", "store"]
