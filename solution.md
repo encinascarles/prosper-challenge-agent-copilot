@@ -70,6 +70,32 @@ fine for one table and will need revisiting if the schema grows. The agent is
 stored whole in one TEXT column, as `AgentConfig` reads it: nothing queries inside
 the graph, so tables for nodes and edges would only be a mapping to keep in sync.
 
+### Node positions live next to the agent, not in it
+
+**Context.** The editor has to reopen a graph the way it was left, so where each
+node sits must be saved. The agent JSON is what Pipecat runs and what the Copilot
+reads and rewrites.
+
+**Options.**
+- *A `position` on each node of the agent JSON.* Rejected: a canvas coordinate is
+  not part of an agent. It would reach the schema, the builder and every prompt
+  that carries the agent, and moving a node would count as changing the agent.
+- *The browser's local storage.* Rejected: the arrangement would be lost on
+  another device, and it is part of how the team reads a flow.
+- *A `layout` column next to `config`: `{ "<node name>": { "x", "y" } }`.* Chosen.
+
+**Trade-offs.** Creating and saving an agent take the same body,
+`{ config, layout? }`, and both are written in one statement, so they cannot be
+saved apart. The store drops positions of
+names that are not nodes of the agent on every save, with or without a layout in
+the request, so the layout never refers to a node that is gone. A client that
+leaves the layout out (the Copilot applying a fix) keeps the stored one; a node
+without a position is fine, the editor places it. Cost: the layout is keyed by
+node name, so a rename has to carry the position over, which is the editor's job
+since it knows the old name. Existing databases get the column added at startup
+(a check on `PRAGMA table_info`), the one migration so far and still short of
+needing a tool.
+
 ### The API lives on Pipecat's FastAPI app
 
 **Context.** The Pipecat runner already starts a FastAPI server for the call
