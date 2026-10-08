@@ -157,6 +157,41 @@ card's identity; the agent JSON is untouched by it. The TypeScript types mirror
 untyped object, so there is nothing to generate them from, and a schema change
 has to be made in both places.
 
+### Editing happens on a draft, changed by pure functions
+
+**Context.** The editor changes an agent in many small steps (a word in a prompt,
+a node made the start), several of which drag other things along, and all of it
+has to be undoable. The backend only accepts an agent that is valid as a whole.
+
+**Options.**
+- *Let React Flow hold the graph and patch the agent from its events.* Rejected:
+  two copies of the truth, and the rules (what a rename updates) end up spread
+  over event handlers nobody can test.
+- *A state library (Zustand, Redux).* Rejected for now: one agent open at a time
+  and one screen reading it do not need one.
+- *A draft in a reducer, edited by pure functions; React Flow only draws it.*
+  Chosen.
+
+**Trade-offs.** The draft is the agent JSON, an id per node and the card
+positions by node name. Each edit is a function from a draft to the next
+(`draft/draft.ts`), so every rule is in one place with a test: renaming a node
+updates the edges into it, its position and the agent's start; making a node the
+start disconnects the edges into it; a deleted node leaves the edges into it
+waiting for a target rather than deleting someone's condition. Fields the editor
+does not show (`role_message`, pre and post actions, later task messages) pass
+through untouched, so opening and saving never loses what the Copilot wrote.
+
+Function names are generated, never typed or shown: `go_to_<target>`, numbered
+when a node has two edges to the same place, regenerated when the target changes
+or is renamed. They are the tool names the model sees, so they stay meaningful
+without asking a deployment person to invent an identifier.
+
+Undo keeps whole drafts instead of inverse operations: an edit shares what it
+does not touch with the draft before, so a snapshot is cheap and undo cannot
+disagree with the edit. Typing in one field is one step. Cost: nothing is saved
+until the save lands, and the browser's own undo inside a text field is replaced
+by the editor's.
+
 ## How this was built
 
 - Built with AI coding agents (Claude). `AGENTS.md` gives every coding agent the same context:
