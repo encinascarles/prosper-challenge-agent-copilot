@@ -26,24 +26,31 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { LayoutGrid } from 'lucide-react'
+import { LayoutGrid, Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { connect, moveNode, setLayout, type Point } from '@/draft/draft'
+import { addNode, connect, moveNode, newNodeId, setLayout, type Point } from '@/draft/draft'
 import { useEditor } from '@/draft/editor'
 import { cn } from '@/lib/utils'
 
 import { layoutGraph, type Box } from './layout'
 import { edgeIndex, toGraph } from './model'
 import { NodeCard, type CardNode } from './NodeCard'
+import { freeSpot } from './place'
 import { RoutedWire, type WireEdge } from './RoutedWire'
 
 const nodeTypes = { card: NodeCard }
 const edgeTypes = { wire: RoutedWire }
 const TIDY_MS = 300
+const tool =
+  'flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[13px] text-muted-foreground hover:bg-muted hover:text-foreground'
 
 const ORIGIN = { x: 0, y: 0 }
 const DELETE_KEYS = ['Backspace', 'Delete']
+// A new card before it is measured: its width, and the height of an empty one.
+const NEW_CARD = { width: 300, height: 130 }
+// Where a card's input dot is, from its top-left corner.
+const INPUT_DOT = { x: -6, y: 26 }
 
 function Canvas() {
   const { draft, apply, place } = useEditor()
@@ -55,6 +62,9 @@ function Canvas() {
   // a wire that now goes elsewhere has no use for it.
   const [routes, setRoutes] = useState<Record<string, { target: string; points: Point[] }>>({})
   const [selected, setSelected] = useState<Record<string, boolean>>({})
+  const wrapper = useRef<HTMLDivElement>(null)
+  // The node just added, until its name has the focus.
+  const fresh = useRef<string | null>(null)
 
   const nodes = useMemo<CardNode[]>(
     () =>
@@ -95,6 +105,39 @@ function Canvas() {
       }
     }
   }, [])
+  // Adds a node at `position` and hands the keyboard to its name. Nothing
+  // else moves: the layout only runs on "Tidy up".
+  const add = useCallback(
+    (position: Point, from?: { id: string; index: number }) => {
+      const id = newNodeId()
+      apply((current) => addNode(current, id, position, from))
+      fresh.current = id
+    },
+    [apply],
+  )
+  const addAtCenter = () => {
+    const view = wrapper.current?.getBoundingClientRect()
+    if (!view) return
+    const center = flow.screenToFlowPosition({
+      x: view.left + view.width / 2,
+      y: view.top + view.height / 2,
+    })
+    const taken = nodes.map((node) => ({ ...node.position, ...(sizes[node.id] ?? NEW_CARD) }))
+    add(freeSpot(center, NEW_CARD, taken))
+  }
+  // React Flow keeps a card hidden until it has measured it, and a hidden
+  // input cannot take the focus: so this waits for the new card's size.
+  useEffect(() => {
+    const id = fresh.current
+    if (id === null || !(id in sizes)) return
+    fresh.current = null
+    const name = wrapper.current?.querySelector<HTMLInputElement>(
+      `.react-flow__node[data-id="${id}"] input[aria-label="Node name"]`,
+    )
+    name?.focus()
+    name?.select()
+  }, [sizes])
+
   const onEdgesChange = useCallback((changes: EdgeChange<WireEdge>[]) => {
     for (const change of changes) {
       if (change.type === 'select') {
@@ -135,9 +178,15 @@ function Canvas() {
       const card = under?.closest<HTMLElement>('.react-flow__node')?.dataset.id
       const source = connection.fromNode.id
       const index = edgeIndex(from.id)
-      if (card) apply((current) => connect(current, source, index, card))
+      if (card) {
+        apply((current) => connect(current, source, index, card))
+      } else if (under?.closest('.react-flow__pane')) {
+        // On empty canvas: a new node there, its input dot under the pointer.
+        const drop = flow.screenToFlowPosition({ x: clientX, y: clientY })
+        add({ x: drop.x - INPUT_DOT.x, y: drop.y - INPUT_DOT.y }, { id: source, index })
+      }
     },
-    [apply],
+    [apply, add, flow],
   )
   // A drag becomes one edit when the card is dropped, not one per pixel.
   const onNodeDragStop = useCallback(
@@ -216,7 +265,7 @@ function Canvas() {
   }, [measured, placed, tidy])
 
   return (
-    <div className={cn('relative size-full bg-muted/40', animating && 'graph-tidying')}>
+    <div ref={wrapper} className={cn('relative size-full bg-muted/40', animating && 'graph-tidying')}>
       <ReactFlow
         className={cn('transition-opacity', placed ? 'opacity-100' : 'opacity-0')}
         nodes={nodes}
@@ -238,11 +287,12 @@ function Canvas() {
         <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--border-strong)" />
         <Controls showInteractive={false} position="bottom-left" />
       </ReactFlow>
-      <div className="absolute top-4 left-1/2 z-10 -translate-x-1/2 rounded-xl border bg-card p-1 shadow-sm">
-        <button
-          onClick={() => void tidy(TIDY_MS)}
-          className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[13px] text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
+      <div className="absolute top-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded-xl border bg-card p-1 shadow-sm">
+        <button onClick={addAtCenter} className={tool}>
+          <Plus className="size-3.5" /> Add node
+        </button>
+        <span className="mx-1 h-5 w-px bg-border" />
+        <button onClick={() => void tidy(TIDY_MS)} className={tool}>
           <LayoutGrid className="size-3.5" /> Tidy up
         </button>
       </div>
