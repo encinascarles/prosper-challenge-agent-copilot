@@ -10,6 +10,7 @@
 #
 
 import json
+import re
 from pathlib import Path
 from typing import Union
 
@@ -17,6 +18,9 @@ from loguru import logger
 from pipecat_flows import FlowManager, FlowsFunctionSchema, NodeConfig
 
 from .schema import AgentConfig, Edge, Node
+
+# What the LLM APIs accept as a tool name. An edge's function is sent as one.
+_TOOL_NAME = re.compile(r"[a-zA-Z0-9_-]{1,64}")
 
 
 class AgentBuilder:
@@ -39,15 +43,36 @@ class AgentBuilder:
 
     # ---- validation --------------------------------------------------------
     def _validate(self) -> None:
-        names = set(self._nodes_by_name)
-        if not names:
+        if not self.config.nodes:
             raise ValueError("Agent has no nodes.")
+        # Nodes are looked up by name on every transition: with a duplicate, one
+        # of the two silently never runs.
+        seen = set()
+        for node in self.config.nodes:
+            if node.name in seen:
+                raise ValueError(f"Two nodes are named '{node.name}'. Node names must be unique.")
+            seen.add(node.name)
+        names = set(self._nodes_by_name)
         if self.config.initial_node not in names:
             raise ValueError(
                 f"initial_node '{self.config.initial_node}' is not a defined node."
             )
         for node in self.config.nodes:
+            # A node's edges become the tools of one LLM request, which the
+            # provider rejects mid-call if a name is invalid or repeated.
+            functions = set()
             for edge in node.edges:
+                if not _TOOL_NAME.fullmatch(edge.function):
+                    raise ValueError(
+                        f"Edge function '{edge.function}' in node '{node.name}' is not a valid "
+                        "tool name: use 1 to 64 letters, digits, underscores or hyphens."
+                    )
+                if edge.function in functions:
+                    raise ValueError(
+                        f"Node '{node.name}' has two edges with the function "
+                        f"'{edge.function}'. Functions must be unique within a node."
+                    )
+                functions.add(edge.function)
                 if edge.target not in names:
                     raise ValueError(
                         f"Edge '{edge.function}' in node '{node.name}' targets "
