@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils'
 import { FieldChips } from './FieldChips'
 import { GrowingText, NameInput } from './inputs'
 import { handleId, type Card } from './model'
+import { NodeMenu } from './NodeMenu'
 
 export type CardNode = FlowNode<Card, 'card'>
 
@@ -39,7 +40,7 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
   return (
     <div
       className={cn(
-        'w-[300px] rounded-2xl border bg-card text-left shadow-[0_1px_2px_rgba(0,0,0,0.04),0_10px_28px_-14px_rgba(0,0,0,0.14)]',
+        'group/card w-[300px] rounded-2xl border bg-card text-left shadow-[0_1px_2px_rgba(0,0,0,0.04),0_10px_28px_-14px_rgba(0,0,0,0.14)]',
         start && 'border-brand/45',
       )}
     >
@@ -72,6 +73,7 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
           onBlur={(refused) => (refused ? cancel(`name:${id}`) : seal())}
           className="text-[14px] font-semibold tracking-[-0.01em]"
         />
+        <NodeMenu id={id} start={start} end={Boolean(node.end)} />
       </div>
       <div className="px-4 pt-1 pb-3.5">
         <GrowingText

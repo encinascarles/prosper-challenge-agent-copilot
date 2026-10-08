@@ -67,11 +67,11 @@
     --muted-foreground: oklch(0.556 0 0);
     --accent: oklch(0.97 0 0);
     --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
+    --destructive: var(--bad);
     --border: oklch(0.922 0 0);
     /* Lines that must read on the canvas: wires and the dot grid. */
     --border-strong: oklch(0.87 0 0);
-    /* Broken or missing: crimson, apart from shadcn's red for destructive actions. */
+    /* Broken, missing or destructive: one crimson, which shadcn's components pick up too. */
     --bad: #be123c;
     /* The one accent, the logo's orange, darkened to read as text on its tint. */
     --brand: #e2491d;
@@ -108,7 +108,7 @@
     --muted-foreground: oklch(0.708 0 0);
     --accent: oklch(0.269 0 0);
     --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
+    --destructive: var(--bad);
     --border: oklch(1 0 0 / 10%);
     --border-strong: oklch(1 0 0 / 28%);
     --bad: #fb7185;
