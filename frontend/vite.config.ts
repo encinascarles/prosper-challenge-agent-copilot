@@ -14,8 +14,9 @@ export default defineConfig({
   server: {
     // One origin for the browser: API calls (and Pipecat's WebRTC signalling
     // at /api/offer) go to the Pipecat FastAPI server, so no CORS setup.
+    // BACKEND_PORT lets each worktree run its own backend (tools/wt/dev).
     proxy: {
-      '/api': 'http://localhost:7860',
+      '/api': `http://localhost:${process.env.BACKEND_PORT ?? 7860}`,
     },
   },
 })

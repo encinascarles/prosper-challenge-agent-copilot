@@ -4,6 +4,10 @@
 PROJECT := backend
 FRONTEND := frontend
 RUFF_VERSION := 0.16.10
+# Ports, overridable so several worktrees can run at once (tools/wt/dev picks free ones).
+BACKEND_PORT ?= 7860
+WEB_PORT ?= 5173
+WEB_HOST ?=
 
 .PHONY: help install run web dev lint clean
 
@@ -16,10 +20,10 @@ install: ## Install backend (uv.lock) and frontend (package-lock.json) dependenc
 	npm ci --prefix $(FRONTEND)
 
 run: ## Run the voice agent (then open http://localhost:7860/client)
-	uv run --directory $(PROJECT) python bot.py
+	uv run --directory $(PROJECT) python bot.py --port $(BACKEND_PORT)
 
 web: ## Run the frontend dev server (http://localhost:5173)
-	npm run dev --prefix $(FRONTEND)
+	BACKEND_PORT=$(BACKEND_PORT) npm run dev --prefix $(FRONTEND) -- --port $(WEB_PORT) --strictPort $(if $(WEB_HOST),--host $(WEB_HOST))
 
 dev: ## Run backend and frontend together; Ctrl+C stops both
 	$(MAKE) -j2 run web
