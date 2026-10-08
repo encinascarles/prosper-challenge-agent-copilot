@@ -5,6 +5,10 @@
 // back to a plain curve from dot to dot until "Tidy up" lays the graph out
 // again. Comparing the ends is the whole test: nothing has to remember which
 // cards moved.
+//
+// A card that grows while it is edited pushes its dots down without moving
+// sideways. The route still holds then: its first and last stretches are
+// level, so they follow the dot up or down and the corner beside it stretches.
 
 import { BaseEdge, getBezierPath, type Edge, type EdgeProps } from '@xyflow/react'
 
@@ -13,12 +17,9 @@ import type { Point } from './layout'
 export type WireEdge = Edge<{ route?: Point[] }, 'wire'>
 
 const CORNER = 8
-// React Flow ends a wire at the outer side of the dot, which hangs off the
-// card, and the layout at the card's border: about a dot apart.
-const NEAR = 14
-
-const near = (point: Point, x: number, y: number) =>
-  Math.abs(point.x - x) <= NEAR && Math.abs(point.y - y) <= 1
+// How far outside its card a dot ends, which is where React Flow starts a
+// wire; the layout starts it at the card's border.
+const REACH = 11
 
 /** A path through `points` at right angles, with rounded corners. */
 function roundedPath(points: Point[]): string {
@@ -43,16 +44,26 @@ function roundedPath(points: Point[]): string {
   return `${path} L${last.x},${last.y}`
 }
 
+/** `route` with its ends on the dots, or nothing if the cards are no longer where it was made for. */
+function fitted(route: Point[], from: Point, to: Point): Point[] | null {
+  const first = route[0]
+  const last = route[route.length - 1]
+  const inPlace =
+    Math.abs(from.x - first.x - REACH) <= 2 && Math.abs(last.x - to.x - REACH) <= 2
+  if (!inPlace) return null
+  // A straight wire has no corner to take up a dot that moved up or down.
+  if (route.length < 4) return Math.abs(from.y - to.y) <= 0.5 ? [from, to] : null
+  const before = route.slice(1, -1).map((point) => ({ ...point }))
+  before[0].y = from.y
+  before[before.length - 1].y = to.y
+  return [from, ...before, to]
+}
+
 export function RoutedWire(props: EdgeProps<WireEdge>) {
   const { sourceX, sourceY, targetX, targetY, data } = props
-  const route = data?.route
-  if (route && near(route[0], sourceX, sourceY) && near(route[route.length - 1], targetX, targetY)) {
-    // The route's ends are moved onto the dots, so the wire touches them.
-    const points = route.map((point) => ({ ...point }))
-    points[0].x = sourceX
-    points[points.length - 1].x = targetX
-    return <BaseEdge id={props.id} path={roundedPath(points)} />
-  }
+  const points =
+    data?.route && fitted(data.route, { x: sourceX, y: sourceY }, { x: targetX, y: targetY })
+  if (points) return <BaseEdge id={props.id} path={roundedPath(points)} />
   const [curve] = getBezierPath(props)
   return <BaseEdge id={props.id} path={curve} />
 }

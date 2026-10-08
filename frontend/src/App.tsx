@@ -1,13 +1,14 @@
-// App shell: the top bar with the agent picker, and the open agent's graph.
+// App shell: the top bar with the agent picker, and the editor of the open agent.
 //
 // Which agent is open lives in the URL (?agent=<id>), so a reload or a shared
 // link opens the same one. Without it, the first agent of the list opens.
 import { useEffect, useState } from 'react'
 
+import { AgentEditor } from '@/AgentEditor'
 import { getAgent, listAgents } from '@/agents/api'
 import type { AgentRecord, AgentSummary } from '@/agents/types'
 import { TopBar } from '@/components/TopBar'
-import { GraphCanvas } from '@/graph/GraphCanvas'
+
 
 const AGENT_PARAM = 'agent'
 
@@ -59,7 +60,7 @@ export default function App() {
         {error ? (
           <Notice error>{error}</Notice>
         ) : open ? (
-          <GraphCanvas key={open.id} config={open.config} />
+          <AgentEditor key={open.id} config={open.config} />
         ) : agents?.length === 0 ? (
           <Notice>No agents yet.</Notice>
         ) : (

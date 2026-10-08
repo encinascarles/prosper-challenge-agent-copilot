@@ -2,8 +2,8 @@
 //
 // The agent JSON names nodes and points edges at names. A name is text the user
 // can edit, so the canvas cannot use it as an identity: a card would be a new
-// card after every keystroke. Each node gets an id when the agent opens, and
-// everything on screen (cards, dots, wires, positions) refers to that id.
+// card after every keystroke. The draft gives each node an id when the agent
+// opens, and everything on screen (cards, dots, wires) refers to that id.
 // Nothing here is saved: the agent JSON stays as schema.py defines it.
 
 import type { AgentConfig, Edge, Node } from '@/agents/types'
@@ -25,13 +25,6 @@ export type Wire = {
 }
 
 export type Graph = { cards: Card[]; wires: Wire[] }
-
-let lastId = 0
-
-/** One id per node of `config`, in order. Keep them for as long as the agent is open. */
-export function newIds(config: AgentConfig): string[] {
-  return config.nodes.map(() => `node-${++lastId}`)
-}
 
 /** The id of the dot of a card's edge. By position: an edge has no identity of its own. */
 export function handleId(index: number): string {
