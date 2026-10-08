@@ -161,7 +161,10 @@ What is missing is drawn, not written: an edge with no target and a node nothing
 leads to both end in a short dashed crimson stub, a wire that goes nowhere, so
 the gap shows where it is. A list of allowed values is a field type of its own,
 Choice, though the agent JSON keeps it as a string with an `enum`: a type plus a
-separate "only these values" asked for two decisions to say one thing.
+separate "only these values" asked for two decisions to say one thing. A node
+with no way out and no end is where a call would stay for good, so its card asks
+"What happens next?" and offers the two answers, move on to another step or end
+the call here.
 
 ### Editing happens on a draft, changed by pure functions
 

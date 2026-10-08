@@ -15,7 +15,7 @@
 // a person reads.
 
 import { Handle, Position, type Node as FlowNode, type NodeProps } from '@xyflow/react'
-import { PhoneOff, Play, Plus, Trash2 } from 'lucide-react'
+import { ArrowRight, PhoneOff, Play, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
 import {
@@ -35,6 +35,7 @@ import {
   removeEdge,
   renameNode,
   setEdgeDescription,
+  setEnd,
   setInstructions,
 } from '@/draft/draft'
 import { useEditor } from '@/draft/editor'
@@ -56,6 +57,8 @@ const dot = '!size-[11px] !rounded-full !border-2 !border-card'
 // Where a call enters and leaves the graph: a solid band across the card, on
 // top of the start node and under an end node, readable at any zoom.
 const band = 'flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium'
+const choice =
+  'nodrag flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-muted'
 // A control that only shows when its row or card is pointed at. Where there
 // is no pointer to hover with, it is always there.
 const hidden =
@@ -235,16 +238,29 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
               />
             </div>
           ))}
-          <button
-            onClick={() => apply((current) => addEdge(current, id))}
-            className={cn(
-              'nodrag flex w-full items-center gap-1 px-4 pt-2 pb-1 text-[12px] text-muted-foreground/80 hover:text-foreground',
-              edges.length > 0 && 'border-t border-border/70',
-            )}
-          >
-            <Plus className="size-3" />
-            {edges.length > 0 ? 'Another way to move on' : 'Add a way to move on'}
-          </button>
+          {edges.length > 0 ? (
+            <button
+              onClick={() => apply((current) => addEdge(current, id))}
+              className="nodrag flex w-full items-center gap-1 border-t border-border/70 px-4 pt-2 pb-1 text-[12px] text-muted-foreground/80 hover:text-foreground"
+            >
+              <Plus className="size-3" /> Another way to move on
+            </button>
+          ) : (
+            // A node with no way out and no end is where a call would stay
+            // for good. The card asks the question instead of leaving a gap:
+            // the two answers are the two things a node can do next.
+            <div className="px-2.5 pt-2.5 pb-1">
+              <div className="px-1.5 pb-1 text-[10.5px] font-medium tracking-wide text-muted-foreground uppercase">
+                What happens next?
+              </div>
+              <button onClick={() => apply((current) => addEdge(current, id))} className={choice}>
+                <ArrowRight className="size-3.5 text-muted-foreground" /> Move on to another step
+              </button>
+              <button onClick={() => apply((current) => setEnd(current, id, true))} className={choice}>
+                <PhoneOff className="size-3.5 text-muted-foreground" /> End the call here
+              </button>
+            </div>
+          )}
         </div>
       )}
       <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
