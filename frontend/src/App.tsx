@@ -1,12 +1,70 @@
-// App shell. The graph editor, test call and Copilot panels land here in later PRs.
-export default function App() {
+// App shell: the top bar with the agent picker, and the open agent's graph.
+//
+// Which agent is open lives in the URL (?agent=<id>), so a reload or a shared
+// link opens the same one. Without it, the first agent of the list opens.
+import { useEffect, useState } from 'react'
+
+import { getAgent, listAgents } from '@/agents/api'
+import type { AgentRecord, AgentSummary } from '@/agents/types'
+import { TopBar } from '@/components/TopBar'
+import { GraphCanvas } from '@/graph/GraphCanvas'
+
+const AGENT_PARAM = 'agent'
+
+function Notice({ children, error }: { children: React.ReactNode; error?: boolean }) {
   return (
-    <div className="flex h-screen flex-col">
-      <header className="border-b px-4 py-3">
-        <h1 className="text-sm font-semibold">Agent Builder</h1>
-      </header>
-      <main className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-        Nothing here yet.
+    <p className={`m-auto text-sm ${error ? 'text-bad' : 'text-muted-foreground'}`}>{children}</p>
+  )
+}
+
+export default function App() {
+  const [agents, setAgents] = useState<AgentSummary[] | null>(null)
+  const [picked, setPicked] = useState(() =>
+    new URLSearchParams(location.search).get(AGENT_PARAM),
+  )
+  const [record, setRecord] = useState<AgentRecord | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    listAgents().then(setAgents, (failure: Error) => setError(failure.message))
+  }, [])
+
+  const agentId = picked ?? agents?.[0]?.id ?? null
+  useEffect(() => {
+    if (agentId === null) return
+    // An answer for an agent that is no longer the open one is dropped.
+    let current = true
+    getAgent(agentId).then(
+      (loaded) => current && setRecord(loaded),
+      (failure: Error) => current && setError(failure.message),
+    )
+    return () => {
+      current = false
+    }
+  }, [agentId])
+
+  const pick = (id: string) => {
+    setError(null)
+    setPicked(id)
+    const url = new URL(location.href)
+    url.searchParams.set(AGENT_PARAM, id)
+    history.replaceState(null, '', url)
+  }
+
+  const open = record?.id === agentId ? record : null
+  return (
+    <div className="flex h-dvh flex-col">
+      <TopBar agents={agents ?? []} agentId={agentId} onPick={pick} />
+      <main className="flex min-h-0 flex-1">
+        {error ? (
+          <Notice error>{error}</Notice>
+        ) : open ? (
+          <GraphCanvas key={open.id} config={open.config} />
+        ) : agents?.length === 0 ? (
+          <Notice>No agents yet.</Notice>
+        ) : (
+          <Notice>Loading…</Notice>
+        )}
       </main>
     </div>
   )
