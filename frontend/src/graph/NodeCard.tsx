@@ -90,7 +90,9 @@ function LooseWire({ side, className }: { side: 'in' | 'out'; className?: string
 
 export function NodeCard({ data }: NodeProps<CardNode>) {
   const { id, node, start, edges, connected, reached, active, accepting } = data
-  const { draft, apply, seal, cancel } = useEditor()
+  const { draft, apply, seal, cancel, refusal } = useEditor()
+  // What the backend said when it refused to save, if it was about this node.
+  const refused = refusal?.node === id ? refusal : null
   const [instructions, ...more] = node.task_messages ?? []
   // The edge being removed, while it waits for a yes: one with a condition or
   // fields in it asks first. Undo would bring it back, but only if noticed.
@@ -110,6 +112,7 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
         start && 'border-brand/45',
         active && !start && 'border-foreground/30',
         active && 'shadow-[0_1px_2px_rgba(0,0,0,0.06),0_14px_32px_-12px_rgba(0,0,0,0.22)]',
+        refused && 'ring-2 ring-bad',
         // A ring, not the border: it must read on the start card's orange too.
         accepting && 'ring-2 ring-foreground',
       )}
@@ -168,6 +171,12 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
           </p>
         )}
       </div>
+      {/* In the backend's own words: it is the one that knows what it refused. */}
+      {refused && (
+        <p role="alert" className="border-t border-bad/20 bg-bad/10 px-4 py-2 text-[12px] leading-snug text-bad">
+          {refused.message}
+        </p>
+      )}
       {node.end ? (
         <div className={cn(band, 'rounded-b-[15px] bg-foreground text-background')}>
           <PhoneOff className="size-3" /> The call ends here
@@ -194,7 +203,12 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
             // condition, what it collects and where it goes, read together.
             <div
               key={index}
-              className={cn('group/edge relative px-4 py-2.5', index > 0 && 'border-t border-border/70')}
+              className={cn(
+                'group/edge relative px-4 py-2.5',
+                index > 0 && 'border-t border-border/70',
+                // The edge the refusal is about, when it names one.
+                refused?.edge === index && 'shadow-[inset_3px_0_0_var(--bad)]',
+              )}
             >
               <div className="flex items-start gap-1.5">
                 <GrowingText
