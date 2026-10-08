@@ -15,7 +15,7 @@
 // a person reads.
 
 import { Handle, Position, type Node as FlowNode, type NodeProps } from '@xyflow/react'
-import { ArrowRight, PhoneOff, Play, Plus, Trash2 } from 'lucide-react'
+import { ArrowRight, PhoneOff, Play, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
 import {
@@ -171,6 +171,16 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
       {node.end ? (
         <div className={cn(band, 'rounded-b-[15px] bg-foreground text-background')}>
           <PhoneOff className="size-3" /> The call ends here
+          {/* The way back from "End the call here", where it was chosen. Always
+              shown, faint: on the band there is nothing else to find it by. */}
+          <button
+            aria-label="Don't end the call here"
+            title="Don't end the call here"
+            onClick={() => apply((current) => setEnd(current, id, false))}
+            className="nodrag -my-0.5 -mr-1.5 ml-auto rounded p-1 opacity-60 outline-none transition-opacity hover:bg-background/15 hover:opacity-100 focus-visible:bg-background/15 focus-visible:opacity-100"
+          >
+            <RotateCcw className="size-3" />
+          </button>
         </div>
       ) : (
         <div className="rounded-b-2xl border-t bg-muted/35 pb-1.5">

@@ -164,7 +164,8 @@ Choice, though the agent JSON keeps it as a string with an `enum`: a type plus a
 separate "only these values" asked for two decisions to say one thing. A node
 with no way out and no end is where a call would stay for good, so its card asks
 "What happens next?" and offers the two answers, move on to another step or end
-the call here.
+the call here. The band that marks an end carries its own way back, next to
+where it was chosen.
 
 ### Editing happens on a draft, changed by pure functions
 
