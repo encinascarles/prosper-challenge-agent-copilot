@@ -34,6 +34,7 @@ Design decisions and their rationale live in `solution.md`.
 | `frontend/` | Agent Builder UI: Vite + React + TypeScript, Tailwind, shadcn/ui. `src/components/ui/` is shadcn-generated, add components with `npx shadcn@latest add <name>` rather than hand-editing. |
 | `backend/example_flow.json` | Sample agent (clinic scheduler), only to illustrate the format. |
 | `solution.md` | Overview and key architectural decisions (part of the deliverable). |
+| `tools/wt/`, `t3.json` | Worktree tooling: prepare a fresh worktree, run it on free ports, list them. See Worktrees below. |
 
 ## Commands
 
@@ -44,6 +45,7 @@ make install   # backend (uv sync) + frontend (npm ci)
 make dev       # backend + frontend, open http://localhost:5173
 make run       # backend only; Pipecat's prebuilt client at http://localhost:7860/client
 make lint      # ruff check on the backend (same command CI runs)
+make check     # everything CI runs: ruff, oxlint, typecheck, build
 ```
 
 Frontend checks, from `frontend/`: `npm run lint` (oxlint) and `npm run build`
@@ -71,6 +73,22 @@ API keys go in `backend/.env` (copy `backend/.env.example`). Never commit it.
 - Everything in the repo is written in English.
 - Never commit secrets, `.env` files or real patient data. Mock call data is fine
   and must be clearly marked as mock.
+
+## Worktrees
+
+Every agent thread works in its own git worktree, never in the main checkout
+(that one is the user's).
+
+- **T3 Code**: `t3.json` starts each thread in a new worktree and runs
+  `tools/wt/prepare` on it, which copies `backend/.env` and installs both
+  dependency sets in a few seconds.
+- **Anything else**: `git worktree add <path> -b <branch> origin/main`, then
+  `sh tools/wt/prepare` inside it.
+- `sh tools/wt/dev` runs this worktree's backend and frontend on the first free
+  ports and prints the link. Several worktrees can run at once.
+- Run `make check` before pushing.
+- T3 Code names branches `t3code/<slug>`. Before the first push, rename the
+  branch to the PR's descriptive name: `git branch -m <name>`.
 
 ## Git workflow
 
