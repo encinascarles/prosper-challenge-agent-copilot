@@ -1,0 +1,28 @@
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "iconPath": "frontend/public/favicon.svg",
+  "defaultThreadEnvMode": "worktree",
+  "scripts": [
+    {
+      "name": "Prepare worktree",
+      "command": "sh tools/wt/prepare",
+      "icon": "configure",
+      "runOnWorktreeCreate": true
+    },
+    {
+      "name": "Run dev",
+      "command": "sh tools/wt/dev",
+      "icon": "play"
+    },
+    {
+      "name": "Checks (as CI)",
+      "command": "sh tools/wt/deps && make check",
+      "icon": "test"
+    },
+    {
+      "name": "Worktrees: list",
+      "command": "sh tools/wt/list",
+      "icon": "debug"
+    }
+  ]
+}
