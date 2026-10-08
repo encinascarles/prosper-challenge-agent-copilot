@@ -9,7 +9,7 @@ BACKEND_PORT ?= 7860
 WEB_PORT ?= 5173
 WEB_HOST ?=
 
-.PHONY: help install run web dev lint clean
+.PHONY: help install run web dev lint check clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -30,6 +30,11 @@ dev: ## Run backend and frontend together; Ctrl+C stops both
 
 lint: ## Lint the backend with ruff
 	uvx ruff@$(RUFF_VERSION) check $(PROJECT)
+
+check: ## Run every check CI runs: ruff, frontend lint, typecheck and build
+	$(MAKE) lint
+	npm run lint --prefix $(FRONTEND)
+	npm run build --prefix $(FRONTEND)
 
 clean: ## Remove the venv and Python caches
 	rm -rf $(PROJECT)/.venv
