@@ -15,9 +15,16 @@
 // a person reads.
 
 import { Handle, Position, type Node as FlowNode, type NodeProps } from '@xyflow/react'
-import { PhoneOff, Play } from 'lucide-react'
+import { PhoneOff, Play, Plus, X } from 'lucide-react'
 
-import { nameTaken, renameNode, setEdgeDescription, setInstructions } from '@/draft/draft'
+import {
+  addEdge,
+  nameTaken,
+  removeEdge,
+  renameNode,
+  setEdgeDescription,
+  setInstructions,
+} from '@/draft/draft'
 import { useEditor } from '@/draft/editor'
 import { cn } from '@/lib/utils'
 
@@ -32,6 +39,10 @@ const dot = '!size-[11px] !rounded-full !border-2 !border-card'
 // Where a call enters and leaves the graph: a solid band across the card, on
 // top of the start node and under an end node, readable at any zoom.
 const band = 'flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium'
+// A control that only shows when its row or card is pointed at. Where there
+// is no pointer to hover with, it is always there.
+const hidden =
+  'opacity-0 outline-none transition-opacity focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
 
 export function NodeCard({ data }: NodeProps<CardNode>) {
   const { id, node, start, edges, connected } = data
@@ -99,13 +110,15 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
           <PhoneOff className="size-3" /> The call ends here
         </div>
       ) : (
-        edges.length > 0 && (
-          <div className="rounded-b-2xl border-t bg-muted/35 pb-1.5">
+        <div className="rounded-b-2xl border-t bg-muted/35 pb-1.5">
+          {edges.length > 0 && (
             <div className="px-4 pt-2.5 pb-0.5 text-[10.5px] font-medium tracking-wide text-muted-foreground uppercase">
               Moves on when
             </div>
-            {edges.map((edge, index) => (
-              <div key={index} className="relative px-4 py-1.5">
+          )}
+          {edges.map((edge, index) => (
+            <div key={index} className="group/edge relative px-4 py-1.5">
+              <div className="flex items-start gap-1">
                 <GrowingText
                   label="Moves on when"
                   value={edge.description}
@@ -117,27 +130,42 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
                     )
                   }
                   onBlur={seal}
-                  className="text-[12.5px] leading-snug"
+                  className="min-w-0 flex-1 text-[12.5px] leading-snug"
                 />
-                <FieldChips id={id} index={index} edge={edge} />
-                {!connected[index] && (
-                  <div className="mt-1 text-[11.5px] font-medium text-bad">Not connected</div>
-                )}
-                <Handle
-                  id={handleId(index)}
-                  type="source"
-                  position={Position.Right}
-                  isConnectable={false}
-                  className={cn(
-                    dot,
-                    '!top-[17px] !right-[-6px]',
-                    connected[index] ? '!bg-foreground' : '!bg-bad',
-                  )}
-                />
+                <button
+                  aria-label="Remove this way to move on"
+                  title="Remove"
+                  onClick={() => apply((current) => removeEdge(current, id, index))}
+                  className={cn(hidden, 'nodrag -mr-1.5 rounded p-0.5 text-muted-foreground group-hover/edge:opacity-100 hover:text-bad')}
+                >
+                  <X className="size-3.5" />
+                </button>
               </div>
-            ))}
-          </div>
-        )
+              <FieldChips id={id} index={index} edge={edge} />
+              {!connected[index] && (
+                <div className="mt-1 text-[11.5px] font-medium text-bad">Not connected</div>
+              )}
+              <Handle
+                id={handleId(index)}
+                type="source"
+                position={Position.Right}
+                isConnectable={false}
+                className={cn(
+                  dot,
+                  '!top-[17px] !right-[-6px]',
+                  connected[index] ? '!bg-foreground' : '!bg-bad',
+                )}
+              />
+            </div>
+          ))}
+          <button
+            onClick={() => apply((current) => addEdge(current, id))}
+            className="nodrag mx-3 mt-0.5 flex items-center gap-1 rounded-md px-1 py-1 text-[12px] text-muted-foreground/80 hover:text-foreground"
+          >
+            <Plus className="size-3" />
+            {edges.length > 0 ? 'Another way to move on' : 'Add a way to move on'}
+          </button>
+        </div>
       )}
     </div>
   )
