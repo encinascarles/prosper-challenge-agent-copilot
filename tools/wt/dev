@@ -1,0 +1,17 @@
+#!/bin/sh
+# tools/wt/dev: run this worktree's backend and frontend (make dev) on ports of its own, so several threads can run
+# at once. Backend from 7860 up, frontend from 5173 up: the first free ones. The Vite proxy follows the backend port.
+# With Tailscale running, the frontend binds to this machine's tailnet IP only (reachable from your other devices,
+# not from the LAN: the /api proxy places calls on the keys in backend/.env); otherwise to localhost.
+set -eu
+here="$(git rev-parse --show-toplevel)"
+cd "$here"
+{ [ -d backend/.venv ] && [ -d frontend/node_modules ]; } || sh "$(dirname "$0")/deps"
+free() { _p="$1"; while lsof -nP -iTCP:"$_p" -sTCP:LISTEN >/dev/null 2>&1; do _p=$((_p + 1)); done; echo "$_p"; }
+api="$(free 7860)"
+web="$(free 5173)"
+host="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+echo "dev      $here"
+echo "backend  http://localhost:$api"
+echo "link     http://${host:-localhost}:$web"
+exec make dev BACKEND_PORT="$api" WEB_PORT="$web" WEB_HOST="$host"

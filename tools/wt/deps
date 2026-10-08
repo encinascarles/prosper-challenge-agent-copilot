@@ -1,0 +1,10 @@
+#!/bin/sh
+# tools/wt/deps: give this worktree what it needs to build and run: the .worktreeinclude files it lacks, the
+# backend venv (uv) and the frontend node_modules (an APFS clone of the main checkout's when the lockfiles match).
+# Run inside any worktree, or the main checkout. Idempotent.
+set -eu
+here="$(git rev-parse --show-toplevel)"
+. "$(dirname "$0")/lib.sh"
+[ "$here" = "$root" ] || echo "config   $(copy_config "$here") local files copied from .worktreeinclude"
+install_backend "$here"
+install_frontend "$here"
