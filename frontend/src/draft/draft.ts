@@ -31,9 +31,14 @@ export const NOWHERE = ''
 
 let lastId = 0
 
+/** An id for a node. Not pure, so it is made by the caller and passed to the edit. */
+export function newNodeId(): string {
+  return `node-${++lastId}`
+}
+
 /** The draft of a loaded agent. */
 export function openDraft(config: AgentConfig): Draft {
-  return { config, ids: config.nodes.map(() => `node-${++lastId}`), layout: {} }
+  return { config, ids: config.nodes.map(newNodeId), layout: {} }
 }
 
 export function nodeOf(draft: Draft, id: string): Node | undefined {
@@ -268,6 +273,70 @@ export function deleteNode(draft: Draft, id: string): Draft {
   return next === undefined
     ? { ...rest, config: { ...rest.config, initial_node: NOWHERE } }
     : setStart(rest, next)
+}
+
+/** Adds a way out of the node: an edge with nothing written and no target yet. */
+export function addEdge(draft: Draft, id: string): Draft {
+  return updateNode(draft, id, (node) => {
+    // A node that ends the call has no way out.
+    if (node.end) return node
+    const edges = node.edges ?? []
+    const name = functionName(NOWHERE, edges.map((edge) => edge.function))
+    return { ...node, edges: [...edges, { function: name, description: '', target: NOWHERE }] }
+  })
+}
+
+export function removeEdge(draft: Draft, id: string, index: number): Draft {
+  return updateNode(draft, id, (node) =>
+    node.edges?.[index] ? { ...node, edges: node.edges.toSpliced(index, 1) } : node,
+  )
+}
+
+/**
+ * Points an edge at the node `target`, or at nothing (null). Refused if the
+ * target is the start node, which nothing leads into, or the edge's own node.
+ */
+export function connect(draft: Draft, id: string, index: number, target: string | null): Draft {
+  const to = target === null ? NOWHERE : nodeOf(draft, target)?.name
+  if (to === undefined || target === id) return draft
+  if (to !== NOWHERE && to === draft.config.initial_node) return draft
+  return updateNode(draft, id, (node) => {
+    const edge = node.edges?.[index]
+    if (!edge || edge.target === to) return node
+    const others = node.edges!.filter((_, at) => at !== index).map((other) => other.function)
+    return {
+      ...node,
+      edges: node.edges!.with(index, { ...edge, target: to, function: functionName(to, others) }),
+    }
+  })
+}
+
+/**
+ * Adds an empty node called step_N, with the card at `position`. With `from`,
+ * that edge is connected to it in the same edit, so one undo takes back both.
+ */
+export function addNode(
+  draft: Draft,
+  id: string,
+  position: Point,
+  from?: { id: string; index: number },
+): Draft {
+  if (draft.ids.includes(id)) return draft
+  const names = new Set(draft.config.nodes.map((node) => node.name))
+  let number = draft.config.nodes.length + 1
+  while (names.has(`step_${number}`)) number++
+  const name = `step_${number}`
+  const added: Draft = {
+    config: {
+      ...draft.config,
+      nodes: [...draft.config.nodes, { name }],
+      // The first node of an agent is where its calls start.
+      initial_node: draft.config.nodes.length === 0 ? name : draft.config.initial_node,
+    },
+    ids: [...draft.ids, id],
+    layout: { ...draft.layout, [name]: position },
+  }
+  return from ? connect(added, from.id, from.index, id) : added
 }
 
 /** Puts a node's card at `position`. */

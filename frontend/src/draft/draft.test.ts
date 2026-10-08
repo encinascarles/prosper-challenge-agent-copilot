@@ -3,11 +3,15 @@ import { describe, expect, it } from 'vitest'
 import type { AgentConfig, Edge } from '@/agents/types'
 
 import {
+  addEdge,
   addField,
+  addNode,
+  connect,
   deleteNode,
   moveNode,
   nameTaken,
   openDraft,
+  removeEdge,
   removeField,
   renameNode,
   setEdgeDescription,
@@ -294,6 +298,103 @@ describe('deleteNode', () => {
     const empty = [greeting, details, goodbye].reduce(deleteNode, draft)
     expect(empty.config.nodes).toEqual([])
     expect(empty.config.initial_node).toBe('')
+  })
+})
+
+describe('edges', () => {
+  it('adds an edge that goes nowhere yet, with a function name of its own', () => {
+    const { draft, details } = open()
+    const edges = node(addEdge(addEdge(draft, details), details), 'details').edges!
+    expect(edges.slice(1)).toEqual([
+      { function: 'go_to_next', description: '', target: '' },
+      { function: 'go_to_next_2', description: '', target: '' },
+    ])
+  })
+
+  it('gives a node without edges its first one, but not a node that ends the call', () => {
+    const { draft, goodbye } = open()
+    expect(addEdge(draft, goodbye)).toBe(draft)
+    const open_ = setEnd(draft, goodbye, false)
+    expect(node(addEdge(open_, goodbye), 'goodbye').edges).toHaveLength(1)
+  })
+
+  it('removes one edge and keeps the others', () => {
+    const { draft, greeting } = open()
+    const edges = node(removeEdge(draft, greeting, 1), 'greeting').edges!
+    expect(edges.map((e) => e.function)).toEqual(['choose_intent', 'bye'])
+    expect(removeEdge(draft, greeting, 9)).toBe(draft)
+  })
+})
+
+describe('connect', () => {
+  it('points the edge at the node and names its function after it', () => {
+    const { draft, greeting, goodbye } = open()
+    const edges = node(connect(draft, greeting, 0, goodbye), 'greeting').edges!
+    expect(edges[0]).toMatchObject({ target: 'goodbye', function: 'go_to_goodbye' })
+    // Everything else the edge says stays.
+    expect(edges[0].description).toBe('Go to details.')
+    expect(edges[0].required).toEqual(['intent'])
+  })
+
+  it('keeps function names unique when two edges go to the same node', () => {
+    const { draft, greeting, goodbye } = open()
+    const both = connect(connect(draft, greeting, 0, goodbye), greeting, 1, goodbye)
+    const functions = node(both, 'greeting').edges!.map((e) => e.function)
+    expect(functions).toEqual(['go_to_goodbye', 'go_to_goodbye_2', 'bye'])
+    functions.forEach((name) => expect(name).toMatch(VALID))
+  })
+
+  it('disconnects an edge', () => {
+    const { draft, greeting } = open()
+    const edges = node(connect(draft, greeting, 2, null), 'greeting').edges!
+    expect(edges[2]).toMatchObject({ target: '', function: 'go_to_next' })
+  })
+
+  it("refuses the start node, the edge's own node, and what is already so", () => {
+    const { draft, greeting, details } = open()
+    expect(connect(draft, details, 0, greeting)).toBe(draft)
+    expect(connect(draft, details, 0, details)).toBe(draft)
+    expect(connect(draft, greeting, 0, details)).toBe(draft)
+    expect(connect(draft, greeting, 0, 'no-such-id')).toBe(draft)
+  })
+})
+
+describe('addNode', () => {
+  it('adds an empty node with a free step_N name, where it was put', () => {
+    const { draft } = open()
+    const one = addNode(draft, 'new-1', { x: 10, y: 20 })
+    const two = addNode(one, 'new-2', { x: 30, y: 40 })
+    expect(two.config.nodes.slice(3)).toEqual([{ name: 'step_4' }, { name: 'step_5' }])
+    expect(two.ids.slice(3)).toEqual(['new-1', 'new-2'])
+    expect(two.layout.step_4).toEqual({ x: 10, y: 20 })
+    expect(two.config.initial_node).toBe('greeting')
+  })
+
+  it('skips a step_N that is taken', () => {
+    const { draft, details } = open()
+    const taken = renameNode(draft, details, 'step_4')
+    expect(addNode(taken, 'new-1', { x: 0, y: 0 }).config.nodes[3].name).toBe('step_5')
+  })
+
+  it('connects the edge it was dragged from, in the same edit', () => {
+    const { draft, greeting } = open()
+    const next = addNode(draft, 'new-1', { x: 0, y: 0 }, { id: greeting, index: 2 })
+    expect(node(next, 'greeting').edges![2]).toMatchObject({
+      target: 'step_4',
+      function: 'go_to_step_4',
+    })
+  })
+
+  it('leaves the other cards where they are', () => {
+    const { draft } = open()
+    const next = addNode(draft, 'new-1', { x: 10, y: 20 })
+    expect(next.layout).toMatchObject(draft.layout)
+  })
+
+  it('starts the agent at its first node', () => {
+    const { draft, greeting, details, goodbye } = open()
+    const empty = [greeting, details, goodbye].reduce(deleteNode, draft)
+    expect(addNode(empty, 'new-1', { x: 0, y: 0 }).config.initial_node).toBe('step_1')
   })
 })
 
