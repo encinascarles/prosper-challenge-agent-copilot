@@ -14,6 +14,7 @@ export type Card = {
   start: boolean // the agent's initial node
   edges: Edge[] // the edges the card shows, in order
   connected: boolean[] // per shown edge: its target is a node it can lead to
+  reached: boolean // a call can get here: it is the start node, or an edge leads to it
 }
 
 /** A connected edge: from the dot of one card's row to another card. */
@@ -45,18 +46,14 @@ export function toGraph(config: AgentConfig, ids: string[]): Graph {
       node.name === config.initial_node ? [] : [[node.name, ids[i]] as const],
     ),
   )
-  const cards = config.nodes.map((node, i) => {
+  const shown = config.nodes.map((node, i) => ({
+    id: ids[i],
+    node,
+    start: node.name === config.initial_node,
     // An end node shows no edges: the call stops there.
-    const edges = node.end ? [] : (node.edges ?? [])
-    return {
-      id: ids[i],
-      node,
-      start: node.name === config.initial_node,
-      edges,
-      connected: edges.map((edge) => idOf.has(edge.target)),
-    }
-  })
-  const wires = cards.flatMap((card) =>
+    edges: node.end ? [] : (node.edges ?? []),
+  }))
+  const wires = shown.flatMap((card) =>
     card.edges.flatMap((edge, index) => {
       const target = idOf.get(edge.target)
       const handle = handleId(index)
@@ -65,5 +62,11 @@ export function toGraph(config: AgentConfig, ids: string[]): Graph {
         : []
     }),
   )
+  const targets = new Set(wires.map((wire) => wire.target))
+  const cards = shown.map((card) => ({
+    ...card,
+    connected: card.edges.map((edge) => idOf.has(edge.target)),
+    reached: card.start || targets.has(card.id),
+  }))
   return { cards, wires }
 }

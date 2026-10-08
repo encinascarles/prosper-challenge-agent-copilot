@@ -9,7 +9,7 @@ import type { Point } from '@/draft/draft'
 export type Rect = Point & { width: number; height: number }
 
 const STEP = 40 // how far apart the positions tried are
-const GAP = 24 // room left around every card
+const GAP = 48 // room left around every card: a loose wire's stub hangs off its side
 const RINGS = 60 // 2400px each way: beyond that, anywhere is as good
 
 function overlaps(a: Rect, b: Rect): boolean {

@@ -61,8 +61,32 @@ const band = 'flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium'
 const hidden =
   'opacity-0 outline-none transition-opacity focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
 
+/**
+ * A wire that is missing, drawn as what it is: a short dashed stub in crimson
+ * that leaves the dot and ends in the air. Out of an edge with no target, or
+ * into a node nothing leads to. It says so in words to a screen reader, and
+ * the dot beside it says so on hover.
+ */
+function LooseWire({ side, className }: { side: 'in' | 'out'; className?: string }) {
+  return (
+    <span
+      data-loose={side}
+      className={cn(
+        'pointer-events-none absolute flex -translate-y-1/2 items-center',
+        // From the outer side of the dot, which hangs half off the card.
+        side === 'out' ? 'left-full ml-[12px]' : 'right-full mr-[12px] flex-row-reverse',
+        className,
+      )}
+    >
+      <span className="w-[26px] border-t-2 border-dashed border-bad/70" />
+      <span className="size-[10px] rounded-full border-2 border-bad/70" />
+      <span className="sr-only">Not connected</span>
+    </span>
+  )
+}
+
 export function NodeCard({ data }: NodeProps<CardNode>) {
-  const { id, node, start, edges, connected, active, accepting } = data
+  const { id, node, start, edges, connected, reached, active, accepting } = data
   const { draft, apply, seal, cancel } = useEditor()
   const [instructions, ...more] = node.task_messages ?? []
   // The edge being removed, while it waits for a yes: one with a condition or
@@ -79,7 +103,7 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
       data-active={active || undefined}
       data-accepting={accepting || undefined}
       className={cn(
-        'group/card w-[300px] rounded-2xl border bg-card text-left shadow-[0_1px_2px_rgba(0,0,0,0.04),0_10px_28px_-14px_rgba(0,0,0,0.14)]',
+        'group/card relative w-[300px] rounded-2xl border bg-card text-left shadow-[0_1px_2px_rgba(0,0,0,0.04),0_10px_28px_-14px_rgba(0,0,0,0.14)]',
         start && 'border-brand/45',
         active && !start && 'border-foreground/30',
         active && 'shadow-[0_1px_2px_rgba(0,0,0,0.06),0_14px_32px_-12px_rgba(0,0,0,0.22)]',
@@ -99,9 +123,12 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
           position={Position.Left}
           // Wires end here; they start at an edge's own dot.
           isConnectableStart={false}
-          className={cn(dot, '!top-[26px] !left-[-6px] !bg-muted-foreground')}
+          title={reached ? undefined : 'Not connected: nothing leads to this node'}
+          className={cn(dot, '!top-[26px] !left-[-6px]', reached ? '!bg-muted-foreground' : '!bg-bad')}
         />
       )}
+      {/* Nothing leads here: a call can never get to this node. */}
+      {!reached && <LooseWire side="in" className="top-[26px]" />}
       <div className="flex items-start gap-1 px-4 pt-3.5">
         <NameInput
           label="Node name"
@@ -170,12 +197,6 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
                   onBlur={seal}
                   className="min-w-0 flex-1 text-[12.5px] leading-snug"
                 />
-                {/* On the first line, beside the dot it is about. */}
-                {!connected[index] && (
-                  <span className="shrink-0 pt-[3px] text-[11.5px] leading-snug font-medium whitespace-nowrap text-bad">
-                    Not connected
-                  </span>
-                )}
               </div>
               <FieldChips
                 id={id}
@@ -198,11 +219,13 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
                   </button>
                 }
               />
+              {!connected[index] && <LooseWire side="out" className="top-[25px]" />}
               <Handle
                 id={handleId(index)}
                 type="source"
                 position={Position.Right}
                 isConnectableEnd={false}
+                title={connected[index] ? undefined : 'Not connected: drag it to a node'}
                 className={cn(
                   dot,
                   // Level with the first line of the description.

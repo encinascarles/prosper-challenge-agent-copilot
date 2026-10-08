@@ -48,6 +48,16 @@ describe('toGraph', () => {
     expect(graph.wires.some((wire) => wire.target === 'a')).toBe(false)
   })
 
+  it('knows which nodes a call can get to', () => {
+    expect(graph.cards.map((card) => card.reached)).toEqual([true, true, true])
+    // Nothing leads to "details" once the only edge to it is gone.
+    const cut = toGraph(
+      { ...config, nodes: [{ name: 'greeting', edges: [edge('goodbye')] }, ...config.nodes.slice(1)] },
+      ids,
+    )
+    expect(cut.cards.map((card) => card.reached)).toEqual([true, false, true])
+  })
+
   it('shows no edges on an end node', () => {
     expect(graph.cards[2].edges).toEqual([])
     expect(graph.wires.some((wire) => wire.source === 'c')).toBe(false)
