@@ -108,13 +108,25 @@ class Node:
         name = _read(d, "name", str, where)
         where = f"node '{name}'"
         edges = _read(d, "edges", list, where, default=[])
+        task_messages = _read(d, "task_messages", list, where, default=[], items=dict)
+        # Messages and actions go to the LLM and to Flows as they are, so the
+        # fields those read are checked here. An action's `type` is only checked
+        # to be there: Flows lets a bot register its own action types.
+        for i, message in enumerate(task_messages, start=1):
+            _read(message, "role", str, f"task message {i} of {where}")
+            _read(message, "content", str, f"task message {i} of {where}")
+        actions = {}
+        for key, label in (("pre_actions", "pre-action"), ("post_actions", "post-action")):
+            actions[key] = _read(d, key, list, where, default=[], items=dict)
+            for i, action in enumerate(actions[key], start=1):
+                _read(action, "type", str, f"{label} {i} of {where}")
         return cls(
             name=name,
-            task_messages=_read(d, "task_messages", list, where, default=[], items=dict),
+            task_messages=task_messages,
             role_message=_read(d, "role_message", str, where, default=None),
             edges=[Edge.from_dict(e, f"edge {i}", where) for i, e in enumerate(edges, start=1)],
-            pre_actions=_read(d, "pre_actions", list, where, default=[], items=dict),
-            post_actions=_read(d, "post_actions", list, where, default=[], items=dict),
+            pre_actions=actions["pre_actions"],
+            post_actions=actions["post_actions"],
             end=_read(d, "end", bool, where, default=False),
         )
 

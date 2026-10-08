@@ -99,6 +99,42 @@ MALFORMED = {
         _set("nodes", 0, "task_messages", value=["hi"]),
         "Every item of 'task_messages' in node 'greeting' must be an object.",
     ),
+    "task message without role": (
+        _drop("nodes", 0, "task_messages", 0, "role"),
+        "Missing required field 'role' in task message 1 of node 'greeting'.",
+    ),
+    "task message without content": (
+        _drop("nodes", 0, "task_messages", 0, "content"),
+        "Missing required field 'content' in task message 1 of node 'greeting'.",
+    ),
+    "task message role is a number": (
+        _set("nodes", 0, "task_messages", 0, "role", value=1),
+        "'role' in task message 1 of node 'greeting' must be a string, got a number.",
+    ),
+    "task message content is a list": (
+        _set("nodes", 0, "task_messages", 0, "content", value=["Greet the caller."]),
+        "'content' in task message 1 of node 'greeting' must be a string, got a list.",
+    ),
+    "pre-action without type": (
+        _set("nodes", 0, "pre_actions", value=[{"type": "tts_say", "text": "Hi"}, {"text": "Hi"}]),
+        "Missing required field 'type' in pre-action 2 of node 'greeting'.",
+    ),
+    "pre-action type is a number": (
+        _set("nodes", 0, "pre_actions", value=[{"type": 1}]),
+        "'type' in pre-action 1 of node 'greeting' must be a string, got a number.",
+    ),
+    "post-action without type": (
+        _set("nodes", 0, "post_actions", value=[{"text": "Bye"}]),
+        "Missing required field 'type' in post-action 1 of node 'greeting'.",
+    ),
+    "post-action type is null": (
+        _set("nodes", 0, "post_actions", value=[{"type": None}]),
+        "'type' in post-action 1 of node 'greeting' must be a string, got null.",
+    ),
+    "pre_actions holds strings": (
+        _set("nodes", 0, "pre_actions", value=["tts_say"]),
+        "Every item of 'pre_actions' in node 'greeting' must be an object.",
+    ),
     "end is a string": (
         _set("nodes", 0, "end", value="yes"),
         "'end' in node 'greeting' must be true or false, got a string.",
@@ -185,3 +221,16 @@ def test_the_same_function_may_repeat_in_different_nodes(agent):
     agent["nodes"][1]["edges"][0]["function"] = agent["nodes"][0]["edges"][0]["function"]
 
     AgentBuilder.from_dict(agent)
+
+
+def test_any_action_type_is_accepted(agent):
+    # Not checked against a list: Flows lets a bot register its own action types.
+    agent["nodes"][0]["pre_actions"] = [{"type": "tts_say", "text": "One moment."}]
+    agent["nodes"][0]["post_actions"] = [{"type": "notify_front_desk", "channel": "sms"}]
+
+    node = AgentBuilder.from_dict(agent).config.nodes[0]
+
+    assert [a["type"] for a in node.pre_actions + node.post_actions] == [
+        "tts_say",
+        "notify_front_desk",
+    ]
