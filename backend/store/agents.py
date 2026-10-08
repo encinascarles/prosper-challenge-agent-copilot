@@ -11,7 +11,8 @@
 # handful of agents needs no server and no ORM, and the file survives restarts.
 #
 # This module only stores. Checking that a config is a valid agent is the
-# caller's job (AgentBuilder), so there is one place that defines "valid".
+# caller's job (AgentBuilder), so there is one place that defines "valid". The
+# one agent the store writes on its own, the seed, goes through that same check.
 #
 
 import json
@@ -22,6 +23,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
+
+from agent_builder import AgentBuilder
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_DB_PATH = BACKEND_DIR / "data" / "agents.db"
@@ -56,7 +59,12 @@ def init_db() -> None:
         conn.execute(_SCHEMA)
         # A fresh checkout should open on a working agent rather than an empty list.
         if not conn.execute("SELECT 1 FROM agents LIMIT 1").fetchone():
-            _insert(conn, json.loads(SEED_FLOW.read_text()))
+            seed = json.loads(SEED_FLOW.read_text())
+            # Same check as an agent saved through the API, so every stored
+            # agent has passed it. A broken sample stops the server at startup
+            # with the reason, instead of seeding something the editor cannot open.
+            AgentBuilder.from_dict(seed)
+            _insert(conn, seed)
 
 
 @contextmanager

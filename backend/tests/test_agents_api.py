@@ -6,7 +6,12 @@
 # and a rejected save changes nothing.
 #
 
+import json
+
+import pytest
+
 import store
+from store import agents as agent_store
 
 
 def _seeded_id(client) -> str:
@@ -26,6 +31,18 @@ def test_init_db_seeds_only_an_empty_table(client):
     store.init_db()  # what a server restart does
 
     assert len(client.get("/api/agents").json()) == 1
+
+
+def test_a_broken_seed_is_refused_and_not_stored(tmp_path, monkeypatch, agent):
+    agent["nodes"][0]["edges"][0]["target"] = "x"
+    broken = tmp_path / "broken_flow.json"
+    broken.write_text(json.dumps(agent))
+    monkeypatch.setenv(agent_store.DB_PATH_ENV, str(tmp_path / "empty.db"))
+    monkeypatch.setattr(agent_store, "SEED_FLOW", broken)
+
+    with pytest.raises(ValueError, match="targets unknown node 'x'"):
+        store.init_db()
+    assert store.list_agents() == []
 
 
 def test_get_returns_the_full_agent(client, agent):
