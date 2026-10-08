@@ -85,7 +85,9 @@ Every agent thread works in its own git worktree, never in the main checkout
 - **Anything else**: `git worktree add <path> -b <branch> origin/main`, then
   `sh tools/wt/prepare` inside it.
 - `sh tools/wt/dev` runs this worktree's backend and frontend on the first free
-  ports and prints the link. Several worktrees can run at once.
+  ports and prints the link. Several worktrees can run at once. With Tailscale
+  up the link is HTTPS on the tailnet, so test calls get the microphone from
+  another device; Pipecat's prebuilt test client is at `<link>/client`.
 - Run `make check` before pushing.
 - T3 Code names branches `t3code/<slug>`. Before the first push, rename the
   branch to the PR's descriptive name: `git branch -m <name>`.
