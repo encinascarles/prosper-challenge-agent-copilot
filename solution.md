@@ -121,6 +121,42 @@ to it) depends on the Copilot's loop. It arrives with it.
 
 **Trade-offs.** No undo history for manual edits until then.
 
+### The graph editor: React Flow, laid out and routed by ELK
+
+**Context.** The deployment team has to read an agent's flow at a glance and
+later edit it in place. A node can have several edges, and each one matters: it
+is a tool the model calls, with its own condition and fields.
+
+**Options.**
+- *Canvas by hand (SVG).* Rejected: pan, zoom, drag and wires are most of an
+  editor and none of the product.
+- *React Flow with dagre for layout.* Rejected: dagre places boxes, not the
+  points wires leave from, so the edges of one card cross on the way out.
+- *React Flow, with ELK's layered layout and one port per edge.* Chosen.
+
+**Trade-offs.** Each edge is a row of its card with its own dot, and ELK gets
+that dot's real position as a fixed port, so wires leave in the order the rows
+are read. That needs the cards' real sizes: the graph renders once out of sight,
+is measured, then laid out and shown. ELK is 1.4 MB, loaded on first use.
+
+The wires are drawn along ELK's own routes (right angles, rounded), not as
+curves from dot to dot: a curve runs under whatever card is in between, and a
+flow with a "go back" edge always has one. A route is only right for where the
+cards were, so a wire whose ends no longer meet its route (its card was dragged)
+falls back to a curve until "Tidy up". Columns are centered on one line rather
+than placed to keep wires straight: with one dot per row, straight wires put
+each card lower than the one before and a plain chain walks off the screen.
+
+The card shows names as words ("Collect details" for `collect_details`) and
+never an edge's function name: that is plumbing for the model, the condition is
+what a person reads. The start node has no way in: a call begins there, so an
+edge that names it is shown as not connected. Cards have an id of their own on
+the canvas, because a name is text that will be edited and cannot also be the
+card's identity; the agent JSON is untouched by it. The TypeScript types mirror
+`schema.py` by hand, with the same field names: the API takes the agent as an
+untyped object, so there is nothing to generate them from, and a schema change
+has to be made in both places.
+
 ## How this was built
 
 - Built with AI coding agents (Claude). `AGENTS.md` gives every coding agent the same context:
