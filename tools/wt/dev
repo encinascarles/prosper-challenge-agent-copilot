@@ -3,7 +3,8 @@
 # at once. Backend from 7860 up, frontend from 5173 up: the first free ones. The Vite proxy follows the backend port.
 # With Tailscale up, the frontend is also served over HTTPS to your tailnet only (tailscale serve, removed when this
 # stops): https://<machine>.<tailnet>.ts.net:<frontend port + 1000>. HTTPS because browsers only give the microphone
-# to a secure origin, so test calls work from another device. Without Tailscale: http://localhost:<port>.
+# to a secure origin, so test calls work from another device. Without Tailscale (or if serve fails to start):
+# http://localhost:<port>. Anyone on the tailnet can reach the link, and through it the backend and its API keys.
 set -eu
 here="$(git rev-parse --show-toplevel)"
 cd "$here"
@@ -15,13 +16,18 @@ link="http://localhost:$web"
 dns="$(tailscale status --json 2>/dev/null \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null || true)"
 if [ -n "$dns" ]; then
-  tls=$((web + 1000))
+  tls="$(free $((web + 1000)))"
   # Foreground serve: Tailscale removes it when the process ends.
   tailscale serve --https="$tls" "http://localhost:$web" >/dev/null 2>&1 &
   serve=$!
   trap 'kill "$serve" 2>/dev/null || true' EXIT
   trap 'exit 130' INT TERM
-  link="https://$dns:$tls"
+  sleep 1
+  if kill -0 "$serve" 2>/dev/null; then
+    link="https://$dns:$tls"
+  else
+    echo "tailscale serve did not start (is HTTPS enabled on the tailnet?): local link only" >&2
+  fi
 fi
 echo "dev      $here"
 echo "backend  http://localhost:$api"

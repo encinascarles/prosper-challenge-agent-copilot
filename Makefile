@@ -5,6 +5,7 @@ PROJECT := backend
 FRONTEND := frontend
 RUFF_VERSION := 0.16.10
 # Ports, overridable so several worktrees can run at once (tools/wt/dev picks free ones).
+# WEB_HOST is a manual override, e.g. WEB_HOST=0.0.0.0 to reach Vite from the LAN.
 BACKEND_PORT ?= 7860
 WEB_PORT ?= 5173
 WEB_HOST ?=
