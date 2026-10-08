@@ -8,6 +8,7 @@ import {
   addNode,
   connect,
   deleteNode,
+  fieldKind,
   moveNode,
   nameTaken,
   openDraft,
@@ -191,18 +192,63 @@ describe('fields', () => {
     expect(updateField(draft, greeting, 0, 'intent', { name: '' })).toBe(draft)
   })
 
-  it('makes a field an enum when it gets allowed values, and plain again without', () => {
-    const { draft, greeting } = open()
-    const listed = updateField(draft, greeting, 0, 'notes', { options: ['a', 'b'] })
-    expect(first(listed).properties!.notes).toEqual({ type: 'string', enum: ['a', 'b'] })
-    const plain = updateField(listed, greeting, 0, 'notes', { options: [] })
-    expect(first(plain).properties!.notes).toEqual({ type: 'string' })
+  it('reads what a field is from its type and its enum', () => {
+    expect(fieldKind({ type: 'string' })).toBe('text')
+    expect(fieldKind({ type: 'number' })).toBe('number')
+    expect(fieldKind({ type: 'boolean' })).toBe('boolean')
+    expect(fieldKind({ type: 'string', enum: ['a', 'b'] })).toBe('choice')
+    // A choice that has no options yet is still a choice.
+    expect(fieldKind({ type: 'string', enum: [] })).toBe('choice')
+    // No type is taken as text, so with an enum it is a choice.
+    expect(fieldKind({})).toBe('text')
+    expect(fieldKind({ enum: ['a'] })).toBe('choice')
+    // A type the editor does not offer is shown as it is.
+    expect(fieldKind({ type: 'integer' })).toBe('integer')
   })
 
-  it('drops the allowed values when the field stops being text', () => {
+  it('writes each kind as the type, and the enum, the agent JSON uses', () => {
     const { draft, greeting } = open()
-    const next = first(updateField(draft, greeting, 0, 'intent', { type: 'number' }))
-    expect(next.properties!.intent).toEqual({ type: 'number', description: 'What they want.' })
+    const as = (kind: string) =>
+      first(updateField(draft, greeting, 0, 'notes', { kind })).properties!.notes
+    // "notes" is text already: asking for text changes nothing.
+    expect(as('text')).toEqual({ type: 'string' })
+    expect(as('number')).toEqual({ type: 'number' })
+    expect(as('boolean')).toEqual({ type: 'boolean' })
+    expect(as('choice')).toEqual({ type: 'string', enum: [] })
+    // And back: every kind reads as what was asked for.
+    for (const kind of ['text', 'number', 'boolean', 'choice']) {
+      expect(fieldKind(as(kind))).toBe(kind)
+    }
+  })
+
+  it('gives a choice its options, and keeps them while it is a choice', () => {
+    const { draft, greeting } = open()
+    const choice = updateField(draft, greeting, 0, 'notes', { kind: 'choice' })
+    const listed = updateField(choice, greeting, 0, 'notes', { options: ['a', 'b', 'c'] })
+    expect(first(listed).properties!.notes).toEqual({ type: 'string', enum: ['a', 'b', 'c'] })
+    // Choosing "choice" again does not empty the list.
+    const again = updateField(listed, greeting, 0, 'notes', { kind: 'choice' })
+    expect(first(again).properties!.notes.enum).toEqual(['a', 'b', 'c'])
+    const described = updateField(listed, greeting, 0, 'notes', { description: 'Which.' })
+    expect(first(described).properties!.notes.enum).toEqual(['a', 'b', 'c'])
+  })
+
+  it('drops the options when a choice becomes another kind', () => {
+    const { draft, greeting } = open()
+    for (const [kind, type] of [
+      ['text', 'string'],
+      ['number', 'number'],
+      ['boolean', 'boolean'],
+    ]) {
+      const next = first(updateField(draft, greeting, 0, 'intent', { kind }))
+      expect(next.properties!.intent).toEqual({ type, description: 'What they want.' })
+    }
+  })
+
+  it('does not give options to a field that is not a choice', () => {
+    const { draft, greeting } = open()
+    const next = first(updateField(draft, greeting, 0, 'notes', { options: ['a', 'b'] }))
+    expect(next.properties!.notes).toEqual({ type: 'string' })
   })
 
   it('keeps the allowed values of a field that was loaded without a type', () => {

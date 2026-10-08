@@ -157,6 +157,10 @@ card's identity; the agent JSON is untouched by it. The TypeScript types mirror
 untyped object, so there is nothing to generate them from, and a schema change
 has to be made in both places.
 
+A list of allowed values is a field type of its own, Choice, though the agent
+JSON keeps it as a string with an `enum`: a type plus a separate "only these
+values" asked for two decisions to say one thing.
+
 ### Editing happens on a draft, changed by pure functions
 
 **Context.** The editor changes an agent in many small steps (a word in a prompt,

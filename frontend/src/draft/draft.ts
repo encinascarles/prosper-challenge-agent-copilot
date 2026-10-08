@@ -156,18 +156,40 @@ export function addField(draft: Draft, id: string, index: number): Draft {
   })
 }
 
+/**
+ * What a field is, as the editor offers it: text, number, boolean or choice.
+ * The agent JSON has no "choice": it is text with an `enum`, the list of the
+ * only values allowed, so that is what makes a field a choice here, with or
+ * without options yet. A type the editor does not offer is its own kind and
+ * stays as it was loaded.
+ */
+export function fieldKind(property: EdgeProperty): string {
+  // A property with no type takes any value; as a field to collect it is text.
+  const type = property.type ?? 'string'
+  if (type !== 'string') return type
+  return property.enum ? 'choice' : 'text'
+}
+
+// The property as a field of `kind`: the reverse of `fieldKind`. Only a choice
+// has options, so any other kind drops them.
+function asKind(property: EdgeProperty, kind: string): EdgeProperty {
+  const { enum: options, ...rest } = property
+  if (kind === 'choice') return { ...rest, type: 'string', enum: options ?? [] }
+  return { ...rest, type: kind === 'text' ? 'string' : kind }
+}
+
 export type FieldChange = {
   name?: string
   description?: string
-  type?: string
+  kind?: string // see fieldKind
   required?: boolean
-  options?: string[] // the only values allowed; empty for any
+  options?: string[] // of a choice: the only values allowed
 }
 
 /**
  * Changes a field an edge collects. A new name keeps the field's place and its
- * "required"; it is refused if empty or already a field of the edge. Allowed
- * values make it an enum, which only text can be.
+ * "required"; it is refused if empty or already a field of the edge. Options
+ * are only kept by a choice.
  */
 export function updateField(
   draft: Draft,
@@ -182,16 +204,16 @@ export function updateField(
     const name = change.name ?? field
     if (name === '' || fieldTaken(edge, field, name)) return edge
 
-    const property: EdgeProperty = { ...current }
+    let property: EdgeProperty = { ...current }
     if (change.description !== undefined) {
       if (change.description) property.description = change.description
       else delete property.description
     }
-    if (change.type !== undefined) property.type = change.type
-    if (change.options !== undefined) property.enum = change.options
-    // Only text has a list of values. A property with no type is taken as text.
-    if ((property.type ?? 'string') !== 'string' || property.enum?.length === 0) {
-      delete property.enum
+    if (change.kind !== undefined && change.kind !== fieldKind(property)) {
+      property = asKind(property, change.kind)
+    }
+    if (change.options !== undefined && fieldKind(property) === 'choice') {
+      property.enum = change.options
     }
 
     const required = (edge.required ?? []).filter((other) => other !== field)

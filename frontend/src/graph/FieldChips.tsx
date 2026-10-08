@@ -1,37 +1,96 @@
 // The fields an edge collects, as chips, and the small editor a chip opens.
 //
 // A field is one property of the tool the model calls to take the edge: its
-// name, what it is (the model reads the description), its type, whether it is
-// required, and optionally the only values allowed. On the card it is a chip
-// with its name and, for a list of values, the values.
+// name, what it is (the model reads the description), its type and whether it
+// is required. A choice is the type whose value must be one of a list of
+// options; the chip on the card shows them next to the name.
 
-import { Trash2 } from 'lucide-react'
+import { Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 
 import type { Edge, EdgeProperty } from '@/agents/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { addField, fieldTaken, removeField, updateField, type FieldChange } from '@/draft/draft'
+import {
+  addField,
+  fieldKind,
+  fieldTaken,
+  removeField,
+  updateField,
+  type FieldChange,
+} from '@/draft/draft'
 import { useEditor } from '@/draft/editor'
 import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
 
 import { NameInput } from './inputs'
 
-const TYPES = [
-  ['string', 'Text'],
+// The kinds of field, as draft/draft.ts names them and as people read them.
+const KINDS = [
+  ['text', 'Text'],
   ['number', 'Number'],
   ['boolean', 'Yes / no'],
+  ['choice', 'Choice'],
 ]
 
 const label = 'text-[11px] font-medium text-muted-foreground'
 const input =
   'w-full rounded-md border bg-background px-2 py-1 text-[12px] outline-none focus:border-foreground/40'
 
-const toOptions = (text: string) =>
-  text
-    .split(',')
-    .map((option) => option.trim())
-    .filter(Boolean)
+/**
+ * The options of a choice, as chips: type one and press Enter to add it, × to
+ * remove it. A choice between fewer than two is not a choice, so it says so
+ * until there are two.
+ */
+function Options({ options, onChange }: { options: string[]; onChange: (options: string[]) => void }) {
+  const [typed, setTyped] = useState('')
+  const add = () => {
+    const option = typed.trim()
+    if (option && !options.includes(option)) onChange([...options, option])
+    setTyped('')
+  }
+  return (
+    <div className="space-y-1">
+      <span className={label}>Options</span>
+      <div className="flex flex-wrap items-center gap-1 rounded-md border bg-background p-1 focus-within:border-foreground/40">
+        {options.map((option) => (
+          <span
+            key={option}
+            className="inline-flex max-w-full items-center gap-0.5 rounded-full border bg-card py-px pr-0.5 pl-2 text-[11.5px]"
+          >
+            <span className="truncate">{option}</span>
+            <button
+              aria-label={`Remove ${option}`}
+              onClick={() => onChange(options.filter((other) => other !== option))}
+              className="rounded-full p-0.5 text-muted-foreground hover:text-bad"
+            >
+              <X className="size-3" />
+            </button>
+          </span>
+        ))}
+        <input
+          aria-label="Add an option"
+          value={typed}
+          onChange={(event) => setTyped(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              add()
+            } else if (event.key === 'Backspace' && typed === '' && options.length > 0) {
+              onChange(options.slice(0, -1))
+            }
+          }}
+          // What was typed and not entered is an option too, not lost.
+          onBlur={add}
+          placeholder={options.length > 0 ? 'Add another' : 'Type one and press Enter'}
+          className="min-w-[96px] flex-1 bg-transparent px-1 py-0.5 text-[12px] outline-none"
+        />
+      </div>
+      {options.length < 2 && (
+        <p className="text-[10.5px] text-bad">A choice needs at least two options.</p>
+      )}
+    </div>
+  )
+}
 
 type EditorProps = {
   edge: Edge
@@ -44,13 +103,7 @@ type EditorProps = {
 }
 
 function FieldEditor({ edge, name, property, change, onBlur, onRemove, onDone }: EditorProps) {
-  // A property with no type takes any value; as a field to collect it is text.
-  const type = property.type ?? 'string'
-  const options = property.enum ?? []
-  // The list as typed, kept while it still says what the draft holds, so a
-  // comma or a space being typed is not tidied away under the caret.
-  const [typed, setTyped] = useState(options.join(', '))
-  const listed = toOptions(typed).join('\n') === options.join('\n') ? typed : options.join(', ')
+  const kind = fieldKind(property)
 
   return (
     <div className="space-y-2.5 text-left">
@@ -86,17 +139,18 @@ function FieldEditor({ edge, name, property, change, onBlur, onRemove, onDone }:
         <label className="block flex-1 space-y-1">
           <span className={label}>Type</span>
           <select
-            value={type}
-            onChange={(event) => change({ type: event.target.value })}
+            aria-label="Type"
+            value={kind}
+            onChange={(event) => change({ kind: event.target.value })}
             className={input}
           >
-            {TYPES.map(([value, text]) => (
+            {KINDS.map(([value, text]) => (
               <option key={value} value={value}>
                 {text}
               </option>
             ))}
             {/* A type the editor does not offer stays as it was loaded. */}
-            {!TYPES.some(([value]) => value === type) && <option value={type}>{type}</option>}
+            {!KINDS.some(([value]) => value === kind) && <option value={kind}>{kind}</option>}
           </select>
         </label>
         <label className="flex h-[28px] items-center gap-1.5 text-[12px]">
@@ -108,23 +162,8 @@ function FieldEditor({ edge, name, property, change, onBlur, onRemove, onDone }:
           Required
         </label>
       </div>
-      {type === 'string' && (
-        <label className="block space-y-1">
-          <span className={label}>Only these values</span>
-          <input
-            value={listed}
-            onChange={(event) => {
-              setTyped(event.target.value)
-              change({ options: toOptions(event.target.value) }, 'options')
-            }}
-            onBlur={() => onBlur()}
-            placeholder="book, reschedule, cancel"
-            className={input}
-          />
-          <span className="block text-[10.5px] text-muted-foreground">
-            Separated by commas. Empty means any text.
-          </span>
-        </label>
+      {kind === 'choice' && (
+        <Options options={property.enum ?? []} onChange={(options) => change({ options })} />
       )}
       <div className="flex items-center border-t pt-2">
         <button onClick={onRemove} className="flex items-center gap-1 text-[12px] text-bad">
