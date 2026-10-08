@@ -186,6 +186,13 @@ when a node has two edges to the same place, regenerated when the target changes
 or is renamed. They are the tool names the model sees, so they stay meaningful
 without asking a deployment person to invent an identifier.
 
+Changing the structure never runs the layout. A node added by hand goes where
+it was dropped, or to the free spot nearest the middle of the view, and every
+other card stays where someone put it; a new or retargeted wire is a plain curve
+until "Tidy up", because ELK routes wires only as part of a full layout. The
+start node takes no wire, in the draft and on the canvas, and a wire dropped
+anywhere on a card connects to it.
+
 Undo keeps whole drafts instead of inverse operations: an edit shares what it
 does not touch with the draft before, so a snapshot is cheap and undo cannot
 disagree with the edit. Typing in one field is one step. Cost: nothing is saved
