@@ -22,6 +22,8 @@ export type Action =
   // The first layout of a just opened agent: where the cards are, not an edit.
   | { type: 'place'; layout: Record<string, Point> }
   | { type: 'seal' }
+  // Takes back the run of edits merged under `merge`, as if never typed.
+  | { type: 'cancel'; merge: string }
   | { type: 'undo' }
   | { type: 'redo' }
 
@@ -47,6 +49,9 @@ export function historyReducer(history: History, action: Action): History {
       return { ...history, present: { ...present, layout: action.layout } }
     case 'seal':
       return history.merging === null ? history : { ...history, merging: null }
+    case 'cancel':
+      if (history.merging !== action.merge || past.length === 0) return history
+      return { ...history, past: past.slice(0, -1), present: past[past.length - 1], merging: null }
     case 'undo':
       if (past.length === 0) return history
       return {

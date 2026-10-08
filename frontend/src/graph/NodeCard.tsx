@@ -1,10 +1,13 @@
-// The card of one node on the canvas.
+// The card of one node on the canvas, and where the node is edited.
 //
 // Everything a node says is on its card, so the graph reads without opening
 // anything: the name, the instructions, and under "Moves on when" one row per
 // edge. A row carries its own source dot, which is where its wire leaves from;
 // the wire shows the target, so the row does not repeat it. The start node and
 // the end nodes carry a band saying what they are.
+//
+// Editing is in place: each text is an input styled as the text it replaces,
+// and every change is an edit of the draft, so it can be undone.
 //
 // The card speaks the deployment team's language, not the schema's: names are
 // shown as words ("Collect details" for collect_details) and an edge's function
@@ -15,9 +18,12 @@ import { Handle, Position, type Node as FlowNode, type NodeProps } from '@xyflow
 import { PhoneOff, Play } from 'lucide-react'
 
 import type { Edge } from '@/agents/types'
+import { nameTaken, renameNode, setEdgeDescription, setInstructions } from '@/draft/draft'
+import { useEditor } from '@/draft/editor'
 import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
 
+import { GrowingText, NameInput } from './inputs'
 import { handleId, type Card } from './model'
 
 export type CardNode = FlowNode<Card, 'card'>
@@ -53,8 +59,9 @@ function Fields({ edge }: { edge: Edge }) {
 }
 
 export function NodeCard({ data }: NodeProps<CardNode>) {
-  const { node, start, edges, connected } = data
-  const instructions = (node.task_messages ?? []).map((message) => message.content)
+  const { id, node, start, edges, connected } = data
+  const { draft, apply, seal, cancel } = useEditor()
+  const [instructions, ...more] = node.task_messages ?? []
   return (
     <div
       className={cn(
@@ -76,16 +83,40 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
           className={cn(dot, '!top-[26px] !left-[-6px] !bg-muted-foreground')}
         />
       )}
-      <div className="truncate px-4 pt-3.5 text-[14px] font-semibold tracking-[-0.01em]">
-        {humanize(node.name)}
+      <div className="flex items-start gap-1 px-4 pt-3.5">
+        <NameInput
+          label="Node name"
+          name={node.name}
+          refuse={(name) =>
+            name === ''
+              ? 'A node needs a name.'
+              : nameTaken(draft, id, name)
+                ? 'Another node already has this name.'
+                : null
+          }
+          onRename={(name) => apply((current) => renameNode(current, id, name), `name:${id}`)}
+          onBlur={(refused) => (refused ? cancel(`name:${id}`) : seal())}
+          className="text-[14px] font-semibold tracking-[-0.01em]"
+        />
       </div>
-      <div className="space-y-1.5 px-4 pt-1 pb-3.5 text-[13px] leading-[1.5] text-foreground/70">
-        {instructions.length === 0 && <p className="italic">No instructions</p>}
-        {instructions.map((content, index) => (
-          <p key={index} className="whitespace-pre-wrap">
-            {content}
+      <div className="px-4 pt-1 pb-3.5">
+        <GrowingText
+          label="Instructions"
+          value={instructions?.content ?? ''}
+          placeholder="What the agent says and does here…"
+          onChange={(content) =>
+            apply((current) => setInstructions(current, id, content), `instructions:${id}`)
+          }
+          onBlur={seal}
+          className="text-[13px] leading-[1.5] text-foreground/70 focus-within:text-foreground"
+        />
+        {more.length > 0 && (
+          // They reach the model too, so the card says they are there.
+          <p className="mt-1 text-[11.5px] text-muted-foreground">
+            + {more.length} more {more.length === 1 ? 'message' : 'messages'} to the model, not
+            shown here
           </p>
-        ))}
+        )}
       </div>
       {node.end ? (
         <div className={cn(band, 'rounded-b-[15px] bg-foreground text-background')}>
@@ -99,7 +130,19 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
             </div>
             {edges.map((edge, index) => (
               <div key={index} className="relative px-4 py-1.5">
-                <p className="text-[12.5px] leading-snug">{edge.description}</p>
+                <GrowingText
+                  label="Moves on when"
+                  value={edge.description}
+                  placeholder="When should the agent move on?"
+                  onChange={(description) =>
+                    apply(
+                      (current) => setEdgeDescription(current, id, index, description),
+                      `description:${id}:${index}`,
+                    )
+                  }
+                  onBlur={seal}
+                  className="text-[12.5px] leading-snug"
+                />
                 <Fields edge={edge} />
                 {!connected[index] && (
                   <div className="mt-1 text-[11.5px] font-medium text-bad">Not connected</div>

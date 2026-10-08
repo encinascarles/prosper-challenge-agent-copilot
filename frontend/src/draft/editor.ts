@@ -15,6 +15,8 @@ export type Editor = {
   apply: (edit: (draft: Draft) => Draft, merge?: string) => void
   /** Ends the run of merged edits: the field was left. */
   seal: () => void
+  /** Takes back the run of edits merged under `merge`: the field was left in a state that cannot stay. */
+  cancel: (merge: string) => void
   /** Puts the cards of a just opened agent in their first positions. */
   place: (layout: Record<string, Point>) => void
   undo: () => void
@@ -39,6 +41,7 @@ export function useNewEditor(config: AgentConfig): Editor {
       apply: (edit: (draft: Draft) => Draft, merge?: string) =>
         dispatch({ type: 'apply', edit, merge }),
       seal: () => dispatch({ type: 'seal' }),
+      cancel: (merge: string) => dispatch({ type: 'cancel', merge }),
       place: (layout: Record<string, Point>) => dispatch({ type: 'place', layout }),
       undo: () => dispatch({ type: 'undo' }),
       redo: () => dispatch({ type: 'redo' }),

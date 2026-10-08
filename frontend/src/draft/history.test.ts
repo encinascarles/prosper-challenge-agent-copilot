@@ -77,6 +77,19 @@ describe('historyReducer', () => {
     expect(run(two, undo).present.config.nodes[1].task_messages![0].content).toBe('B')
   })
 
+  it('takes back a run of typing that is abandoned, leaving nothing to undo', () => {
+    const history = start()
+    const [greeting] = history.present.ids
+    const type = (name: string) => apply((d) => renameNode(d, greeting, name), 'name')
+    const typed = run(history, type('g'), type('go'))
+    const cancelled = run(typed, { type: 'cancel', merge: 'name' })
+    expect(cancelled.present).toBe(history.present)
+    expect(cancelled.past).toEqual([])
+    // Only the run in progress can be abandoned.
+    expect(run(typed, { type: 'seal' }, { type: 'cancel', merge: 'name' }).present).toBe(typed.present)
+    expect(run(typed, { type: 'cancel', merge: 'other' })).toBe(typed)
+  })
+
   it('places the cards without making it something to undo', () => {
     const history = start()
     const placed = run(history, { type: 'place', layout: { greeting: { x: 1, y: 2 } } })
