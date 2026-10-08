@@ -104,7 +104,7 @@ export function AgentEditor({ record, agents, onPick, onSaved }: Props) {
   const editor = useMemo(() => ({ ...core, refusal, framed }), [core, refusal, framed])
   return (
     <EditorContext value={editor}>
-      <div className="flex h-dvh flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <TopBar
           agents={agents}
           agentId={record.id}

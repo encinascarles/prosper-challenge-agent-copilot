@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { AgentEditor } from '@/AgentEditor'
 import { getAgent, listAgents } from '@/agents/api'
 import type { AgentRecord, AgentSummary } from '@/agents/types'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { TopBar } from '@/components/TopBar'
 
 
@@ -57,13 +58,12 @@ export default function App() {
   // An open agent is the editor's page: it has the top bar too, with saving in it.
   if (open && !error) {
     return (
-      <AgentEditor
-        key={open.id}
-        record={open}
-        agents={agents ?? []}
-        onPick={pick}
-        onSaved={loadAgents}
-      />
+      // Keyed like the editor: opening another agent is a fresh start for both.
+      <div key={open.id} className="flex h-dvh flex-col">
+        <ErrorBoundary>
+          <AgentEditor record={open} agents={agents ?? []} onPick={pick} onSaved={loadAgents} />
+        </ErrorBoundary>
+      </div>
     )
   }
   return (
