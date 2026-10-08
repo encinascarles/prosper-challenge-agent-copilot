@@ -30,3 +30,15 @@ select = ["E", "F", "I", "B"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["agent_builder", "api", "store"]
+
+[dependency-groups]
+dev = [
+    # FastAPI's TestClient is built on httpx.
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Same import root as `python bot.py`: agent_builder, api and store are top-level.
+pythonpath = ["."]
