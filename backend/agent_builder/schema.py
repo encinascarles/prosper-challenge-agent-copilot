@@ -7,12 +7,60 @@
 # `target`) rather than as Python closures — because a Copilot can emit a string, not
 # a callable. `AgentBuilder` turns these strings back into the closures Pipecat wants.
 #
+# `from_dict` checks the shape as it reads: a missing field or a wrong type raises a
+# ValueError that says where, because agents arrive from the API and the Copilot, and
+# "KeyError: 'name'" does not tell either of them what to fix.
+#
 
 from dataclasses import dataclass, field
 from typing import Optional
 
 DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # ElevenLabs "Rachel"
 DEFAULT_MODEL = "gpt-4o"
+
+_MISSING = object()
+# Named as JSON names them: the reader of the message wrote JSON, not Python.
+_JSON_NAMES = {
+    dict: "an object",
+    list: "a list",
+    str: "a string",
+    bool: "true or false",
+    int: "a number",
+    float: "a number",
+    type(None): "null",
+}
+
+
+def _json_name(value) -> str:
+    return _JSON_NAMES.get(type(value), type(value).__name__)
+
+
+def _as_object(value, where: str) -> dict:
+    if not isinstance(value, dict):
+        subject = where[0].upper() + where[1:]
+        raise ValueError(f"{subject} must be an object, got {_json_name(value)}.")
+    return value
+
+
+def _read(d: dict, key: str, kind: type, where: str, default=_MISSING, items: type = None):
+    """Field `key` of `d`, checked to be a `kind` (and, for a list, a list of `items`).
+
+    Without a `default` the field is required. A `None` default also accepts null.
+    """
+    if key not in d:
+        if default is _MISSING:
+            raise ValueError(f"Missing required field '{key}' in {where}.")
+        return default
+    value = d[key]
+    if value is None and default is None:
+        return None
+    if not isinstance(value, kind):
+        raise ValueError(
+            f"'{key}' in {where} must be {_JSON_NAMES[kind]}, got {_json_name(value)}."
+        )
+    if items and not all(isinstance(item, items) for item in value):
+        raise ValueError(f"Every item of '{key}' in {where} must be {_JSON_NAMES[items]}.")
+    return value
 
 
 @dataclass
@@ -27,13 +75,18 @@ class Edge:
     required: list = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Edge":
+    def from_dict(cls, d: dict, where: str = "the edge", node: str = "") -> "Edge":
+        # `node` is the owning node as the messages name it ("node 'greeting'").
+        of_node = f" of {node}" if node else ""
+        d = _as_object(d, where + of_node)
+        function = _read(d, "function", str, where + of_node)
+        where = f"edge '{function}'{of_node}"
         return cls(
-            function=d["function"],
-            description=d["description"],
-            target=d["target"],
-            properties=d.get("properties", {}),
-            required=d.get("required", []),
+            function=function,
+            description=_read(d, "description", str, where),
+            target=_read(d, "target", str, where),
+            properties=_read(d, "properties", dict, where, default={}),
+            required=_read(d, "required", list, where, default=[], items=str),
         )
 
 
@@ -50,15 +103,19 @@ class Node:
     end: bool = False                                   # terminal -> ends the call
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Node":
+    def from_dict(cls, d: dict, where: str = "the node") -> "Node":
+        d = _as_object(d, where)
+        name = _read(d, "name", str, where)
+        where = f"node '{name}'"
+        edges = _read(d, "edges", list, where, default=[])
         return cls(
-            name=d["name"],
-            task_messages=d.get("task_messages", []),
-            role_message=d.get("role_message"),
-            edges=[Edge.from_dict(e) for e in d.get("edges", [])],
-            pre_actions=d.get("pre_actions", []),
-            post_actions=d.get("post_actions", []),
-            end=d.get("end", False),
+            name=name,
+            task_messages=_read(d, "task_messages", list, where, default=[], items=dict),
+            role_message=_read(d, "role_message", str, where, default=None),
+            edges=[Edge.from_dict(e, f"edge {i}", where) for i, e in enumerate(edges, start=1)],
+            pre_actions=_read(d, "pre_actions", list, where, default=[], items=dict),
+            post_actions=_read(d, "post_actions", list, where, default=[], items=dict),
+            end=_read(d, "end", bool, where, default=False),
         )
 
 
@@ -75,11 +132,14 @@ class AgentConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "AgentConfig":
+        where = "the agent"
+        d = _as_object(d, where)
+        nodes = _read(d, "nodes", list, where)
         return cls(
-            name=d["name"],
-            initial_node=d["initial_node"],
-            nodes=[Node.from_dict(n) for n in d["nodes"]],
-            persona=d.get("persona", ""),
-            voice_id=d.get("voice_id", DEFAULT_VOICE_ID),
-            model=d.get("model", DEFAULT_MODEL),
+            name=_read(d, "name", str, where),
+            initial_node=_read(d, "initial_node", str, where),
+            nodes=[Node.from_dict(n, f"node {i}") for i, n in enumerate(nodes, start=1)],
+            persona=_read(d, "persona", str, where, default=""),
+            voice_id=_read(d, "voice_id", str, where, default=DEFAULT_VOICE_ID),
+            model=_read(d, "model", str, where, default=DEFAULT_MODEL),
         )
