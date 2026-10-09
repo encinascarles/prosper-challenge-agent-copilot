@@ -384,6 +384,21 @@ export function addNode(
   return from ? connect(added, from.id, from.index, id) : added
 }
 
+export type AgentChange = {
+  name?: string
+  persona?: string // what every node is told about who the agent is
+  model?: string // the LLM the call runs on
+  voice_id?: string // the ElevenLabs voice it speaks with
+}
+
+/** Changes what is the agent's own, not any node's. Everything else in the agent stays. */
+export function setAgent(draft: Draft, change: AgentChange): Draft {
+  const changed = (Object.keys(change) as (keyof AgentChange)[]).some(
+    (key) => change[key] !== undefined && change[key] !== draft.config[key],
+  )
+  return changed ? { ...draft, config: { ...draft.config, ...change } } : draft
+}
+
 /** Puts a node's card at `position`. */
 export function moveNode(draft: Draft, id: string, position: Point): Draft {
   if (!draft.ids.includes(id)) return draft

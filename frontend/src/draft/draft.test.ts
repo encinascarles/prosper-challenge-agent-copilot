@@ -17,6 +17,7 @@ import {
   removeField,
   renameNode,
   setEdgeDescription,
+  setAgent,
   setEnd,
   setInstructions,
   setStart,
@@ -477,6 +478,44 @@ describe('addNode', () => {
     const { draft, greeting, details, goodbye } = open()
     const empty = [greeting, details, goodbye].reduce(deleteNode, draft)
     expect(addNode(empty, 'new-1', { x: 0, y: 0 }).config.initial_node).toBe('step_1')
+  })
+})
+
+describe('setAgent', () => {
+  it('changes the name, persona, model and voice of the agent', () => {
+    const { draft } = open()
+    const next = setAgent(draft, {
+      name: 'Riverside',
+      persona: 'Warm and brief.',
+      model: 'gpt-4o-mini',
+      voice_id: 'abc123',
+    })
+    expect(next.config).toMatchObject({
+      name: 'Riverside',
+      persona: 'Warm and brief.',
+      model: 'gpt-4o-mini',
+      voice_id: 'abc123',
+    })
+  })
+
+  it('leaves the nodes, the start and anything else in the agent as they were', () => {
+    const { draft } = open()
+    const extra = { ...draft, config: { ...draft.config, copilot_notes: ['kept'] } as Draft['config'] }
+    const next = setAgent(extra, { persona: 'Warm and brief.' })
+    expect(next.config.nodes).toBe(draft.config.nodes)
+    expect(next.config.initial_node).toBe('greeting')
+    expect(next.config.name).toBe('Test')
+    expect((next.config as Record<string, unknown>).copilot_notes).toEqual(['kept'])
+    // A field that was not in the agent is not written until it is changed.
+    expect('model' in next.config).toBe(false)
+    expect(next.ids).toBe(draft.ids)
+    expect(next.positions).toBe(draft.positions)
+  })
+
+  it('returns the same draft when nothing changes', () => {
+    const { draft } = open()
+    expect(setAgent(draft, { name: 'Test' })).toBe(draft)
+    expect(setAgent(draft, {})).toBe(draft)
   })
 })
 
