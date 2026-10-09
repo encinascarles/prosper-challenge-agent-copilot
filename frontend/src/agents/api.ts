@@ -63,6 +63,11 @@ export function getAgent(id: string): Promise<AgentRecord> {
   return request(`/${encodeURIComponent(id)}`)
 }
 
+/** Stores a new agent. The editor lays it out when it first opens. */
+export function createAgent(config: AgentConfig): Promise<AgentRecord> {
+  return request('', 'POST', { config })
+}
+
 /** Replaces the agent and its layout: both or neither, the backend validates the agent first. */
 export function updateAgent(id: string, config: AgentConfig, layout: Layout): Promise<AgentRecord> {
   return request(`/${encodeURIComponent(id)}`, 'PUT', { config, layout })
