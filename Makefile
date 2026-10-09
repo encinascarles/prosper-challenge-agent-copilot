@@ -32,10 +32,11 @@ dev: ## Run backend and frontend together; Ctrl+C stops both
 lint: ## Lint the backend with ruff
 	uvx ruff@$(RUFF_VERSION) check $(PROJECT)
 
-test: ## Run the backend tests (no network, no LLM calls)
+test: ## Run the backend and frontend tests (no network, no LLM calls)
 	uv run --directory $(PROJECT) pytest
+	npm test --prefix $(FRONTEND)
 
-check: ## Run every check CI runs: ruff, backend tests, frontend lint, typecheck and build
+check: ## Run every check CI runs: ruff, tests, frontend lint, typecheck and build
 	$(MAKE) lint
 	$(MAKE) test
 	npm run lint --prefix $(FRONTEND)

@@ -69,6 +69,36 @@ with the example agent on first start. No ORM and no migrations tool, which is
 fine for one table and will need revisiting if the schema grows. The agent is
 stored whole in one TEXT column, as `AgentConfig` reads it: nothing queries inside
 the graph, so tables for nodes and edges would only be a mapping to keep in sync.
+Deleting an agent removes its row for good: there are no versions yet to bring
+it back from, so the editor asks first. Only a database that is being created is
+seeded. One whose last agent was deleted stays empty, or the example would come
+back on its own at the next start.
+
+### Node positions live next to the agent, not in it
+
+**Context.** The editor has to reopen a graph the way it was left, so where each
+node sits must be saved. The agent JSON is what Pipecat runs and what the Copilot
+reads and rewrites.
+
+**Options.**
+- *A `position` on each node of the agent JSON.* Rejected: a canvas coordinate is
+  not part of an agent. It would reach the schema, the builder and every prompt
+  that carries the agent, and moving a node would count as changing the agent.
+- *The browser's local storage.* Rejected: the arrangement would be lost on
+  another device, and it is part of how the team reads a flow.
+- *A `layout` column next to `config`: `{ "<node name>": { "x", "y" } }`.* Chosen.
+
+**Trade-offs.** Creating and saving an agent take the same body,
+`{ config, layout? }`, and both are written in one statement, so they cannot be
+saved apart. The store drops positions of
+names that are not nodes of the agent on every save, with or without a layout in
+the request, so the layout never refers to a node that is gone. A client that
+leaves the layout out (the Copilot applying a fix) keeps the stored one; a node
+without a position is fine, the editor places it. Cost: the layout is keyed by
+node name, so a rename has to carry the position over, which is the editor's job
+since it knows the old name. Existing databases get the column added at startup
+(a check on `PRAGMA table_info`), the one migration so far and still short of
+needing a tool.
 
 ### The API lives on Pipecat's FastAPI app
 
@@ -120,6 +150,121 @@ version, and the right shape (what a version records, how calls and fixes refer
 to it) depends on the Copilot's loop. It arrives with it.
 
 **Trade-offs.** No undo history for manual edits until then.
+
+### The graph editor: React Flow, laid out and routed by ELK
+
+**Context.** The deployment team has to read an agent's flow at a glance and
+later edit it in place. A node can have several edges, and each one matters: it
+is a tool the model calls, with its own condition and fields.
+
+**Options.**
+- *Canvas by hand (SVG).* Rejected: pan, zoom, drag and wires are most of an
+  editor and none of the product.
+- *React Flow with dagre for layout.* Rejected: dagre places boxes, not the
+  points wires leave from, so the edges of one card cross on the way out.
+- *React Flow, with ELK's layered layout and one port per edge.* Chosen.
+
+**Trade-offs.** Each edge is a row of its card with its own dot, and ELK gets
+that dot's real position as a fixed port, so wires leave in the order the rows
+are read. That needs the cards' real sizes: the graph renders once out of sight,
+is measured, then laid out and shown. ELK is 1.4 MB, loaded on first use.
+
+The wires are drawn along ELK's own routes (right angles, rounded), not as
+curves from dot to dot: a curve runs under whatever card is in between, and a
+flow with a "go back" edge always has one. A route is only right for where the
+cards were, so a wire whose ends no longer meet its route (its card was dragged)
+falls back to a curve until "Tidy up". Columns are centered on one line rather
+than placed to keep wires straight: with one dot per row, straight wires put
+each card lower than the one before and a plain chain walks off the screen.
+
+The card shows names as words ("Collect details" for `collect_details`) and
+never an edge's function name: that is plumbing for the model, the condition is
+what a person reads. The start node has no way in: a call begins there, so an
+edge that names it is shown as not connected. Cards have an id of their own on
+the canvas, because a name is text that will be edited and cannot also be the
+card's identity; the agent JSON is untouched by it. The TypeScript types mirror
+`schema.py` by hand, with the same field names: the API takes the agent as an
+untyped object, so there is nothing to generate them from, and a schema change
+has to be made in both places.
+
+What is missing is drawn, not written: an edge with no target and a node nothing
+leads to both end in a short dashed crimson stub, a wire that goes nowhere, so
+the gap shows where it is. An edge that goes nowhere also stops a save, in
+the editor, before anything is sent: the button then counts the loose wires and
+frames them. A node nothing leads to is drawn the same way but saves: the
+schema accepts it, and it is how a flow looks halfway through being built. A list of allowed values is a field type of its own,
+Choice, though the agent JSON keeps it as a string with an `enum`: a type plus a
+separate "only these values" asked for two decisions to say one thing. A node
+with no way out and no end is where a call would stay for good, so its card asks
+"What happens next?" and offers the two answers, move on to another step or end
+the call here. The band that marks an end carries its own way back, next to
+where it was chosen.
+
+### Editing happens on a draft, changed by pure functions
+
+**Context.** The editor changes an agent in many small steps (a word in a prompt,
+a node made the start), several of which drag other things along, and all of it
+has to be undoable. The backend only accepts an agent that is valid as a whole.
+
+**Options.**
+- *Let React Flow hold the graph and patch the agent from its events.* Rejected:
+  two copies of the truth, and the rules (what a rename updates) end up spread
+  over event handlers nobody can test.
+- *A state library (Zustand, Redux).* Rejected for now: one agent open at a time
+  and one screen reading it do not need one.
+- *A draft in a reducer, edited by pure functions; React Flow only draws it.*
+  Chosen.
+
+**Trade-offs.** The draft is the agent JSON, an id per node and the card
+positions by that id (they are stored by node name; keeping them by id is what
+lets a rename carry the position). Each edit is a function from a draft to the next
+(`draft/draft.ts`), so every rule is in one place with a test: renaming a node
+updates the edges into it, its position and the agent's start; making a node the
+start disconnects the edges into it; a deleted node leaves the edges into it
+waiting for a target rather than deleting someone's condition. Fields the editor
+does not show (`role_message`, pre and post actions, later task messages) pass
+through untouched, so opening and saving never loses what the Copilot wrote.
+
+Function names are generated, never typed or shown: `go_to_<target>`, numbered
+when a node has two edges to the same place, regenerated when the target changes
+or is renamed. They are the tool names the model sees, so they stay meaningful
+without asking a deployment person to invent an identifier.
+
+Changing the structure never runs the layout. A node added by hand goes where
+it was dropped, or to the free spot nearest the middle of the view, and every
+other card stays where someone put it; a new or retargeted wire is a plain curve
+until "Tidy up", because ELK routes wires only as part of a full layout. The
+start node takes no wire, in the draft and on the canvas, and a wire dropped
+anywhere on a card connects to it.
+
+Which card is on top is not part of the agent, so it is not in the draft: the
+card last touched comes up and stays there, and its wires are highlighted, over
+the other wires and under the cards like all of them. It is how the canvas is
+being looked at, and undo and save never see it.
+
+Saving sends the whole agent and its layout in one request, and the backend
+stores both or neither. "Unsaved changes" is the draft not being the very one
+that was loaded or last saved, so a save moves a marker and leaves undo alone,
+and undoing back to the saved draft is clean again. When the backend refuses, its
+422 carries the node's name and the edge's function as fields next to the
+sentence: the editor marks that card and shows the sentence on it, without
+reading names back out of text that may be reworded. The sentence is the
+backend's own, so it is the one place a function name can reach the screen.
+
+Saving is never blocked by unfinished work, only by what the backend refuses.
+A node with no way out, a node no call can reach and a flow with no reachable
+end are all valid agents, and they are what building one looks like, so they are
+warnings: a quiet line on the card and a count next to Save. Running is what
+they block. The checks are one pure function with the sentences in it
+(`draft/checks.ts`), so the editor and whatever starts a call say the same thing
+about the same draft. A loop is not a warning: some path has to end the call,
+not every path.
+
+Undo keeps whole drafts instead of inverse operations: an edit shares what it
+does not touch with the draft before, so a snapshot is cheap and undo cannot
+disagree with the edit. Typing in one field is one step. Cost: nothing is saved
+until the save lands, and the browser's own undo inside a text field is replaced
+by the editor's.
 
 ## How this was built
 

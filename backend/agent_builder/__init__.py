@@ -2,6 +2,6 @@
 into a runnable Pipecat Flows graph."""
 
 from .builder import AgentBuilder
-from .schema import AgentConfig, Edge, Node
+from .schema import AgentConfig, AgentError, Edge, Node
 
-__all__ = ["AgentBuilder", "AgentConfig", "Node", "Edge"]
+__all__ = ["AgentBuilder", "AgentConfig", "AgentError", "Node", "Edge"]

@@ -1,10 +1,18 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+    --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+    --color-border-strong: var(--border-strong);
+    --color-bad: var(--bad);
+    --color-warn: var(--warn);
+    --color-warn-tint: var(--warn-tint);
+    --color-brand: var(--brand);
+    --color-brand-tint: var(--brand-tint);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -61,8 +69,18 @@
     --muted-foreground: oklch(0.556 0 0);
     --accent: oklch(0.97 0 0);
     --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
+    --destructive: var(--bad);
     --border: oklch(0.922 0 0);
+    /* Lines that must read on the canvas: wires and the dot grid. */
+    --border-strong: oklch(0.87 0 0);
+    /* Broken, missing or destructive: one crimson, which shadcn's components pick up too. */
+    --bad: #be123c;
+    /* At risk: valid, but it may not work out. Yellow, kept apart from broken. */
+    --warn: #a16207;
+    --warn-tint: #fdf7e1;
+    /* The one accent, the logo's orange, darkened to read as text on its tint. */
+    --brand: #e2491d;
+    --brand-tint: #fdf0eb;
     --input: oklch(0.922 0 0);
     --ring: oklch(0.708 0 0);
     --chart-1: oklch(0.87 0 0);
@@ -95,8 +113,14 @@
     --muted-foreground: oklch(0.708 0 0);
     --accent: oklch(0.269 0 0);
     --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
+    --destructive: var(--bad);
     --border: oklch(1 0 0 / 10%);
+    --border-strong: oklch(1 0 0 / 28%);
+    --bad: #fb7185;
+    --warn: #eab308;
+    --warn-tint: #2a2410;
+    --brand: #f47a52;
+    --brand-tint: #2f1a12;
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
     --chart-1: oklch(0.87 0 0);
@@ -121,4 +145,44 @@
   body {
     @apply bg-background text-foreground;
     }
+}
+
+/* React Flow, in the app's colors. */
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke: var(--border-strong);
+  --xy-edge-stroke-width: 1.5;
+  --xy-edge-stroke-selected: var(--foreground);
+}
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+.react-flow__controls-button:hover {
+  background: var(--muted);
+}
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
+/* The wires of the active card are dark; the selected one is also thicker. */
+.react-flow__edge.active .react-flow__edge-path {
+  stroke: var(--foreground);
+}
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 2.5;
+}
+/* Wires have square corners to round, and no fill. */
+.react-flow__edge-path {
+  stroke-linejoin: round;
+}
+/* Cards slide to their place when "Tidy up" moves them, and only then. */
+.graph-tidying .react-flow__node {
+  transition: transform 300ms ease;
 }
