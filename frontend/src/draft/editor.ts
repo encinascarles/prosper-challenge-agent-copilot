@@ -43,6 +43,8 @@ export type Editor = EditorCore & {
   refusal: Refusal | null
   /** The cards last asked to be brought into view. A new object asks again. */
   framed: { ids: string[] } | null
+  /** Nothing can be edited now: a test call is on screen, showing its path on this very graph. */
+  readOnly: boolean
 }
 
 export const EditorContext = createContext<Editor | null>(null)

@@ -178,6 +178,14 @@
 .react-flow__edge.selected .react-flow__edge-path {
   stroke-width: 2.5;
 }
+/* During a test call: the wires it went through are orange, the rest fade. */
+.react-flow__edge.taken .react-flow__edge-path {
+  stroke: var(--brand);
+  stroke-width: 2.25;
+}
+.react-flow__edge.untaken .react-flow__edge-path {
+  opacity: 0.35;
+}
 /* Wires have square corners to round, and no fill. */
 .react-flow__edge-path {
   stroke-linejoin: round;
@@ -185,4 +193,35 @@
 /* Cards slide to their place when "Tidy up" moves them, and only then. */
 .graph-tidying .react-flow__node {
   transition: transform 300ms ease;
+}
+/* The card the call is in breathes; the call card's dot blinks while it runs. */
+@keyframes call-live {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 color-mix(in srgb, var(--brand) 35%, transparent),
+      0 10px 28px -14px rgba(0, 0, 0, 0.2);
+  }
+  50% {
+    box-shadow:
+      0 0 0 7px color-mix(in srgb, var(--brand) 0%, transparent),
+      0 10px 28px -14px rgba(0, 0, 0, 0.2);
+  }
+}
+.call-live {
+  animation: call-live 1.6s ease-in-out infinite;
+}
+@keyframes call-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+.call-blink {
+  animation: call-blink 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .call-live,
+  .call-blink {
+    animation: none;
+  }
 }

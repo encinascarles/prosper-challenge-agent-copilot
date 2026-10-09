@@ -71,3 +71,13 @@ export function checkFlow(draft: Draft): Warning[] {
   })
   return warnings
 }
+
+/**
+ * Why a test call cannot be placed on a draft now, or null if it can. A call
+ * runs the saved agent, so unsaved changes come first: saving is what to do
+ * next, whatever else is wrong. Then the first place a call would not get through.
+ */
+export function callBlocker(dirty: boolean, warnings: Warning[]): string | null {
+  if (dirty) return 'Save first'
+  return warnings[0]?.message ?? null
+}

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { AgentConfig, Node } from '@/agents/types'
 
-import { checkFlow } from './checks'
+import { callBlocker, checkFlow } from './checks'
 import { addNode, connect, openDraft, setEnd, setStart } from './draft'
 
 const to = (...targets: string[]) =>
@@ -149,5 +149,31 @@ describe('checkFlow', () => {
 
   it('has nothing to check in an agent with no start', () => {
     expect(checkFlow(openDraft({ name: 'Empty', initial_node: '', nodes: [] }))).toEqual([])
+  })
+})
+
+describe('callBlocker', () => {
+  // A flow that can end, with one branch that goes nowhere.
+  const stuck = checkFlow(
+    openDraft(
+      agent(
+        { name: 'greeting', edges: to('offer_times', 'confirm') },
+        { name: 'offer_times' },
+        { name: 'confirm', end: true },
+      ),
+    ),
+  )
+
+  it('lets a saved flow with no warnings be called', () => {
+    expect(callBlocker(false, [])).toBeNull()
+  })
+
+  it('asks to save first while there are unsaved changes, whatever else is wrong', () => {
+    expect(callBlocker(true, [])).toBe('Save first')
+    expect(callBlocker(true, stuck)).toBe('Save first')
+  })
+
+  it('gives the first warning as the reason once saved', () => {
+    expect(callBlocker(false, stuck)).toBe('The call would get stuck at Offer times.')
   })
 })

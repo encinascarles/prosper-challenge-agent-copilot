@@ -12,8 +12,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import api
 import store
-from api import router
 from store.agents import DB_PATH_ENV
 
 EXAMPLE_FLOW = json.loads((Path(__file__).parent.parent / "example_flow.json").read_text())
@@ -31,5 +31,5 @@ def client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setenv(DB_PATH_ENV, str(tmp_path / "agents.db"))
     store.init_db()
     app = FastAPI()
-    app.include_router(router)
+    api.mount(app)
     return TestClient(app)

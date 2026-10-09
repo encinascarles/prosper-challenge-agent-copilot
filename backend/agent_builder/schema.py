@@ -17,6 +17,10 @@ from typing import Optional
 
 DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # ElevenLabs "Rachel"
 DEFAULT_MODEL = "gpt-4o"
+# The action AgentBuilder puts first in every compiled node to report where the
+# call is. Reserved: an agent's own action of this type would be run by the
+# reporting handler, and be sent to the browser as a node change that never was.
+NODE_ACTION = "node_entered"
 
 class AgentError(ValueError):
     """What is wrong with an agent, and where: the node and the edge, by name.
@@ -152,7 +156,12 @@ class Node:
         for key, label in (("pre_actions", "pre-action"), ("post_actions", "post-action")):
             actions[key] = _read(d, key, list, where, default=[], items=dict)
             for i, action in enumerate(actions[key], start=1):
-                _read(action, "type", str, f"{label} {i} of {where}")
+                if _read(action, "type", str, f"{label} {i} of {where}") == NODE_ACTION:
+                    raise ValueError(
+                        f"{label.capitalize()} {i} of {where} has the type '{NODE_ACTION}', "
+                        "which is reserved: every node already starts with one, to report "
+                        "where the call is."
+                    )
         return cls(
             name=name,
             task_messages=task_messages,

@@ -113,7 +113,7 @@ signalling, and exposes its `app` for extra routes.
 **Trade-offs.** One backend, one port and one origin for the browser: calls and
 agents go through the same `/api`. `bot.py` only does the wiring; the routes are
 in `api/` and persistence in `store/`. The bot runs in the same process, so it
-reads the agent being edited (and will save its calls) straight through `store`,
+reads the agent a call was started for (and will save its calls) straight through `store`,
 with no HTTP between services. Cost: the API starts with the runner, so
 it is tied to how Pipecat builds its app. The tests avoid that by mounting the
 same router on a bare FastAPI app.
@@ -150,6 +150,86 @@ version, and the right shape (what a version records, how calls and fixes refer
 to it) depends on the Copilot's loop. It arrives with it.
 
 **Trade-offs.** No undo history for manual edits until then.
+
+### A test call runs the saved agent, and says where it is
+
+**Context.** The editor holds a draft with unsaved changes, and a call has to run
+some version of the agent. The bot runs in the backend; the draft only exists in
+a browser tab.
+
+**Options.**
+- *Send the draft with the call.* Rejected: what was tested would be something
+  that was never saved, and the next person to open the agent would not see what
+  the call ran on. It also puts a whole agent in the body of a start request.
+- *Start the call with the id of a saved agent.* Chosen.
+
+**Trade-offs.** What you test is what goes live: the call reads the agent from
+the store when it starts, so a passing test call is about the agent everyone
+else sees. Cost: an edit has to be saved before it can be heard, so the editor
+blocks the call while there are unsaved changes instead of quietly running the
+older agent. A start that names no agent runs the sample flow, which keeps
+Pipecat's prebuilt client at `/client` working as a way to check the voice
+pipeline alone.
+
+A wrong id fails at `POST /start`, with the same sentence the agents API gives.
+The runner owns that route and, for WebRTC, only stores the body: the bot starts
+later, on the browser's offer, when an error can no longer be an HTTP answer. So
+the check sits in front of the route, as a middleware, and the bot runs it again
+for an offer that skipped `/start`.
+
+The call's path reaches the browser as messages on the RTVI channel the client
+already has: `{ type: "node", node, from, edge, collected }`, once at the start
+and on every node change. Flows has no transition event, but it runs a node's
+pre-actions every time the node is entered, so each compiled node opens with a
+`node_entered` action carrying those fields and the bot registers the handler
+that sends it. That type is reserved: an agent that uses it in its own actions is
+refused, with the reason, or its action would be reported as a node change. The builder states the fact and stays free of transports; a text simulation
+can register another handler and record the same path. The alternative, reading
+Pipecat's own function-call messages in the browser, would have left the UI to
+work out the target from a function name and to guess the first node.
+
+### The test call is read on the graph
+
+**Context.** A test call answers "does the agent go where I meant it to?". The
+transcript alone does not: the same sentence can come from two nodes, and what
+the model passed to an edge is not said aloud.
+
+**Options.**
+- *Embed Pipecat's prebuilt client.* Rejected: it shows the conversation and
+  nothing of the graph, and it cannot be told which agent to run.
+- *A side panel with the call.* Rejected: it takes a third of the canvas from
+  the thing the call is read on.
+- *Draw the path on the cards, with a small call card floating over the canvas.*
+  Chosen.
+
+**Trade-offs.** The cards the call went through carry their step number, the
+one it is in pulses, the ones not reached fade; the wires taken turn orange and
+the edge that fired is tinted, with the values it collected on its field chips.
+The call card holds what the graph cannot: the clock, the steps in order and the
+transcript. The view is fitted once, into the space the card leaves, and does
+not follow the call: the whole path stays in sight, and a step in the card
+frames its node on demand.
+
+The path is one pure reducer over the bot's `node` messages (`call/path.ts`),
+so it is tested without a call and nothing in the browser infers a transition.
+The transcript is in the same state: the caller's lines are the final
+transcriptions, the agent's are the model's text as it is written, one line per
+answer. That text is on screen a moment before it is heard and stays whole if
+the caller cuts in; for reading a test that is the better side to err on.
+
+The button is disabled, with the reason as its tooltip, while there are unsaved
+changes or a warning: the call runs the saved agent, and a flow the checks say
+a call cannot get through is not worth a call. While the call card is on
+screen, running or ended, the editor is read-only: the path is drawn over this
+very graph by node and edge name, and an edit would leave it pointing at what
+changed. Closing the card gives the editor back.
+
+Pipecat's JS client and its small WebRTC transport carry the call, the same
+protocol as the prebuilt client; not the React bindings, since a handful of
+callbacks into one reducer is all the editor needs. It is loaded when the first
+call is placed, like ELK: it is 400 kB that most visits never use. A blocked
+microphone, a start the backend refuses and a connection that fails each end as
+a sentence in the call card, with Again next to it.
 
 ### The graph editor: React Flow, laid out and routed by ELK
 

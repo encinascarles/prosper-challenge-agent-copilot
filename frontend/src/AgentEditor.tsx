@@ -11,10 +11,18 @@
 // before sending: the canvas can show them, and the backend would only refuse
 // the first. Anything else the backend refuses comes back as its sentence and,
 // when it is about one node, that node's name, which is where the card shows it.
+//
+// A test call runs the saved agent, so it is offered once there is nothing left
+// to save. While its card is on screen, running or ended, the editor is
+// read-only: the path it draws is over this very graph, by node and edge name,
+// and an edit would leave it pointing at things that changed.
 import { useEffect, useEffectEvent, useMemo, useState } from 'react'
 
 import { ApiError, updateAgent } from '@/agents/api'
 import type { AgentRecord, AgentSummary } from '@/agents/types'
+import { CallCard } from '@/call/CallCard'
+import { TestCallButton } from '@/call/TestCallButton'
+import { CallContext, useTestCall } from '@/call/useCall'
 import { AgentSettingsDialog } from '@/components/AgentSettingsDialog'
 import { SaveControl } from '@/components/SaveControl'
 import { TopBar } from '@/components/TopBar'
@@ -53,7 +61,15 @@ function locate(sent: Draft, error: unknown): Refusal {
 
 export function AgentEditor(props: Props) {
   const { record, agents, onPick, onSettings, onNew, onDelete, showSettings, onDirty, onSaved } = props
-  const core = useNewEditor(record.config, record.layout)
+  const open = useNewEditor(record.config, record.layout)
+  const testCall = useTestCall(record.id)
+  const locked = testCall.call !== null
+  // Locked, the draft cannot change whatever asks: the cards are inert too,
+  // but this is the one place every edit goes through.
+  const core = useMemo(
+    () => (locked ? { ...open, apply: () => {}, cancel: () => {}, undo: () => {}, redo: () => {} } : open),
+    [open, locked],
+  )
   const { draft, dirty, undo, redo, markSaved, seal } = core
   const [settingsOpen, setSettingsOpen] = useState(showSettings)
   const [saving, setSaving] = useState(false)
@@ -71,7 +87,7 @@ export function AgentEditor(props: Props) {
   const warnings = useMemo(() => checkFlow(draft), [draft])
 
   const save = async () => {
-    if (saving) return
+    if (saving || locked) return
     if (loose.length > 0) return showLoose()
     if (!dirty) return
     const sent = draft
@@ -133,47 +149,71 @@ export function AgentEditor(props: Props) {
   }, [dirty, onDirty])
 
   const editor = useMemo(
-    () => ({ ...core, warnings, refusal, framed }),
-    [core, warnings, refusal, framed],
+    () => ({ ...core, warnings, refusal, framed, readOnly: locked }),
+    [core, warnings, refusal, framed, locked],
   )
+  const shownCall = useMemo(
+    () => (testCall.call ? { call: testCall.call, session: testCall.session } : null),
+    [testCall.call, testCall.session],
+  )
+  // A step of the call names its node; the canvas frames cards by id.
+  const showNode = (name: string) => {
+    const at = draft.config.nodes.findIndex((node) => node.name === name)
+    if (at >= 0) setFramed({ ids: [draft.ids[at]] })
+  }
   return (
     <EditorContext value={editor}>
-      <div className="flex min-h-0 flex-1 flex-col">
-        <TopBar
-          agents={agents}
-          agentId={record.id}
-          // The name shown is the draft's, as it is being typed.
-          name={draft.config.name}
-          onPick={onPick}
-          onSettings={(id) => (id === record.id ? setSettingsOpen(true) : onSettings(id))}
-          onNew={onNew}
-        >
-          <SaveControl
-            dirty={dirty}
-            saving={saving}
-            saved={saved}
-            loose={loose.length}
-            warnings={warnings.length}
-            problem={refusal && { message: refusal.message, onCard: refusal.node !== null }}
-            onSave={() => void save()}
-            onShowLoose={showLoose}
-            onShowWarnings={() => setFramed({ ids: [...new Set(warnings.map((w) => w.node))] })}
-            onShowProblem={() => refusal?.node && setFramed({ ids: [refusal.node] })}
+      <CallContext value={shownCall}>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <TopBar
+            agents={agents}
+            agentId={record.id}
+            // The name shown is the draft's, as it is being typed.
+            name={draft.config.name}
+            onPick={onPick}
+            onSettings={(id) => {
+              if (id !== record.id) onSettings(id)
+              else if (!locked) setSettingsOpen(true)
+            }}
+            onNew={onNew}
+          >
+            <SaveControl
+              dirty={dirty}
+              saving={saving}
+              saved={saved}
+              loose={loose.length}
+              warnings={warnings.length}
+              problem={refusal && { message: refusal.message, onCard: refusal.node !== null }}
+              onSave={() => void save()}
+              onShowLoose={showLoose}
+              onShowWarnings={() => setFramed({ ids: [...new Set(warnings.map((w) => w.node))] })}
+              onShowProblem={() => refusal?.node && setFramed({ ids: [refusal.node] })}
+            />
+            <TestCallButton dirty={dirty} warnings={warnings} open={locked} onStart={testCall.start} />
+          </TopBar>
+          <main className="relative flex min-h-0 flex-1">
+            <GraphCanvas />
+            {testCall.call && (
+              <CallCard
+                call={testCall.call}
+                onEnd={testCall.end}
+                onAgain={testCall.start}
+                onClose={testCall.close}
+                onShow={showNode}
+              />
+            )}
+          </main>
+          <AgentSettingsDialog
+            open={settingsOpen}
+            onOpenChange={(open) => {
+              setSettingsOpen(open)
+              // Leaving the settings ends the run of typing in them, like leaving a field.
+              if (!open) seal()
+            }}
+            onDelete={onDelete}
           />
-        </TopBar>
-        <main className="flex min-h-0 flex-1">
-          <GraphCanvas />
-        </main>
-        <AgentSettingsDialog
-          open={settingsOpen}
-          onOpenChange={(open) => {
-            setSettingsOpen(open)
-            // Leaving the settings ends the run of typing in them, like leaving a field.
-            if (!open) seal()
-          }}
-          onDelete={onDelete}
-        />
-      </div>
+        </div>
+      </CallContext>
     </EditorContext>
   )
 }

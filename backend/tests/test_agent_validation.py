@@ -131,6 +131,16 @@ MALFORMED = {
         _set("nodes", 0, "post_actions", value=[{"type": None}]),
         "'type' in post-action 1 of node 'greeting' must be a string, got null.",
     ),
+    "pre-action of the reserved type": (
+        _set("nodes", 0, "pre_actions", value=[{"type": "node_entered"}]),
+        "Pre-action 1 of node 'greeting' has the type 'node_entered', which is reserved: "
+        "every node already starts with one, to report where the call is.",
+    ),
+    "post-action of the reserved type": (
+        _set("nodes", 0, "post_actions", value=[{"type": "node_entered"}]),
+        "Post-action 1 of node 'greeting' has the type 'node_entered', which is reserved: "
+        "every node already starts with one, to report where the call is.",
+    ),
     "pre_actions holds strings": (
         _set("nodes", 0, "pre_actions", value=["tts_say"]),
         "Every item of 'pre_actions' in node 'greeting' must be an object.",

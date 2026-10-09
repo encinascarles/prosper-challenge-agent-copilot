@@ -8,19 +8,35 @@
 # and "agent as a running conversation" (what bot.py executes). Keeping the
 # compile + validation here means bot.py never touches the graph internals.
 #
+# Every compiled node opens with a `node_entered` pre-action saying where the call is and
+# how it got there. Flows runs a node's pre-actions each time the node is
+# entered, the first one included, so that is the one place every transition
+# goes through. The builder only states the fact and logs it; whoever runs the
+# graph decides what else to do with it by registering its own handler,
+# `flow_manager.register_action(NODE_ACTION, ...)`, which Flows then uses instead.
+# The type is reserved (schema.py refuses it in an agent's own actions), so the
+# handler only ever sees the builder's.
+#
 
 import json
 import re
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from loguru import logger
 from pipecat_flows import FlowManager, FlowsFunctionSchema, NodeConfig
 
-from .schema import AgentConfig, AgentError, Edge, Node
+from .schema import NODE_ACTION, AgentConfig, AgentError, Edge, Node
 
 # What the LLM APIs accept as a tool name. An edge's function is sent as one.
 _TOOL_NAME = re.compile(r"[a-zA-Z0-9_-]{1,64}")
+
+
+
+async def _log_node(action: dict, flow_manager: FlowManager) -> None:
+    # The handler for a runner that registered none: Flows refuses a node whose
+    # action type has no handler, so the graph runs anywhere without one.
+    logger.info(f"Entered node '{action['node']}' from {action['from']} via {action['edge']}")
 
 
 class AgentBuilder:
@@ -93,15 +109,33 @@ class AgentBuilder:
         """Return the entry NodeConfig; downstream nodes are built lazily on transition."""
         return self._make_node(self._nodes_by_name[self.config.initial_node])
 
-    def _make_node(self, node: Node) -> NodeConfig:
+    def _make_node(
+        self,
+        node: Node,
+        came_from: Optional[str] = None,
+        via: Optional[str] = None,
+        collected: Optional[dict] = None,
+    ) -> NodeConfig:
+        # Where the call is now and what brought it here: the node it left, the
+        # edge function the model called and the arguments it passed. The start
+        # node has none of the three.
+        entered = {
+            "type": NODE_ACTION,
+            "node": node.name,
+            "from": came_from,
+            "edge": via,
+            "collected": collected or {},
+            "handler": _log_node,
+        }
         node_config: NodeConfig = {
             "name": node.name,
             "role_message": node.role_message or self.config.persona,
             "task_messages": node.task_messages,
-            "functions": [self._make_edge_function(edge) for edge in node.edges],
+            "functions": [self._make_edge_function(node, edge) for edge in node.edges],
+            # First, so the node is reported before any of its own pre-actions
+            # speaks.
+            "pre_actions": [entered, *node.pre_actions],
         }
-        if node.pre_actions:
-            node_config["pre_actions"] = node.pre_actions
         # Explicit post_actions win; otherwise a terminal node ends the call.
         if node.post_actions:
             node_config["post_actions"] = node.post_actions
@@ -109,12 +143,17 @@ class AgentBuilder:
             node_config["post_actions"] = [{"type": "end_conversation"}]
         return node_config
 
-    def _make_edge_function(self, edge: Edge) -> FlowsFunctionSchema:
+    def _make_edge_function(self, node: Node, edge: Edge) -> FlowsFunctionSchema:
         async def handler(args: dict, flow_manager: FlowManager):
             # Persist what the caller gave us so later nodes can use it.
             flow_manager.state.update(args)
             logger.info(f"[{edge.function}] -> {edge.target} | collected: {args}")
-            next_node = self._make_node(self._nodes_by_name[edge.target])
+            next_node = self._make_node(
+                self._nodes_by_name[edge.target],
+                came_from=node.name,
+                via=edge.function,
+                collected=dict(args),
+            )
             return {"status": "success", **args}, next_node
 
         return FlowsFunctionSchema(
