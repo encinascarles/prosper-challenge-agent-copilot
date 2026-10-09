@@ -15,6 +15,7 @@ import { useEffect, useEffectEvent, useMemo, useState } from 'react'
 
 import { ApiError, updateAgent } from '@/agents/api'
 import type { AgentRecord, AgentSummary } from '@/agents/types'
+import { AgentSettingsDialog } from '@/components/AgentSettingsDialog'
 import { SaveControl } from '@/components/SaveControl'
 import { TopBar } from '@/components/TopBar'
 import { checkFlow } from '@/draft/checks'
@@ -27,6 +28,14 @@ type Props = {
   record: AgentRecord
   agents: AgentSummary[]
   onPick: (id: string) => void
+  /** The gear of another agent's row: open it, with its settings. */
+  onSettings: (id: string) => void
+  onNew: () => void
+  onDelete: () => void
+  /** Open with the agent's settings showing: its gear was what opened it. */
+  showSettings: boolean
+  /** Whether there are changes that leaving would lose. */
+  onDirty: (dirty: boolean) => void
   /** The agent was saved: what lists it may be out of date. */
   onSaved: () => void
 }
@@ -42,9 +51,11 @@ function locate(sent: Draft, error: unknown): Refusal {
   return { message, node: sent.ids[at], edge: edge < 0 ? null : edge }
 }
 
-export function AgentEditor({ record, agents, onPick, onSaved }: Props) {
+export function AgentEditor(props: Props) {
+  const { record, agents, onPick, onSettings, onNew, onDelete, showSettings, onDirty, onSaved } = props
   const core = useNewEditor(record.config, record.layout)
-  const { draft, dirty, undo, redo, markSaved } = core
+  const { draft, dirty, undo, redo, markSaved, seal } = core
+  const [settingsOpen, setSettingsOpen] = useState(showSettings)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   // What the backend said about a draft, kept with that draft: it stops being
@@ -99,13 +110,18 @@ export function AgentEditor({ record, agents, onPick, onSaved }: Props) {
     return () => window.removeEventListener('keydown', listener)
   }, [])
 
-  // Closing or reloading the tab with changes that were not saved asks first.
+  // Closing or reloading the tab with changes that were not saved asks first,
+  // and whoever opens another agent in this tab needs to know to ask too.
   useEffect(() => {
+    onDirty(dirty)
     if (!dirty) return
     const warn = (event: BeforeUnloadEvent) => event.preventDefault()
     window.addEventListener('beforeunload', warn)
-    return () => window.removeEventListener('beforeunload', warn)
-  }, [dirty])
+    return () => {
+      window.removeEventListener('beforeunload', warn)
+      onDirty(false)
+    }
+  }, [dirty, onDirty])
 
   const editor = useMemo(
     () => ({ ...core, warnings, refusal, framed }),
@@ -117,12 +133,11 @@ export function AgentEditor({ record, agents, onPick, onSaved }: Props) {
         <TopBar
           agents={agents}
           agentId={record.id}
-          // Opening another agent drops this draft, like closing the tab would.
-          onPick={(id) => {
-            if (id !== record.id && (!dirty || window.confirm('Leave without saving your changes?'))) {
-              onPick(id)
-            }
-          }}
+          // The name shown is the draft's, as it is being typed.
+          name={draft.config.name}
+          onPick={onPick}
+          onSettings={(id) => (id === record.id ? setSettingsOpen(true) : onSettings(id))}
+          onNew={onNew}
         >
           <SaveControl
             dirty={dirty}
@@ -140,6 +155,15 @@ export function AgentEditor({ record, agents, onPick, onSaved }: Props) {
         <main className="flex min-h-0 flex-1">
           <GraphCanvas />
         </main>
+        <AgentSettingsDialog
+          open={settingsOpen}
+          onOpenChange={(open) => {
+            setSettingsOpen(open)
+            // Leaving the settings ends the run of typing in them, like leaving a field.
+            if (!open) seal()
+          }}
+          onDelete={onDelete}
+        />
       </div>
     </EditorContext>
   )

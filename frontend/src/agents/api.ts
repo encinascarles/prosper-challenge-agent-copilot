@@ -52,7 +52,8 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!response.ok) throw await failure(response)
-  return response.json() as Promise<T>
+  // A delete answers with no body.
+  return (response.status === 204 ? undefined : response.json()) as Promise<T>
 }
 
 export function listAgents(): Promise<AgentSummary[]> {
@@ -71,4 +72,9 @@ export function createAgent(config: AgentConfig): Promise<AgentRecord> {
 /** Replaces the agent and its layout: both or neither, the backend validates the agent first. */
 export function updateAgent(id: string, config: AgentConfig, layout: Layout): Promise<AgentRecord> {
   return request(`/${encodeURIComponent(id)}`, 'PUT', { config, layout })
+}
+
+/** Removes the agent for good. */
+export function deleteAgent(id: string): Promise<void> {
+  return request(`/${encodeURIComponent(id)}`, 'DELETE')
 }

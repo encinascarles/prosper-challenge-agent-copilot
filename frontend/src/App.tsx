@@ -2,13 +2,16 @@
 //
 // Which agent is open lives in the URL (?agent=<id>), so a reload or a shared
 // link opens the same one. Without it, the first agent of the list opens.
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AgentEditor } from '@/AgentEditor'
-import { getAgent, listAgents } from '@/agents/api'
+import { createAgent, deleteAgent, getAgent, listAgents } from '@/agents/api'
+import { NEW_AGENT } from '@/agents/template'
 import type { AgentRecord, AgentSummary } from '@/agents/types'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { NewAgentDialog } from '@/components/NewAgentDialog'
 import { TopBar } from '@/components/TopBar'
+import { Button } from '@/components/ui/button'
 
 
 const AGENT_PARAM = 'agent'
@@ -26,6 +29,7 @@ export default function App() {
   )
   const [record, setRecord] = useState<AgentRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [withSettings, setWithSettings] = useState<string | null>(null)
 
   const loadAgents = useCallback(() => {
     listAgents().then(setAgents, (failure: Error) => setError(failure.message))
@@ -46,38 +50,100 @@ export default function App() {
     }
   }, [agentId])
 
-  const pick = (id: string) => {
+  // Whether the open editor has changes that leaving it would lose. The editor
+  // reports it; whatever takes this tab to another agent asks first.
+  const dirty = useRef(false)
+  const onDirty = useCallback((value: boolean) => {
+    dirty.current = value
+  }, [])
+  const leave = () => !dirty.current || window.confirm('Leave without saving your changes?')
+
+  // `settings`: the agent was reached by its gear, and opens with its settings showing.
+  const go = (id: string | null, settings = false) => {
     setError(null)
     setPicked(id)
+    setWithSettings(settings ? id : null)
     const url = new URL(location.href)
-    url.searchParams.set(AGENT_PARAM, id)
+    if (id === null) url.searchParams.delete(AGENT_PARAM)
+    else url.searchParams.set(AGENT_PARAM, id)
     history.replaceState(null, '', url)
+  }
+  const pick = (id: string, settings = false) => {
+    if (id !== agentId && leave()) go(id, settings)
+  }
+
+  // A new agent is named, stored and then opened like any other: it has an id,
+  // it is in the list, and its first save is an ordinary save.
+  const [naming, setNaming] = useState(false)
+  const create = async (name: string) => {
+    if (!leave()) return
+    const created = await createAgent({ ...NEW_AGENT, name })
+    setNaming(false)
+    loadAgents()
+    go(created.id)
+  }
+
+  // Deleting the open agent opens the first one left, or the empty screen.
+  const remove = (id: string) => {
+    deleteAgent(id)
+      .then(listAgents)
+      .then(
+        (left) => {
+          setAgents(left)
+          setRecord(null)
+          go(left[0]?.id ?? null)
+        },
+        (failure: Error) => setError(failure.message),
+      )
   }
 
   const open = record?.id === agentId ? record : null
-  // An open agent is the editor's page: it has the top bar too, with saving in it.
-  if (open && !error) {
-    return (
-      // Keyed like the editor: opening another agent is a fresh start for both.
-      <div key={open.id} className="flex h-dvh flex-col">
-        <ErrorBoundary>
-          <AgentEditor record={open} agents={agents ?? []} onPick={pick} onSaved={loadAgents} />
-        </ErrorBoundary>
-      </div>
-    )
-  }
   return (
-    <div className="flex h-dvh flex-col">
-      <TopBar agents={agents ?? []} agentId={agentId} onPick={pick} />
-      <main className="flex min-h-0 flex-1">
-        {error ? (
-          <Notice error>{error}</Notice>
-        ) : agents?.length === 0 ? (
-          <Notice>No agents yet.</Notice>
-        ) : (
-          <Notice>Loading…</Notice>
-        )}
-      </main>
-    </div>
+    <>
+      {open && !error ? (
+        // An open agent is the editor's page: it has the top bar too, with saving
+        // in it. Keyed like the editor: another agent is a fresh start for both.
+        <div key={open.id} className="flex h-dvh flex-col">
+          <ErrorBoundary>
+            <AgentEditor
+              record={open}
+              agents={agents ?? []}
+              onPick={pick}
+              onSettings={(id) => pick(id, true)}
+              onNew={() => setNaming(true)}
+              onDelete={() => remove(open.id)}
+              showSettings={withSettings === open.id}
+              onDirty={onDirty}
+              onSaved={loadAgents}
+            />
+          </ErrorBoundary>
+        </div>
+      ) : (
+        <div className="flex h-dvh flex-col">
+          <TopBar
+            agents={agents ?? []}
+            agentId={agentId}
+            onPick={pick}
+            onSettings={(id) => pick(id, true)}
+            onNew={() => setNaming(true)}
+          />
+          <main className="flex min-h-0 flex-1">
+            {error ? (
+              <Notice error>{error}</Notice>
+            ) : agents?.length === 0 ? (
+              <div className="m-auto flex flex-col items-center gap-3">
+                <p className="text-sm text-muted-foreground">No agents yet.</p>
+                <Button size="sm" onClick={() => setNaming(true)}>
+                  New agent
+                </Button>
+              </div>
+            ) : (
+              <Notice>Loading…</Notice>
+            )}
+          </main>
+        </div>
+      )}
+      <NewAgentDialog open={naming} onOpenChange={setNaming} onCreate={create} />
+    </>
   )
 }
