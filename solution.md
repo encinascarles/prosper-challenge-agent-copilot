@@ -113,7 +113,7 @@ signalling, and exposes its `app` for extra routes.
 **Trade-offs.** One backend, one port and one origin for the browser: calls and
 agents go through the same `/api`. `bot.py` only does the wiring; the routes are
 in `api/` and persistence in `store/`. The bot runs in the same process, so it
-reads the agent being edited (and will save its calls) straight through `store`,
+reads the agent a call was started for (and will save its calls) straight through `store`,
 with no HTTP between services. Cost: the API starts with the runner, so
 it is tied to how Pipecat builds its app. The tests avoid that by mounting the
 same router on a bare FastAPI app.
@@ -150,6 +150,32 @@ version, and the right shape (what a version records, how calls and fixes refer
 to it) depends on the Copilot's loop. It arrives with it.
 
 **Trade-offs.** No undo history for manual edits until then.
+
+### A test call runs the saved agent
+
+**Context.** The editor holds a draft with unsaved changes, and a call has to run
+some version of the agent. The bot runs in the backend; the draft only exists in
+a browser tab.
+
+**Options.**
+- *Send the draft with the call.* Rejected: what was tested would be something
+  that was never saved, and the next person to open the agent would not see what
+  the call ran on. It also puts a whole agent in the body of a start request.
+- *Start the call with the id of a saved agent.* Chosen.
+
+**Trade-offs.** What you test is what goes live: the call reads the agent from
+the store when it starts, so a passing test call is about the agent everyone
+else sees. Cost: an edit has to be saved before it can be heard, so the editor
+blocks the call while there are unsaved changes instead of quietly running the
+older agent. A start that names no agent runs the sample flow, which keeps
+Pipecat's prebuilt client at `/client` working as a way to check the voice
+pipeline alone.
+
+A wrong id fails at `POST /start`, with the same sentence the agents API gives.
+The runner owns that route and, for WebRTC, only stores the body: the bot starts
+later, on the browser's offer, when an error can no longer be an HTTP answer. So
+the check sits in front of the route, as a middleware, and the bot runs it again
+for an offer that skipped `/start`.
 
 ### The graph editor: React Flow, laid out and routed by ELK
 

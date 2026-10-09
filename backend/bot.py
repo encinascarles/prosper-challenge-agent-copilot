@@ -2,13 +2,13 @@
 # Voice pipeline — Prosper Product Engineer Challenge
 #
 # The runnable voice agent: WebRTC transport + ElevenLabs STT/TTS + OpenAI LLM,
-# driven by a Pipecat Flows node graph. This file is generic — it loads an agent
-# definition (JSON) via AgentBuilder and runs it. Swapping the agent is a data
-# change (edit/replace the JSON), not a code change.
+# driven by a Pipecat Flows node graph. This file is generic — it runs whatever
+# agent the call was started for. Swapping the agent is a data change (save
+# another agent JSON), not a code change.
 #
-#   example_flow.json  ->  AgentBuilder  ->  Pipecat Flows graph  ->  FlowManager
+#   /start { agent_id }  ->  store  ->  AgentBuilder  ->  Pipecat Flows graph  ->  FlowManager
 #
-# Run:  python bot.py   then open http://localhost:7860/client
+# Run:  python bot.py   then open http://localhost:7860/client (runs example_flow.json)
 #
 
 import os
@@ -33,15 +33,12 @@ from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.workers.runner import WorkerRunner
 from pipecat_flows import FlowManager
 
+import api
+import store
 from agent_builder import AgentBuilder
 
 # Load .env next to this file, so the bot runs the same from the repo root or backend/.
 load_dotenv(Path(__file__).parent / ".env", override=True)
-
-
-# The agent this bot runs. Point this at any agent JSON (the Phase 2 Copilot
-# would generate one and drop it here).
-AGENT_FLOW = Path(__file__).parent / "example_flow.json"
 
 
 transport_params = {
@@ -110,20 +107,25 @@ async def run_bot(
 
 async def bot(runner_args: RunnerArguments):
     """Entry point invoked by the Pipecat dev runner (and Pipecat Cloud)."""
+    try:
+        builder = api.agent_for_call(runner_args.body)
+    except api.CallError as error:
+        # /start refuses these before any call. This is an offer sent straight
+        # to /api/offer: hang up rather than leave the caller on a silent line.
+        logger.error(f"Call not started: {error}")
+        if connection := getattr(runner_args, "webrtc_connection", None):
+            await connection.disconnect()
+        return
     transport = await create_transport(runner_args, transport_params)
-    builder = AgentBuilder.from_json(AGENT_FLOW)
     await run_bot(transport, runner_args, builder)
 
 
 if __name__ == "__main__":
     from pipecat.runner.run import app, main
 
-    import store
-    from api import router
-
     # The builder API shares the runner's FastAPI server: one backend, one port,
     # and the browser reaches calls and agents through the same origin.
     store.init_db()
-    app.include_router(router)
+    api.mount(app)
 
     main()
