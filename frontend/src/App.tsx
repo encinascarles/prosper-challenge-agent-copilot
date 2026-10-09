@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AgentEditor } from '@/AgentEditor'
-import { createAgent, deleteAgent, getAgent, listAgents } from '@/agents/api'
+import { ApiError, createAgent, deleteAgent, getAgent, listAgents } from '@/agents/api'
 import { NEW_AGENT } from '@/agents/template'
 import type { AgentRecord, AgentSummary } from '@/agents/types'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -43,7 +43,19 @@ export default function App() {
     let current = true
     getAgent(agentId).then(
       (loaded) => current && setRecord(loaded),
-      (failure: Error) => current && setError(failure.message),
+      (failure: Error) => {
+        if (!current) return
+        // A link to an agent that was deleted since opens the first agent
+        // instead of a dead end.
+        const url = new URL(location.href)
+        if (failure instanceof ApiError && failure.status === 404 && url.searchParams.get(AGENT_PARAM) === agentId) {
+          url.searchParams.delete(AGENT_PARAM)
+          history.replaceState(null, '', url)
+          setPicked(null)
+          return
+        }
+        setError(failure.message)
+      },
     )
     return () => {
       current = false
