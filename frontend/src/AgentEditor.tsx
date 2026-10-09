@@ -110,6 +110,15 @@ export function AgentEditor(props: Props) {
     return () => window.removeEventListener('keydown', listener)
   }, [])
 
+  // The tab is named after the agent it has open, as it is being named.
+  const name = draft.config.name
+  useEffect(() => {
+    document.title = `${name || 'Untitled agent'} · Prosper`
+    return () => {
+      document.title = 'Prosper'
+    }
+  }, [name])
+
   // Closing or reloading the tab with changes that were not saved asks first,
   // and whoever opens another agent in this tab needs to know to ask too.
   useEffect(() => {
