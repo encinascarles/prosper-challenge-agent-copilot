@@ -23,10 +23,15 @@ export class ApiError extends Error {
   }
 }
 
+// Said when the backend can't be reached: the request never got an answer, or
+// the dev server's proxy answered for a backend that is down.
+export const UNREACHABLE = "Couldn't reach the server."
+
 // The backend answers errors with `{ detail }`: a sentence for a missing or
 // invalid agent (with `node` and `edge` when it is about one), and FastAPI's
 // list of problems when the request itself has the wrong shape. Anything else
-// (a proxy error page) gets a generic message.
+// is a proxy's error page: a 5xx means the backend is not there, other
+// statuses get a generic message.
 async function failure(response: Response): Promise<ApiError> {
   const body = (await response.json().catch(() => null)) as {
     detail?: unknown
@@ -35,7 +40,7 @@ async function failure(response: Response): Promise<ApiError> {
   } | null
   const name = (value: unknown) => (typeof value === 'string' ? value : null)
   const detail = body?.detail
-  let message = `Request failed (${response.status}).`
+  let message = response.status >= 500 ? UNREACHABLE : `Request failed (${response.status}).`
   if (typeof detail === 'string') {
     message = detail
   } else if (Array.isArray(detail)) {
@@ -46,11 +51,18 @@ async function failure(response: Response): Promise<ApiError> {
 }
 
 async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  const response = await fetch(`/api/agents${path}`, {
-    method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  let response: Response
+  try {
+    response = await fetch(`/api/agents${path}`, {
+      method,
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+  } catch {
+    // No answer at all (offline, server stopped): the browser's own message,
+    // "Failed to fetch", says nothing to a person.
+    throw new ApiError(0, UNREACHABLE)
+  }
   if (!response.ok) throw await failure(response)
   // A delete answers with no body.
   return (response.status === 204 ? undefined : response.json()) as Promise<T>
