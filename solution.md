@@ -151,7 +151,7 @@ to it) depends on the Copilot's loop. It arrives with it.
 
 **Trade-offs.** No undo history for manual edits until then.
 
-### A test call runs the saved agent
+### A test call runs the saved agent, and says where it is
 
 **Context.** The editor holds a draft with unsaved changes, and a call has to run
 some version of the agent. The bot runs in the backend; the draft only exists in
@@ -176,6 +176,17 @@ The runner owns that route and, for WebRTC, only stores the body: the bot starts
 later, on the browser's offer, when an error can no longer be an HTTP answer. So
 the check sits in front of the route, as a middleware, and the bot runs it again
 for an offer that skipped `/start`.
+
+The call's path reaches the browser as messages on the RTVI channel the client
+already has: `{ type: "node", node, from, edge, collected }`, once at the start
+and on every node change. Flows has no transition event, but it runs a node's
+pre-actions every time the node is entered, so each compiled node opens with a
+`node_entered` action carrying those fields and the bot registers the handler
+that sends it. That type is reserved: an agent that uses it in its own actions is
+refused, with the reason, or its action would be reported as a node change. The builder states the fact and stays free of transports; a text simulation
+can register another handler and record the same path. The alternative, reading
+Pipecat's own function-call messages in the browser, would have left the UI to
+work out the target from a function name and to guess the first node.
 
 ### The graph editor: React Flow, laid out and routed by ELK
 
