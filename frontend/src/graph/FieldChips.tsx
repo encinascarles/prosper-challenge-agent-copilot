@@ -3,7 +3,9 @@
 // A field is one property of the tool the model calls to take the edge: its
 // name, what it is (the model reads the description), its type and whether it
 // is required. A choice is the type whose value must be one of a list of
-// options; the chip on the card shows them next to the name.
+// options; the chip on the card shows them next to the name. During a test
+// call, a chip shows the value the call collected for it instead, and the "+"
+// that adds a field is not drawn.
 
 import { Plus, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
@@ -187,23 +189,29 @@ type ChipsProps = {
   id: string
   index: number
   edge: Edge
+  /** What a test call collected on this edge, by field name, when it took it. */
+  collected?: Record<string, string>
   /** A control of the edge itself, to end the row with at the right. */
   trailing?: React.ReactNode
 }
 
 /** The chips of the edge at `index` of node `id`, and a "+" chip to collect one more. */
-export function FieldChips({ id, index, edge, trailing }: ChipsProps) {
-  const { apply, seal, cancel } = useEditor()
+export function FieldChips({ id, index, edge, collected, trailing }: ChipsProps) {
+  const { apply, seal, cancel, readOnly } = useEditor()
   // Which chip's editor is open, by position: a field's name is being edited.
   const [open, setOpen] = useState<number | null>(null)
   const fields = Object.entries(edge.properties ?? {})
+  // An edge that collects nothing has no row during a call: only "+" was in it.
+  if (readOnly && fields.length === 0) return null
 
   return (
     // The chips wrap as a row; a chip never wraps inside.
     <div className="mt-1.5 flex flex-wrap items-center gap-1">
       {fields.map(([name, property], at) => {
         const key = (part: string) => `field:${id}:${index}:${at}:${part}`
-        const options = property.enum ?? []
+        const value = collected?.[name]
+        // The value takes the place of the options: one of them, now known.
+        const options = value === undefined ? (property.enum ?? []) : []
         return (
           <Popover key={at} open={open === at} onOpenChange={(next) => setOpen(next ? at : null)}>
             <PopoverTrigger
@@ -214,6 +222,11 @@ export function FieldChips({ id, index, edge, trailing }: ChipsProps) {
               )}
             >
               <span className="shrink-0 font-medium">{humanize(name)}</span>
+              {value !== undefined && (
+                <span data-collected className="truncate font-semibold text-brand">
+                  {value}
+                </span>
+              )}
               {/* A glance at a choice, not its list: that is in the popover. */}
               {options.length > 0 && (
                 <span className="truncate text-muted-foreground">
@@ -223,7 +236,7 @@ export function FieldChips({ id, index, edge, trailing }: ChipsProps) {
               {options.length > SHOWN && (
                 <span className="shrink-0 text-muted-foreground">+{options.length - SHOWN}</span>
               )}
-              {!edge.required?.includes(name) && (
+              {value === undefined && !edge.required?.includes(name) && (
                 <span className="shrink-0 text-muted-foreground">optional</span>
               )}
             </PopoverTrigger>
@@ -249,17 +262,19 @@ export function FieldChips({ id, index, edge, trailing }: ChipsProps) {
           </Popover>
         )
       })}
-      <button
-        aria-label="Collect a field"
-        title="Collect a field"
-        onClick={() => {
-          apply((current) => addField(current, id, index))
-          setOpen(fields.length)
-        }}
-        className="nodrag inline-flex size-[23px] items-center justify-center rounded-full border border-dashed border-foreground/20 text-muted-foreground outline-none hover:border-foreground/40 hover:text-foreground focus-visible:border-foreground/40"
-      >
-        <Plus className="size-3" />
-      </button>
+      {!readOnly && (
+        <button
+          aria-label="Collect a field"
+          title="Collect a field"
+          onClick={() => {
+            apply((current) => addField(current, id, index))
+            setOpen(fields.length)
+          }}
+          className="nodrag inline-flex size-[23px] items-center justify-center rounded-full border border-dashed border-foreground/20 text-muted-foreground outline-none hover:border-foreground/40 hover:text-foreground focus-visible:border-foreground/40"
+        >
+          <Plus className="size-3" />
+        </button>
+      )}
       {/* An item of the row like the chips: with no room left on the line it
           takes the next one, and never sits over a chip. It leans into the
           card's padding, so it needs less of the line and that happens less. */}

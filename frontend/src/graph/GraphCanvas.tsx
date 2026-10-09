@@ -18,6 +18,11 @@
 // layout still runs once, for the wires: a route is only drawn for a wire whose
 // ends meet it, so the cards that are still where the layout would put them get
 // their routed wires back and the ones that were moved by hand get curves.
+//
+// While a test call is on screen the canvas shows its path and edits nothing:
+// the wires the call took are orange, the last one moving, and the others fade.
+// The view does not follow the call. It is fitted once, when the call starts,
+// into the space the call card leaves, and the whole path stays in sight.
 
 import {
   Background,
@@ -35,8 +40,10 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { LayoutGrid, Plus } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { edgeTaken } from '@/call/path'
+import { CallContext } from '@/call/useCall'
 import { addNode, connect, moveNode, newNodeId, setPositions, type Point } from '@/draft/draft'
 import { useEditor } from '@/draft/editor'
 import { cn } from '@/lib/utils'
@@ -50,6 +57,7 @@ import { RoutedWire, type WireEdge } from './RoutedWire'
 const nodeTypes = { card: NodeCard }
 const edgeTypes = { wire: RoutedWire }
 const TIDY_MS = 300
+const MIN_ZOOM = 0.3
 const tool =
   'flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[13px] text-muted-foreground hover:bg-muted hover:text-foreground'
 
@@ -66,9 +74,20 @@ const CARD = 2
 const NEW_CARD = { width: 300, height: 216 }
 // Where a card's input dot is, from its top-left corner.
 const INPUT_DOT = { x: -6, y: 26 }
+// The width the call card takes at the right of the canvas, with its margin.
+const CALL_CARD = 376
+// What is left around the graph when it is fitted beside the call card.
+const CALL_MARGIN = 16
 
 function Canvas() {
-  const { draft, apply, place, framed } = useEditor()
+  const { draft, apply, place, framed, readOnly } = useEditor()
+  const shown = use(CallContext)
+  const call = shown?.call ?? null
+  // Read where a card is framed, which must not run again when a call starts or ends.
+  const onCall = useRef(false)
+  useEffect(() => {
+    onCall.current = shown !== null
+  }, [shown])
   const flow = useReactFlow<CardNode, WireEdge>()
   const graph = useMemo(() => toGraph(draft.config, draft.ids), [draft.config, draft.ids])
   const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({})
@@ -113,13 +132,17 @@ function Canvas() {
       })),
     [graph, draft, dragging, sizes, stack, wiring],
   )
+  const cardOf = useMemo(() => new Map(graph.cards.map((card) => [card.id, card])), [graph])
   const edges = useMemo<WireEdge[]>(
     () =>
       graph.wires.map((wire) => {
         // The wires of the active card, in and out, are dark and over the
         // other wires. Every wire stays under the cards: over one, it would
         // cross out the text it runs across.
-        const lit = wire.source === stack.active || wire.target === stack.active
+        const lit = !call && (wire.source === stack.active || wire.target === stack.active)
+        // During a call, the wires it went through instead.
+        const from = call && cardOf.get(wire.source)
+        const taken = from ? edgeTaken(call, from.node.name, from.edges[wire.index].function) : null
         return {
           id: wire.id,
           type: 'wire',
@@ -127,14 +150,25 @@ function Canvas() {
           sourceHandle: wire.handle,
           target: wire.target,
           selected: selected[wire.id] ?? false,
-          className: lit ? 'active' : undefined,
-          zIndex: lit ? LIT_WIRE : WIRE,
+          className: call
+            ? // Nothing fades until the call is somewhere.
+              taken
+              ? 'taken'
+              : call.steps.length > 0
+                ? 'untaken'
+                : undefined
+            : lit
+              ? 'active'
+              : undefined,
+          // Only the move that brought the call where it is now, while it is there.
+          animated: taken === 'latest' && call?.status === 'live',
+          zIndex: lit || taken ? LIT_WIRE : WIRE,
           data: {
             route: routes[wire.id]?.target === wire.target ? routes[wire.id].points : undefined,
           },
         }
       }),
-    [graph, routes, selected, stack.active],
+    [graph, cardOf, routes, selected, stack.active, call],
   )
 
   const onNodesChange = useCallback((changes: NodeChange<CardNode>[]) => {
@@ -287,6 +321,17 @@ function Canvas() {
   // stop a save, or the node the backend refused.
   useEffect(() => {
     if (!framed || framed.ids.length === 0) return
+    if (onCall.current) {
+      // A step of the call: its card, in the middle of what the call card
+      // leaves free rather than of the canvas, where it would be half under it.
+      const bounds = flow.getNodesBounds(framed.ids)
+      void flow.setCenter(
+        bounds.x + bounds.width / 2 + (CALL_CARD + CALL_MARGIN) / 2,
+        bounds.y + bounds.height / 2,
+        { zoom: 1, duration: TIDY_MS },
+      )
+      return
+    }
     void flow.fitView({
       nodes: framed.ids.map((id) => ({ id })),
       padding: 0.6,
@@ -294,6 +339,34 @@ function Canvas() {
       duration: TIDY_MS,
     })
   }, [framed, flow])
+
+  // A call starts: the graph moves over, into what the call card leaves free.
+  const session = shown?.session
+  useEffect(() => {
+    if (session === undefined) return
+    const bounds = flow.getNodesBounds(flow.getNodes())
+    const view = wrapper.current
+    if (!view || bounds.width === 0 || bounds.height === 0) return
+    // The view is worked out here rather than asked of fitView: that fits the
+    // whole canvas, and its padding is a share of it, which left the cards
+    // small. As large as the free space takes, and never larger than life.
+    const free = {
+      width: Math.max(view.clientWidth - CALL_CARD - 2 * CALL_MARGIN, CALL_CARD),
+      height: Math.max(view.clientHeight - 2 * CALL_MARGIN, 1),
+    }
+    const zoom = Math.max(
+      MIN_ZOOM,
+      Math.min(1, free.width / bounds.width, free.height / bounds.height),
+    )
+    void flow.setViewport(
+      {
+        x: CALL_MARGIN + (free.width - bounds.width * zoom) / 2 - bounds.x * zoom,
+        y: (view.clientHeight - bounds.height * zoom) / 2 - bounds.y * zoom,
+        zoom,
+      },
+      { duration: 500 },
+    )
+  }, [session, flow])
 
   const measured = useNodesInitialized()
   const [placed, setPlaced] = useState(false)
@@ -369,21 +442,26 @@ function Canvas() {
         connectionLineStyle={{ stroke: 'var(--foreground)', strokeWidth: 1.5 }}
         // For a selected wire. React Flow ignores these keys while typing in an input.
         deleteKeyCode={DELETE_KEYS}
-        minZoom={0.3}
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
+        elementsSelectable={!readOnly}
+        minZoom={MIN_ZOOM}
         maxZoom={1.5}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--border-strong)" />
         <Controls showInteractive={false} position="bottom-left" />
       </ReactFlow>
-      <div className="absolute top-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded-xl border bg-card p-1 shadow-sm">
-        <button onClick={addAtCenter} className={tool}>
-          <Plus className="size-3.5" /> Add node
-        </button>
-        <span className="mx-1 h-5 w-px bg-border" />
-        <button onClick={() => void tidy(TIDY_MS)} className={tool}>
-          <LayoutGrid className="size-3.5" /> Tidy up
-        </button>
-      </div>
+      {!readOnly && (
+        <div className="absolute top-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded-xl border bg-card p-1 shadow-sm">
+          <button onClick={addAtCenter} className={tool}>
+            <Plus className="size-3.5" /> Add node
+          </button>
+          <span className="mx-1 h-5 w-px bg-border" />
+          <button onClick={() => void tidy(TIDY_MS)} className={tool}>
+            <LayoutGrid className="size-3.5" /> Tidy up
+          </button>
+        </div>
+      )}
     </div>
   )
 }

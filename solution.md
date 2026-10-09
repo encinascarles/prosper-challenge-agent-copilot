@@ -188,6 +188,49 @@ can register another handler and record the same path. The alternative, reading
 Pipecat's own function-call messages in the browser, would have left the UI to
 work out the target from a function name and to guess the first node.
 
+### The test call is read on the graph
+
+**Context.** A test call answers "does the agent go where I meant it to?". The
+transcript alone does not: the same sentence can come from two nodes, and what
+the model passed to an edge is not said aloud.
+
+**Options.**
+- *Embed Pipecat's prebuilt client.* Rejected: it shows the conversation and
+  nothing of the graph, and it cannot be told which agent to run.
+- *A side panel with the call.* Rejected: it takes a third of the canvas from
+  the thing the call is read on.
+- *Draw the path on the cards, with a small call card floating over the canvas.*
+  Chosen.
+
+**Trade-offs.** The cards the call went through carry their step number, the
+one it is in pulses, the ones not reached fade; the wires taken turn orange and
+the edge that fired is tinted, with the values it collected on its field chips.
+The call card holds what the graph cannot: the clock, the steps in order and the
+transcript. The view is fitted once, into the space the card leaves, and does
+not follow the call: the whole path stays in sight, and a step in the card
+frames its node on demand.
+
+The path is one pure reducer over the bot's `node` messages (`call/path.ts`),
+so it is tested without a call and nothing in the browser infers a transition.
+The transcript is in the same state: the caller's lines are the final
+transcriptions, the agent's are the model's text as it is written, one line per
+answer. That text is on screen a moment before it is heard and stays whole if
+the caller cuts in; for reading a test that is the better side to err on.
+
+The button is disabled, with the reason as its tooltip, while there are unsaved
+changes or a warning: the call runs the saved agent, and a flow the checks say
+a call cannot get through is not worth a call. While the call card is on
+screen, running or ended, the editor is read-only: the path is drawn over this
+very graph by node and edge name, and an edit would leave it pointing at what
+changed. Closing the card gives the editor back.
+
+Pipecat's JS client and its small WebRTC transport carry the call, the same
+protocol as the prebuilt client; not the React bindings, since a handful of
+callbacks into one reducer is all the editor needs. It is loaded when the first
+call is placed, like ELK: it is 400 kB that most visits never use. A blocked
+microphone, a start the backend refuses and a connection that fails each end as
+a sentence in the call card, with Again next to it.
+
 ### The graph editor: React Flow, laid out and routed by ELK
 
 **Context.** The deployment team has to read an agent's flow at a glance and

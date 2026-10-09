@@ -13,11 +13,20 @@
 // shown as words ("Collect details" for collect_details) and an edge's function
 // name is not shown at all. It is plumbing for the model; the condition is what
 // a person reads.
+//
+// While a test call is on screen the card shows where it stands in the call
+// and takes no input: the number of the step that entered it, a pulse and a
+// microphone while the call is there, the edge it left through tinted, and
+// faded if the call has not reached it. What only serves editing (the menu,
+// the buttons that add and remove) is not drawn then: the card is a view of
+// the call.
 
 import { Handle, Position, type Node as FlowNode, type NodeProps } from '@xyflow/react'
-import { ArrowRight, PhoneOff, Play, Plus, RotateCcw, Trash2, TriangleAlert } from 'lucide-react'
+import { ArrowRight, Mic, PhoneOff, Play, Plus, RotateCcw, Trash2, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 
+import { nodeView } from '@/call/path'
+import { useShownCall } from '@/call/useCall'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -90,7 +99,12 @@ function LooseWire({ side, className }: { side: 'in' | 'out'; className?: string
 
 export function NodeCard({ data }: NodeProps<CardNode>) {
   const { id, node, start, edges, connected, reached, active, accepting } = data
-  const { draft, apply, seal, cancel, refusal, warnings } = useEditor()
+  const { draft, apply, seal, cancel, refusal, warnings, readOnly } = useEditor()
+  const call = useShownCall()
+  // Once the call is somewhere: before its first node there is no path to
+  // tell apart from the rest, and a call that never started has none at all.
+  const inCall = call && call.steps.length > 0 ? nodeView(call, node.name) : null
+  const left = inCall ? Object.keys(inCall.fired).length > 0 : false
   const warned = warnings.filter((warning) => warning.node === id)
   // What the backend said when it refused to save, if it was about this node.
   const refused = refusal?.node === id ? refusal : null
@@ -108,16 +122,33 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
     <div
       data-active={active || undefined}
       data-accepting={accepting || undefined}
+      data-call={inCall ? (inCall.current ? 'current' : inCall.step ? 'visited' : 'ahead') : undefined}
+      // Nothing on the card can be typed in, pressed or focused during a call.
+      inert={readOnly}
       className={cn(
-        'group/card relative w-[300px] rounded-2xl border bg-card text-left shadow-[0_1px_2px_rgba(0,0,0,0.04),0_10px_28px_-14px_rgba(0,0,0,0.14)]',
+        'group/card relative w-[300px] rounded-2xl border bg-card text-left shadow-[0_1px_2px_rgba(0,0,0,0.04),0_10px_28px_-14px_rgba(0,0,0,0.14)] transition-opacity duration-500',
         start && 'border-brand/45',
-        active && !start && 'border-foreground/30',
+        active && !start && !inCall && 'border-foreground/30',
+        inCall && inCall.step === null && 'opacity-40',
+        inCall?.current && 'call-live border-brand',
         active && 'shadow-[0_1px_2px_rgba(0,0,0,0.06),0_14px_32px_-12px_rgba(0,0,0,0.22)]',
         refused && 'ring-2 ring-bad',
         // A ring, not the border: it must read on the start card's orange too.
         accepting && 'ring-2 ring-foreground',
       )}
     >
+      {inCall?.step && (
+        <span
+          aria-label={inCall.current ? 'The call is here' : `Step ${inCall.step} of the call`}
+          className={cn(
+            'absolute -top-2.5 -left-2.5 z-10 flex size-5 items-center justify-center rounded-full text-[10.5px] font-semibold shadow-sm',
+            // A ring of the card's color: on the start card the badge sits on orange.
+            inCall.current ? 'bg-brand text-white ring-2 ring-card' : 'bg-foreground text-background',
+          )}
+        >
+          {inCall.current ? <Mic className="size-2.5" /> : inCall.step}
+        </span>
+      )}
       {start && (
         <div className={cn(band, 'rounded-t-[15px] bg-brand text-white')}>
           <Play className="size-3 fill-current" /> The call starts here
@@ -151,7 +182,7 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
           onBlur={(refused) => (refused ? cancel(`name:${id}`) : seal())}
           className="text-[14px] font-semibold tracking-[-0.01em]"
         />
-        <NodeMenu id={id} start={start} end={Boolean(node.end)} />
+        {!readOnly && <NodeMenu id={id} start={start} end={Boolean(node.end)} />}
       </div>
       <div className="px-4 pt-1 pb-3.5">
         <GrowingText
@@ -195,14 +226,16 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
           <PhoneOff className="size-3" /> The call ends here
           {/* The way back from "End the call here", where it was chosen. Always
               shown, faint: on the band there is nothing else to find it by. */}
-          <button
-            aria-label="Don't end the call here"
-            title="Don't end the call here"
-            onClick={() => apply((current) => setEnd(current, id, false))}
-            className="nodrag -my-0.5 -mr-1.5 ml-auto rounded p-1 opacity-60 outline-none transition-opacity hover:bg-background/15 hover:opacity-100 focus-visible:bg-background/15 focus-visible:opacity-100"
-          >
-            <RotateCcw className="size-3" />
-          </button>
+          {!readOnly && (
+            <button
+              aria-label="Don't end the call here"
+              title="Don't end the call here"
+              onClick={() => apply((current) => setEnd(current, id, false))}
+              className="nodrag -my-0.5 -mr-1.5 ml-auto rounded p-1 opacity-60 outline-none transition-opacity hover:bg-background/15 hover:opacity-100 focus-visible:bg-background/15 focus-visible:opacity-100"
+            >
+              <RotateCcw className="size-3" />
+            </button>
+          )}
         </div>
       ) : (
         <div className="rounded-b-2xl border-t bg-muted/35 pb-1.5">
@@ -216,9 +249,13 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
             // condition, what it collects and where it goes, read together.
             <div
               key={index}
+              data-fired={inCall?.fired[edge.function] ? true : undefined}
               className={cn(
-                'group/edge relative px-4 py-2.5',
+                'group/edge relative px-4 py-2.5 transition-colors duration-500',
                 index > 0 && 'border-t border-border/70',
+                // The way the call left this node, and the ways it did not.
+                inCall?.fired[edge.function] && 'bg-brand-tint',
+                left && !inCall?.fired[edge.function] && 'opacity-45',
                 // The edge the refusal is about, when it names one.
                 refused?.edge === index && 'shadow-[inset_3px_0_0_var(--bad)]',
               )}
@@ -242,21 +279,24 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
                 id={id}
                 index={index}
                 edge={edge}
+                collected={inCall?.fired[edge.function]}
                 trailing={
                   // At the end of the chips row, shaped like the "+" that adds
                   // a field: the same place for every edge, and away from the
                   // dot, where a slip would be a wire dragged.
-                  <button
-                    aria-label="Remove this way to move on"
-                    title="Remove this way to move on"
-                    onClick={() => (edgeIsEmpty(edge) ? remove(index) : setRemoving(index))}
-                    className={cn(
-                      hidden,
-                      'nodrag inline-flex size-[23px] items-center justify-center rounded-full border border-dashed border-foreground/20 text-muted-foreground group-hover/edge:opacity-100 hover:border-bad/50 hover:text-bad focus-visible:border-bad/50',
-                    )}
-                  >
-                    <Trash2 className="size-3" />
-                  </button>
+                  readOnly ? undefined : (
+                    <button
+                      aria-label="Remove this way to move on"
+                      title="Remove this way to move on"
+                      onClick={() => (edgeIsEmpty(edge) ? remove(index) : setRemoving(index))}
+                      className={cn(
+                        hidden,
+                        'nodrag inline-flex size-[23px] items-center justify-center rounded-full border border-dashed border-foreground/20 text-muted-foreground group-hover/edge:opacity-100 hover:border-bad/50 hover:text-bad focus-visible:border-bad/50',
+                      )}
+                    >
+                      <Trash2 className="size-3" />
+                    </button>
+                  )
                 }
               />
               {!connected[index] && <LooseWire side="out" className="top-[25px]" />}
@@ -275,7 +315,7 @@ export function NodeCard({ data }: NodeProps<CardNode>) {
               />
             </div>
           ))}
-          {edges.length > 0 ? (
+          {readOnly ? null : edges.length > 0 ? (
             <button
               onClick={() => apply((current) => addEdge(current, id))}
               className="nodrag flex w-full items-center gap-1 border-t border-border/70 px-4 pt-2 pb-1 text-[12px] text-muted-foreground/80 hover:text-foreground"
