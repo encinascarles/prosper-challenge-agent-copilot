@@ -58,22 +58,31 @@ def _now() -> str:
 
 
 def init_db() -> None:
-    """Create the schema and seed an empty table. Call once when the server starts."""
+    """Create the schema, and seed the database if this creates it. Call when the server starts."""
     db_path().parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
+        # A fresh checkout should open on a working agent rather than an empty
+        # list. Only a database that is being created is seeded: one whose
+        # agents were all deleted stays empty, or the example would come back
+        # on its own at the next start.
+        new = not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agents'"
+        ).fetchone()
+        seed = None
+        if new:
+            seed = json.loads(SEED_FLOW.read_text())
+            # Same check as an agent saved through the API, so every stored
+            # agent has passed it. A broken sample stops the server at startup
+            # with the reason, before anything is created, so the next start
+            # with a fixed sample still seeds.
+            AgentBuilder.from_dict(seed)
         conn.execute(_SCHEMA)
         # A database created before `layout` existed keeps its agents: the
         # column is added in place, and their nodes get placed by the editor.
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(agents)")}
         if "layout" not in columns:
             conn.execute("ALTER TABLE agents ADD COLUMN layout TEXT NOT NULL DEFAULT '{}'")
-        # A fresh checkout should open on a working agent rather than an empty list.
-        if not conn.execute("SELECT 1 FROM agents LIMIT 1").fetchone():
-            seed = json.loads(SEED_FLOW.read_text())
-            # Same check as an agent saved through the API, so every stored
-            # agent has passed it. A broken sample stops the server at startup
-            # with the reason, instead of seeding something the editor cannot open.
-            AgentBuilder.from_dict(seed)
+        if seed is not None:
             _insert(conn, seed)
 
 
@@ -169,3 +178,9 @@ def update_agent(agent_id: str, config: dict, layout: Optional[dict] = None) -> 
             (json.dumps(config), json.dumps(_prune(layout, config)), _now(), agent_id),
         )
         return _select(conn, agent_id)
+
+
+def delete_agent(agent_id: str) -> bool:
+    """Remove an agent and its layout. Returns whether there was one with this id."""
+    with _connect() as conn:
+        return conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,)).rowcount > 0

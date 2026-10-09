@@ -1,6 +1,6 @@
 #
-# Agents API — the routes the graph editor uses to list, open, create and
-# save agents.
+# Agents API — the routes the graph editor uses to list, open, create, save
+# and delete agents.
 #
 # Thin on purpose: HTTP in, validate, store call, HTTP out. Persistence lives
 # in `store`, the agent contract in `agent_builder`.
@@ -166,3 +166,11 @@ def update_agent(agent_id: str, save: AgentSave) -> Any:
     if record is None:
         raise _not_found(agent_id)
     return record
+
+
+@router.delete("/{agent_id}", status_code=204, responses=_NOT_FOUND)
+def delete_agent(agent_id: str) -> None:
+    # For good: there are no versions yet to bring an agent back from. The
+    # client asks before it calls this.
+    if not store.delete_agent(agent_id):
+        raise _not_found(agent_id)

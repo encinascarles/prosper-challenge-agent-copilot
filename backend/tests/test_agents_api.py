@@ -28,22 +28,36 @@ def test_list_starts_with_the_seeded_example(client, agent):
     assert (summary["name"], summary["nodes"]) == (agent["name"], len(agent["nodes"]))
 
 
-def test_init_db_seeds_only_an_empty_table(client):
+def test_init_db_seeds_only_a_new_database(client):
     store.init_db()  # what a server restart does
 
     assert len(client.get("/api/agents").json()) == 1
 
 
-def test_a_broken_seed_is_refused_and_not_stored(tmp_path, monkeypatch, agent):
-    agent["nodes"][0]["edges"][0]["target"] = "x"
+def test_the_seed_does_not_come_back_once_every_agent_is_deleted(client):
+    assert client.delete(f"/api/agents/{_seeded_id(client)}").status_code == 204
+
+    store.init_db()  # the next start
+
+    assert client.get("/api/agents").json() == []
+
+
+def test_a_broken_seed_is_refused_and_a_fixed_one_still_seeds(tmp_path, monkeypatch, agent):
+    good = agent_store.SEED_FLOW
+    broken_agent = json.loads(json.dumps(agent))
+    broken_agent["nodes"][0]["edges"][0]["target"] = "x"
     broken = tmp_path / "broken_flow.json"
-    broken.write_text(json.dumps(agent))
+    broken.write_text(json.dumps(broken_agent))
     monkeypatch.setenv(agent_store.DB_PATH_ENV, str(tmp_path / "empty.db"))
     monkeypatch.setattr(agent_store, "SEED_FLOW", broken)
 
     with pytest.raises(ValueError, match="targets unknown node 'x'"):
         store.init_db()
-    assert store.list_agents() == []
+
+    # Nothing was created, so the start after the sample is fixed seeds it.
+    monkeypatch.setattr(agent_store, "SEED_FLOW", good)
+    store.init_db()
+    assert [record["config"]["name"] for record in store.list_agents()] == [agent["name"]]
 
 
 def test_get_returns_the_full_agent(client, agent):
@@ -304,3 +318,31 @@ def test_a_database_from_before_layouts_keeps_its_agents(tmp_path, monkeypatch, 
     assert (record["id"], record["config"], record["layout"]) == ("old", agent, {})
     saved = store.update_agent("old", agent, {"greeting": {"x": 5, "y": 6}})
     assert saved["layout"] == {"greeting": {"x": 5, "y": 6}}
+
+
+def test_delete_removes_the_agent_and_only_that_one(client, agent):
+    kept = client.post("/api/agents", json={"config": agent}).json()
+    gone = client.post("/api/agents", json={"config": {**agent, "name": "To delete"}}).json()
+
+    response = client.delete(f"/api/agents/{gone['id']}")
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert client.get(f"/api/agents/{gone['id']}").status_code == 404
+    listed = [row["id"] for row in client.get("/api/agents").json()]
+    assert gone["id"] not in listed
+    assert kept["id"] in listed
+
+
+def test_delete_unknown_agent_is_404(client):
+    response = client.delete("/api/agents/nope")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "No agent with id 'nope'."}
+
+
+def test_deleting_twice_is_404_the_second_time(client, agent):
+    created = client.post("/api/agents", json={"config": agent}).json()
+
+    assert client.delete(f"/api/agents/{created['id']}").status_code == 204
+    assert client.delete(f"/api/agents/{created['id']}").status_code == 404

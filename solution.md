@@ -69,6 +69,10 @@ with the example agent on first start. No ORM and no migrations tool, which is
 fine for one table and will need revisiting if the schema grows. The agent is
 stored whole in one TEXT column, as `AgentConfig` reads it: nothing queries inside
 the graph, so tables for nodes and edges would only be a mapping to keep in sync.
+Deleting an agent removes its row for good: there are no versions yet to bring
+it back from, so the editor asks first. Only a database that is being created is
+seeded. One whose last agent was deleted stays empty, or the example would come
+back on its own at the next start.
 
 ### Node positions live next to the agent, not in it
 
