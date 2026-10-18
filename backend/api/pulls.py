@@ -35,7 +35,8 @@ router = APIRouter(prefix="/api/agents/{agent_id}", tags=["versions and pull req
 class Source(BaseModel):
     # manual: written by hand. Prosper AI's: from a line of the guidelines, from
     # the person's answer to its question, or from something they asked for.
-    kind: Literal["manual", "guidelines", "answer", "request"]
+    # check: added by Prosper AI when it checked its own draft against a failing test.
+    kind: Literal["manual", "guidelines", "answer", "request", "check"]
     pull: int | None = None  # the pull request it was added in
     file: str | None = None  # guidelines: the file it quotes, or "your notes"
     quote: str | None = None  # the line it comes from, or the answer or request, word for word
@@ -126,6 +127,9 @@ class PullEvent(BaseModel):
     question: str | None = None  # "question", "answer": the question's id
     options: list[str] | None = None  # "question": what can be picked
     changed: bool | None = None  # "message": Prosper AI changed the agent with it
+    details: list[str] | None = None  # "message": one line per thing it decided, folded under it
+    rewritten: bool | None = None  # "test": Prosper AI rewrote it, `why` says why
+    why: str | None = None
 
 
 class Prosper(BaseModel):

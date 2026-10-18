@@ -140,6 +140,24 @@ def mark_built(agent_id: str, number: int, step: str) -> None:
         _put(conn, agent_id, number, work)
 
 
+def update(agent_id: str, number: int, **fields) -> None:
+    """Set `fields` in Prosper AI's record of its work on the pull request."""
+    with connect() as conn:
+        work = _work(conn, agent_id, number)
+        work.update(fields)
+        _put(conn, agent_id, number, work)
+
+
+def rewrite_test(agent_id: str, number: int, test_id: str, test: dict, why: str) -> dict:
+    """Prosper AI rewrites a test of the copy in place (same id and source), saying why."""
+    with connect() as conn:
+        pull = _require(conn, agent_id, number, by=PROSPER)
+        tests = [{**t, **test, "id": t["id"]} if t["id"] == test_id else t for t in pull["tests"]]
+        event = _event("test", PROSPER, text=test["name"], rewritten=True, why=why)
+        _record_event(conn, agent_id, pull, event, tests=json.dumps(tests))
+        return _select(conn, agent_id, number)
+
+
 def set_job(agent_id: str, number: int, job: Optional[dict]) -> None:
     """Remember what Prosper AI is doing ({ kind, … }), or forget it once done.
 

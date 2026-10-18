@@ -5,6 +5,8 @@
 # scripted and the simulated calls run on fakes: nothing here reaches OpenAI.
 #
 
+import json
+
 import pytest
 
 import store
@@ -343,7 +345,8 @@ def test_prosper_ai_only_talks_in_the_pull_request_it_set_up(client, new_agent):
     assert response.status_code == 409
 
 
-def test_a_change_is_asked_with_what_failed_last_time(client, scripted, fake_checks):
+def test_a_change_is_asked_with_what_failed_last_time(client, scripted, fake_checks, monkeypatch):
+    monkeypatch.setattr(setup, "MAX_ROUNDS", 0)  # no review of its own first
     reply = {"reply": "Fixed.", "agent": DRAFT, "rules": [], "tests": [], "remove": []}
     model = scripted(questions=(), change=[reply])
     fake_checks.verdict = False  # "Never gives advice" is judged, and fails
@@ -413,3 +416,115 @@ def test_a_retried_answer_stays_the_answer_to_its_question(client, scripted):
     assert pull["rules"][-1]["source"]["quote"] == "The waitlist"
     retried = model.asked["change"][-1][1]["content"]
     assert 'Their answer: "The waitlist"' in retried and 'They then wrote: "Try again"' in retried
+
+
+# ---- Prosper AI checking its own draft ----------------------------------------
+
+
+def _review(verdict: str, **more) -> dict:
+    """A review of the one failing test, "Asks for advice" (its judged check fails)."""
+    return {
+        "summary": more.pop("summary", "Checked the failing test."),
+        "verdicts": [{"test": "ADVICE", "verdict": verdict, "why": more.pop("why", "Because.")}],
+        "agent": more.pop("agent", DRAFT),
+        "rules": [],
+        "remove_rules": [],
+        "tests": [],
+        "questions": [],
+        **more,
+    }
+
+
+def _with_ids(model, review: dict, pull: dict) -> dict:
+    """`review` with the failing test's real id in place of ADVICE."""
+    advice = next(t["id"] for t in pull["tests"] if t["name"] == "Asks for advice")
+    text = json.dumps(review).replace("ADVICE", advice)
+    return json.loads(text)
+
+
+def _set_up_failing(client, scripted, fake_checks, reviews):
+    """A setup with no questions whose judged check fails; Prosper AI reviews with `reviews`."""
+    model = scripted(questions=())
+    fake_checks.verdict = False
+    model.script["review"] = []
+    agent_id, pull = _create(client)
+    model.script["review"] = [_with_ids(model, review, pull) for review in reviews]
+    checks.wait()
+    from tests.conftest import settle
+
+    settle()
+    return agent_id, model
+
+
+def test_when_the_agent_is_wrong_prosper_ai_changes_the_agent(client, scripted, fake_checks):
+    stricter = {**DRAFT, "persona": DRAFT["persona"] + " Never advise on medicine."}
+    review = _review("agent", agent=stricter, why="Its persona never said no advice.")
+    agent_id, model = _set_up_failing(client, scripted, fake_checks, [review, review])
+
+    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
+    assert pull["config"]["persona"].endswith("Never advise on medicine.")
+    said = next(e for e in pull["events"] if e["type"] == "message" and e.get("details"))
+    assert said["changed"] is True
+    assert said["details"] == [
+        "Asks for advice · the agent was wrong: Its persona never said no advice."
+    ]
+    assert "failed 3 of 3" in model.asked["review"][0][-1]["content"]
+
+
+def test_a_test_asking_for_more_than_the_guidelines_is_rewritten(client, scripted, fake_checks):
+    rewrite = {"id": "ADVICE", "name": "Asks for advice", "caller": "Peter."}
+    rewrite["checks"] = ["Reaches Confirm", "Ends the call"]
+    review = _review("test", tests=[rewrite], why="No guideline says that.")
+    agent_id, model = _set_up_failing(client, scripted, fake_checks, [review])
+
+    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
+    advice = next(t for t in pull["tests"] if t["name"] == "Asks for advice")
+    assert advice["checks"] == ["Reaches Confirm", "Ends the call"]
+    assert advice["source"]["kind"] == "guidelines"  # the same test, rewritten
+    rewritten = next(e for e in pull["events"] if e.get("rewritten"))
+    assert (rewritten["by"], rewritten["why"]) == ("Prosper AI", "No guideline says that.")
+    assert pull["checks"]["state"] == "passed"
+    assert len(model.asked["review"]) == 1
+
+
+def test_a_gap_the_failure_shows_becomes_a_question(client, scripted, fake_checks):
+    review = _review("gap", questions=[QUESTION])
+    agent_id, _ = _set_up_failing(client, scripted, fake_checks, [review])
+
+    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
+    assert pull["prosper"]["state"] == "waiting"
+    assert pull["events"][-1]["type"] == "question"
+
+
+def test_it_checks_its_own_work_twice_at_most_then_says_what_fails(client, scripted, fake_checks):
+    stricter = {**DRAFT, "persona": "Never advise."}
+    again = {**DRAFT, "persona": "Never, ever advise."}
+    reviews = [_review("agent", agent=stricter), _review("agent", agent=again)]
+    agent_id, model = _set_up_failing(client, scripted, fake_checks, reviews)
+
+    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
+    assert len(model.asked["review"]) == 2
+    last = pull["events"][-1]
+    assert last["by"] == "Prosper AI"
+    assert last["text"].startswith("Still failing after 2 rounds of checking my own work")
+    assert pull["prosper"]["state"] == "done"
+
+
+def test_a_review_gives_every_failing_test_a_verdict_and_does_what_it_says():
+    from copilot import artifacts
+
+    before = artifacts.to_config("Riverside", DRAFT)
+    failing = {"t1": "Asks for advice"}
+    review = json.loads(json.dumps(_review("agent")).replace("ADVICE", "t1"))
+
+    with pytest.raises(ValueError, match="Give a verdict for every failing test"):
+        artifacts.check_review({**review, "verdicts": []}, failing, before, set())
+    with pytest.raises(ValueError, match="nothing in the agent changed"):
+        artifacts.check_review(review, failing, before, set())
+    with pytest.raises(ValueError, match="Rewrite exactly the tests whose verdict is 'test'"):
+        artifacts.check_review(
+            {**review, "verdicts": [{**review["verdicts"][0], "verdict": "test"}]},
+            failing,
+            before,
+            set(),
+        )

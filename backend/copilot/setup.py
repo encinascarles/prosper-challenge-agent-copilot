@@ -10,6 +10,10 @@
 #      write its tests      "Wrote 7 tests"
 #      look for gaps        questions with options, if the guidelines leave one
 #   -> run the suite        the checks' own events
+#   -> check its own draft  for each failing test: is the agent wrong (fix it),
+#                           does the test ask for more than the guidelines say
+#                           (rewrite it, saying why), or is it a gap (ask)
+#                           at most MAX_ROUNDS times, then it says what still fails
 #
 # Rules, tests and gaps are asked for at once: each needs only the guidelines
 # and the agent. The suite runs once the questions have their answers, not
@@ -46,6 +50,14 @@ from .llm import LLM
 
 # Who Prosper AI talks to. The tests swap it for a scripted model.
 new_llm: Callable[[], LLM] = LLM
+
+# Times Prosper AI checks its own work after a run, before it hands over.
+MAX_ROUNDS = 2
+VERDICT_WORDS = {
+    "agent": "the agent was wrong",
+    "test": "the test asked for more than the guidelines say",
+    "gap": "the guidelines leave this open",
+}
 
 _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="prosper")
 _jobs: list[Future] = []
@@ -118,7 +130,42 @@ def _guarded(job: dict, agent_id: str, number: int) -> None:
             pass
 
 
+def after_checks(agent_id: str, number: int) -> None:
+    """A run of the pull request's checks finished: Prosper AI checks its own work if it failed.
+
+    Only after a change of Prosper AI's own (its setup, an answer it turned
+    into a rule, its last fix), not after the person's edits, and at most
+    MAX_ROUNDS times; then it says what still fails and leaves it to them.
+    """
+    pull = store.get_pull(agent_id, number)
+    if pull is None or pull["state"] != "open" or pull["prosper"] is None:
+        return
+    work = store.prosper.work_of(agent_id, number)
+    checks = pull["checks"]
+    if work.get("state") != "done" or not checks or checks["state"] != "failed":
+        return
+    last = next((e for e in reversed(pull["events"]) if e["type"] != "checks"), None)
+    if last is None or last["by"] != PROSPER:
+        return
+    rounds = work.get("rounds", 0)
+    if rounds >= MAX_ROUNDS:
+        if not work.get("handed_over"):
+            failing = ", ".join(_failing_tests(agent_id, number).values())
+            text = (
+                f"Still failing after {MAX_ROUNDS} rounds of checking my own work: {failing}. "
+                "Tell me what to change, or change it in Build."
+            )
+            store.prosper.log(agent_id, number, _event("message", text=text))
+            store.prosper.update(agent_id, number, handed_over=True)
+        return
+    store.prosper.update(agent_id, number, rounds=rounds + 1)
+    store.prosper.set_state(agent_id, number, "working", "Checking why tests fail")
+    _submit({"kind": "review"}, agent_id, number)
+
+
 def _run(llm: LLM, agent_id: str, number: int, job: dict) -> None:
+    if job["kind"] == "review":
+        return _review(llm, agent_id, number)
     # A change asked for before the agent was ever drawn is a setup to finish first.
     if job["kind"] == "build" or not store.get_pull(agent_id, number)["config"]["nodes"]:
         return _build(llm, agent_id, number)
@@ -301,6 +348,94 @@ def _change(
         _ready(agent_id, number)
 
 
+def _failing_tests(agent_id: str, number: int) -> dict:
+    """The tests that failed in the latest run, by id: their names."""
+    run = store.get_run(agent_id, pull=number) or {"tests": []}
+    return {
+        test["id"]: test["name"]
+        for test in run["tests"]
+        if any(not r["passed"] for r in test["runs"])
+    }
+
+
+def _the_call(result: dict) -> str:
+    """A failing run of a test as the review reads it: what failed, the path, the last lines."""
+    failed = "; ".join(f"{c['text']} ({c['detail']})" for c in result["checks"] if not c["pass"])
+    path = " > ".join(step["node"] for step in result["path"]) or "nowhere"
+    lines = "\n".join(f"  {line['role']}: {line['text']}" for line in result["transcript"][-14:])
+    return f"  failed: {failed}\n  path: {path} · ended: {result['ended']}\n{lines}"
+
+
+def _review(llm: LLM, agent_id: str, number: int) -> None:
+    pull = store.get_pull(agent_id, number)
+    work = store.prosper.work_of(agent_id, number)
+    run = store.get_run(agent_id, pull=number) or {"tests": []}
+    tests = {test["id"]: test for test in pull["tests"]}
+    failing = _failing_tests(agent_id, number)
+    calls = []
+    for result in run["tests"]:
+        if result["id"] not in failing:
+            continue
+        bad = [r for r in result["runs"] if not r["passed"]]
+        test = tests.get(result["id"], {})
+        calls.append(
+            f"[{result['id']}] {result['name']} · failed {len(bad)} of {len(result['runs'])}\n"
+            f"  caller: {test.get('caller', '')}\n  checks: {'; '.join(test.get('checks', []))}\n"
+            f"{_the_call(bad[0])}"
+        )
+    answered = "\n".join(
+        f'- "{q["text"]}" → "{q["answer"]}"' for q in work.get("questions", []) if q["answer"]
+    )
+    rules = "\n".join(
+        f"- [{rule['id']}] {rule['step'] or 'every step'}: {rule['text']}" for rule in pull["rules"]
+    )
+    content = (
+        f"{_sources(work)}\n\nThe clinic's answers:\n{answered or '(none)'}\n\n"
+        f"{_agent(pull['config'])}\n\nIts rules:\n{rules or '(none)'}\n\n"
+        "The failing tests:\n" + "\n\n".join(calls)
+    )
+    removable = {rule["id"] for rule in pull["rules"] if added_in(rule, number)}
+    reviewed: dict = {}
+
+    def review_ok(answer: dict) -> None:
+        reviewed["config"] = artifacts.check_review(answer, failing, pull["config"], removable)
+
+    answer = llm.ask("review", content, artifacts.REVIEW, review_ok)
+    config = reviewed["config"]
+    moved = config != pull["config"]
+    details = [
+        f"{failing[v['test']]} · {VERDICT_WORDS[v['verdict']]}: {v['why']}"
+        for v in answer["verdicts"]
+    ]
+    said = _event(
+        "message", text=answer["summary"], details=details, **({"changed": True} if moved else {})
+    )
+    store.prosper.write(agent_id, number, said, config=config if moved else None)
+    for rule_id in answer["remove_rules"]:
+        store.take_out(agent_id, number, "rules", rule_id, PROSPER)
+    source = {"kind": "check", "pull": number}
+    for rule in answer["rules"]:
+        step = artifacts.step_of(rule["step"])
+        store.prosper.write(
+            agent_id,
+            number,
+            _event("rule", step=step, text=rule["text"]),
+            rules=({"step": step, "text": rule["text"], "source": source},),
+        )
+    why = {v["test"]: v["why"] for v in answer["verdicts"]}
+    for test in answer["tests"]:
+        fields = {key: test[key] for key in ("name", "caller", "checks")}
+        store.prosper.rewrite_test(agent_id, number, test["id"], fields, why[test["id"]])
+    questions = answer["questions"]
+    for question in questions:
+        for option in question["options"]:
+            option["rule"]["step"] = artifacts.step_of(option["rule"]["step"])
+    if questions:
+        store.prosper.ask(agent_id, number, questions)
+    else:
+        _ready(agent_id, number)
+
+
 def _failing(agent_id: str, number: int) -> str:
     """The checks that failed in the latest run of the copy, with why: what a fix has to change."""
     run = store.get_run(agent_id, pull=number)
@@ -321,4 +456,3 @@ def _ready(agent_id: str, number: int) -> None:
 
     store.prosper.set_state(agent_id, number, "done")
     checks.start(agent_id, pull=number)
-

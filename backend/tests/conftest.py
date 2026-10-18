@@ -39,8 +39,14 @@ def prosper_model(monkeypatch) -> ScriptedModel:
     model = ScriptedModel({})
     monkeypatch.setattr(setup, "new_llm", lambda: model)
     yield model
-    setup.wait()
-    checks.wait()
+    settle()
+
+
+def settle() -> None:
+    """Wait until Prosper AI and the checks are both idle: each can start the other."""
+    for _ in range(8):
+        setup.wait()
+        checks.wait()
 
 
 @pytest.fixture

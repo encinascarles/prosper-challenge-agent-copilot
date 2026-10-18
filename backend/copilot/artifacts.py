@@ -99,6 +99,22 @@ CHANGE = _object(
 )
 
 
+# Prosper AI checking its own draft after a run: a verdict per failing test,
+# and what it changes for each.
+VERDICTS = ("agent", "test", "gap")
+REVIEW = _object(
+    summary=_TEXT,
+    verdicts=_list(
+        _object(test=_TEXT, verdict={"type": "string", "enum": list(VERDICTS)}, why=_TEXT)
+    ),
+    agent=AGENT,
+    rules=_list(_object(step=_STEP, text=_TEXT)),
+    remove_rules=_list(_TEXT),
+    tests=_list(_object(id=_TEXT, name=_TEXT, caller=_TEXT, checks=_list(_TEXT))),
+    questions=_list(_object(text=_TEXT, options=_list(_OPTION))),
+)
+
+
 # ---- names -------------------------------------------------------------------
 
 
@@ -407,4 +423,50 @@ def check_change(answer: dict, name: str, before: dict, removable: set = frozens
     for rule in answer["rules"]:
         _check_step(rule, steps)
     check_tests(answer["tests"], config)
+    return config
+
+
+# ---- checking its own draft --------------------------------------------------
+
+
+def check_review(answer: dict, failing: dict, before: dict, removable: set) -> dict:
+    """The agent JSON a review makes. Raises ValueError like the checks above.
+
+    `failing` maps the failing tests' ids to their names: each gets exactly
+    one verdict, and only a test judged too strict is rewritten. A test is
+    never taken out. `removable` are the rules the review may take out.
+    """
+    verdicts = {}
+    for item in answer["verdicts"]:
+        if item["test"] not in failing:
+            raise ValueError(
+                f"'{item['test']}' is not a failing test. Failing: {', '.join(sorted(failing))}."
+            )
+        verdicts[item["test"]] = item["verdict"]
+    if missing := set(failing) - set(verdicts):
+        raise ValueError(f"Give a verdict for every failing test; missing: {', '.join(missing)}.")
+    rewritten = {test["id"] for test in answer["tests"]}
+    too_strict = {test for test, verdict in verdicts.items() if verdict == "test"}
+    if rewritten != too_strict:
+        raise ValueError(
+            "Rewrite exactly the tests whose verdict is 'test', by their id: "
+            f"{', '.join(sorted(too_strict)) or 'none'}."
+        )
+    for item in answer["remove_rules"]:
+        if item not in removable:
+            raise ValueError(f"'{item}' is not the id of a rule that can be taken out.")
+    config = keep_extras(to_config(before["name"], answer["agent"]), before)
+    check_agent(config)
+    check_concise(config, before)
+    steps = {node["name"] for node in config["nodes"]}
+    for rule in answer["rules"]:
+        _check_step(rule, steps)
+    check_tests(answer["tests"], config)
+    if "agent" in verdicts.values() and not (
+        config != before or answer["rules"] or answer["remove_rules"]
+    ):
+        raise ValueError("A verdict says the agent is wrong, but nothing in the agent changed.")
+    if "gap" in verdicts.values() and not answer["questions"]:
+        raise ValueError("A verdict says the guidelines leave a gap: ask about it.")
+    check_questions({"questions": answer["questions"]}, config)
     return config

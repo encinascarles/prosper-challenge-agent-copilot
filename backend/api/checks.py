@@ -26,6 +26,7 @@ from loguru import logger
 
 import simulate
 import store
+from copilot import setup
 from store.suite import fingerprint
 
 services: Optional[simulate.Services] = None
@@ -109,6 +110,11 @@ async def _run(agent_id: str, run: dict, copy: dict) -> None:
                 store.record_checks(agent_id, run["pull"], latest)
     finally:
         store.finish_run(run["id"])
+    if run["pull"] is not None:
+        try:
+            setup.after_checks(agent_id, run["pull"])
+        except Exception:  # noqa: BLE001 - the run is over either way
+            logger.exception(f"Prosper AI could not look at the checks of agent {agent_id}")
 
 
 def wait(timeout: float = 30) -> None:
