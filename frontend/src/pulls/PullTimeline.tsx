@@ -201,6 +201,14 @@ function Event({ event, pull, live, agentName, onShowChanges, onShowChecks }: Pr
         </>
       )
       break
+    case 'interrupted':
+      mark = <CircleX className="size-3 text-warn" />
+      text = (
+        <>
+          <Who event={event} /> was interrupted when the server restarted · write to it to try again
+        </>
+      )
+      break
     case 'checks': {
       const failing = (event.total ?? 0) - (event.passed ?? 0)
       mark = failing ? <CircleX className="size-3 text-bad" /> : <CircleCheck className="size-3 text-emerald-600" />

@@ -471,6 +471,29 @@ def take_out(agent_id: str, number: int, kind: str, item_id: str, by: str) -> di
         return _select(conn, agent_id, number)
 
 
+def stop_prosper(conn: sqlite3.Connection) -> None:
+    """Mark as interrupted the Prosper AI work a stopped server left going.
+
+    Its jobs run in the server's process, so after a restart nothing is doing
+    that work any more; left "working", it would refuse every change and the
+    merge for good. "failed" is the state a message to Prosper AI retries from.
+    """
+    rows = conn.execute(
+        "SELECT agent_id, number, prosper FROM pulls WHERE prosper IS NOT NULL AND state = 'open'"
+    ).fetchall()
+    for row in rows:
+        work = json.loads(row["prosper"])
+        if work.get("state") != "working":
+            continue
+        work.update(state="failed", doing=None)
+        conn.execute(
+            "UPDATE pulls SET prosper = ? WHERE agent_id = ? AND number = ?",
+            (json.dumps(work), row["agent_id"], row["number"]),
+        )
+        pull = _select(conn, row["agent_id"], row["number"])
+        _record_event(conn, row["agent_id"], pull, _event("interrupted", PROSPER))
+
+
 def record_checks(agent_id: str, number: int, run: dict) -> None:
     """Log in the pull request how its finished checks went."""
     checks = runs.summary(run)

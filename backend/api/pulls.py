@@ -106,6 +106,7 @@ class PullEvent(BaseModel):
         "question",
         "answer",
         "message",
+        "interrupted",  # Prosper AI's work stopped with the server; a message retries it
     ]
     by: str  # "you", "Prosper AI", or "checks" for a run of the tests
     at: str

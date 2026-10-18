@@ -197,6 +197,7 @@ export type PullEvent = {
     | 'question'
     | 'answer'
     | 'message'
+    | 'interrupted' // Prosper AI's work stopped with the server; a message retries it
   by: string // "you", "Prosper AI", or "checks" for a run of its tests
   at: string
   version?: number | null // "opened": copied from; "merged": became; "updated": its new base

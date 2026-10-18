@@ -32,7 +32,7 @@ from agent_builder import AgentBuilder
 
 from . import runs
 from .db import BACKEND_DIR, connect, db_path, now
-from .pulls import insert_pull
+from .pulls import insert_pull, stop_prosper
 from .suite import manual, new_id
 from .versions import insert_version
 
@@ -120,6 +120,7 @@ def init_db() -> None:
         _migrate_untested(conn)
         runs.migrate(conn)
         runs.stop_unfinished(conn)
+        stop_prosper(conn)
         if seed is not None:
             # The example is live from the start, as v1: it is there to be called.
             agent_id = _insert_agent(conn, seed["name"])

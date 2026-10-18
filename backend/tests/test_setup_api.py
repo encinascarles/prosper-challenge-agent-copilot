@@ -335,3 +335,19 @@ def test_a_change_is_asked_with_what_failed_last_time(client, scripted, fake_che
         "What failed when its tests last ran:\n- Asks for advice: failed 3 of 3"
         in asked[-1]["content"]
     )
+
+
+def test_work_a_restart_interrupted_can_be_retried(client, scripted):
+    scripted()
+    agent_id, _ = _create(client)
+    store.prosper.set_state(agent_id, 1, "working", "Writing rules and tests")
+
+    store.init_db()  # the server starting again
+
+    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
+    assert pull["prosper"]["state"] == "failed"
+    assert (pull["events"][-1]["type"], pull["events"][-1]["by"]) == ("interrupted", "Prosper AI")
+    assert (
+        client.put(f"/api/agents/{agent_id}/pulls/1", json={"config": pull["config"]}).status_code
+        == 200
+    )
