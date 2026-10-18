@@ -284,10 +284,15 @@ def test_your_own_changes_wait_while_prosper_ai_works(client, scripted, agent):
 
     saved = client.put(f"/api/agents/{agent_id}/pulls/1", json={"config": agent})
     talked = client.post(f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "Hello"})
+    question = client.get(f"/api/agents/{agent_id}/pulls/1").json()["events"][-1]["question"]
+    picked = client.post(
+        f"/api/agents/{agent_id}/pulls/1/answers", json={"question": question, "option": 0}
+    )
 
     assert saved.status_code == 409
     assert saved.json()["detail"] == "Prosper AI is still working on PR #1."
     assert talked.status_code == 409
+    assert picked.status_code == 409
 
 
 @pytest.mark.parametrize(

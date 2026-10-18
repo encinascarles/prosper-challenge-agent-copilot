@@ -178,10 +178,12 @@ def pick(agent_id: str, number: int, question: str, option: int) -> tuple[dict, 
     """The person picks option `option` of `question`: its rule goes into the copy.
 
     Returns the pull request and whether every question has its answer now.
-    The rule's source is the answer, in this pull request.
+    The rule's source is the answer, in this pull request. Refused while
+    Prosper AI works (on an answer written to another question, say): the
+    job would write over it, and checks could start halfway through.
     """
     with connect() as conn:
-        pull = _require(conn, agent_id, number)
+        pull = _require(conn, agent_id, number, by="you")
         work = _work(conn, agent_id, number)
         asked = _open_question(work, question)
         if not 0 <= option < len(asked["options"]):
