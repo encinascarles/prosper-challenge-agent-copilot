@@ -355,6 +355,76 @@ the tests check the graph and the prompts. A judged check can be wrong, which
 is why its reason is always shown. And every save spends money, so the suite
 stays small and the caller and judge use one configurable model.
 
+### Prosper AI sets up a new agent inside its PR #1
+
+**Context.** The first manual loop: someone reads a clinic's guidelines and
+draws the agent by hand. The product already has the door everything goes
+through (a pull request, its suite, a merge), so the question was how an AI
+fills that door in, in a way a person can follow, correct and trust.
+
+**What.** "Build it with Prosper AI" in the new agent dialog takes a name,
+pasted notes and files (PDF, Word, text). The files are read on the server
+before anything is stored (`pypdf`, `python-docx`; no OCR, so a scan is
+refused with the reason while the dialog is open). The agent is created with
+PR #1 opened by Prosper AI on an empty copy, and a background job fills it in,
+logging each step in the PR's conversation as it lands: what it read, "Drew 6
+steps" (the graph shows up in Build then), "Wrote 4 rules, each linked to its
+line", "Wrote 7 tests", then up to two questions. Build and the PR page poll the
+PR every second while it works; a stream would be more moving parts for a job
+of about a minute. Meanwhile the copy is Prosper AI's: Build is read-only and
+the API refuses the person's saves to it (409), so the two never write over
+each other.
+
+**One structured request per artifact, checked in code.** Options:
+- *An agent framework (tool calls in a loop).* Rejected: the steps are known,
+  and a loop that decides them is harder to read, test and price.
+- *One request for everything.* Rejected: one bad part fails the whole answer,
+  and nothing can be shown until all of it is written.
+- *Agent, then rules, tests and questions at once, each one request with a
+  strict JSON schema.* Chosen. Plain OpenAI SDK (`copilot/llm.py`).
+
+Each answer is checked in code and, when refused, sent back with the sentence
+that says why (twice at most): the agent goes through `AgentBuilder` exactly as
+a save, plus no dead ends and some end; a rule's quote must be in its source
+word for word (a made-up quote would point at a sentence nobody wrote); a
+test's "Reaches X" / "X is recorded" must name a real step or field. Strict
+mode cannot describe an edge's `properties` (a JSON-schema object keyed by
+field name), so the model writes the agent in a shape of its own (an edge
+lists its fields) and code turns it into `AgentConfig`, with snake_case names
+and `go_to_<target>` functions as the editor makes them. The voice agent keeps
+gpt-4o; Prosper AI uses `PROSPER_MODEL`. Prompts are short files in
+`copilot/prompts/`.
+
+**Questions, answers and requests.** A question comes with 2–3 options, and
+each option with the rule it becomes, so picking one is a write with no model
+call; the rule's source is "Your answer in PR #1". The suite runs once the
+questions have their answers, not before: an answer changes the agent, and a
+run before it would be paid for and thrown away. Anything written in the
+composer goes to Prosper AI: the answer in your own words, or a change ("make
+the greeting shorter"). It rewrites PR #1's copy through the same checks, adds
+or takes out rules and tests (only those PR #1 added), sees what failed in the
+last run and why, says what it changed, and the suite runs again.
+
+**What it costs, measured.** A setup from the sample PDF and DOCX: 5 requests,
+about 8k tokens in and 3k out, USD 0.05; graph drawn 40 s after the click,
+questions at 56 s; a change request 20–50 s and USD 0.02–0.04. The suite after
+it dominates: 9 tests × 3 calls in 38 s, about USD 0.26, mostly the agent's own
+gpt-4o. Two things found on the way: at default reasoning effort a request
+could think for minutes and spend its whole token budget writing nothing, so
+requests use low effort; even then one now and then runs to the limit, so the
+limit is 6,000 tokens (USD 0.06) and a cut-off answer is asked for once more.
+
+**Trade-offs and what is next.** The first agent is a draft: on the samples it
+was sensible (greet, booking or change details, offer the two slots, confirm,
+nurse callback, goodbye) but wordy, and its first suite failed where an answer
+had become a rule for every step (the greeting began asking for a date of
+birth). Getting to green took three requests to Prosper AI and one rule and five
+test removals by hand, which is the point of keeping it in a pull request.
+Prosper AI only works in PR #1 for now; it cannot edit a rule in place (it
+takes it out and adds another), it does not run tests itself to try a fix
+before proposing it, and a test whose check is flaky has to be judged by a
+person. Next: the same loop for issues found in calls, on PRs it opens.
+
 ### A test call runs the saved agent, and says where it is
 
 **Context.** The editor holds a draft with unsaved changes, and a call has to run
