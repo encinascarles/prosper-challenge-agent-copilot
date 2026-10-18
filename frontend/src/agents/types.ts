@@ -112,20 +112,3 @@ export type Pull = PullSummary &
   AgentCopy & {
     events: PullEvent[]
   }
-
-/** A row of the agent list. */
-export type AgentSummary = {
-  id: string
-  name: string
-  nodes: number
-  updated_at: string
-}
-
-/** A stored agent: its id, the agent JSON and, next to it, its layout. */
-export type AgentRecord = {
-  id: string
-  config: AgentConfig
-  layout: Layout
-  created_at: string
-  updated_at: string
-}

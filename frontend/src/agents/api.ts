@@ -1,11 +1,12 @@
-// Calls to the agents API (backend/api/agents.py).
+// Calls to the agents API (backend/api/agents.py and backend/api/pulls.py).
 //
 // Relative URLs: the dev server proxies /api to the backend, so the browser
 // sees one origin. A failed request throws an ApiError whose message is the
 // backend's own sentence ("No agent with id 'x'."), which is what the UI shows.
-// Saving is one request with the agent and its layout.
+// Saving is one request with the agent and its layout, to a pull request's
+// copy: nothing here writes to a live version.
 
-import type { AgentConfig, AgentRecord, AgentSummary, Layout } from './types'
+import type { Agent, AgentConfig, Layout, Pull, PullSummary, Version, VersionSummary } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -68,25 +69,56 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
   return (response.status === 204 ? undefined : response.json()) as Promise<T>
 }
 
-export function listAgents(): Promise<AgentSummary[]> {
+const agentPath = (id: string) => `/${encodeURIComponent(id)}`
+const pullPath = (id: string, number: number) => `${agentPath(id)}/pulls/${number}`
+
+export function listAgents(): Promise<Agent[]> {
   return request('')
 }
 
-export function getAgent(id: string): Promise<AgentRecord> {
-  return request(`/${encodeURIComponent(id)}`)
+export function getAgent(id: string): Promise<Agent> {
+  return request(agentPath(id))
 }
 
-/** Stores a new agent. The editor lays it out when it first opens. */
-export function createAgent(config: AgentConfig): Promise<AgentRecord> {
+/** Stores a new agent with its PR #1 holding `config`. It is not live until that PR is merged. */
+export function createAgent(config: AgentConfig): Promise<{ agent: Agent; pull: Pull }> {
   return request('', 'POST', { config })
 }
 
-/** Replaces the agent and its layout: both or neither, the backend validates the agent first. */
-export function updateAgent(id: string, config: AgentConfig, layout: Layout): Promise<AgentRecord> {
-  return request(`/${encodeURIComponent(id)}`, 'PUT', { config, layout })
+/** Removes the agent for good, its versions and pull requests included. */
+export function deleteAgent(id: string): Promise<void> {
+  return request(agentPath(id), 'DELETE')
 }
 
-/** Removes the agent for good. */
-export function deleteAgent(id: string): Promise<void> {
-  return request(`/${encodeURIComponent(id)}`, 'DELETE')
+/** The agent's versions, live first. */
+export function listVersions(id: string): Promise<VersionSummary[]> {
+  return request(`${agentPath(id)}/versions`)
+}
+
+export function getVersion(id: string, number: number): Promise<Version> {
+  return request(`${agentPath(id)}/versions/${number}`)
+}
+
+/** The agent's open pull requests, newest first. */
+export function listOpenPulls(id: string): Promise<PullSummary[]> {
+  return request(`${agentPath(id)}/pulls?state=open`)
+}
+
+export function getPull(id: string, number: number): Promise<Pull> {
+  return request(pullPath(id, number))
+}
+
+/** Opens a pull request on a copy of the live version. */
+export function openPull(id: string, title: string): Promise<Pull> {
+  return request(`${agentPath(id)}/pulls`, 'POST', { title, kind: 'edit' })
+}
+
+/** Replaces the pull request's copy and its layout: both or neither, the backend validates the agent first. */
+export function savePull(id: string, number: number, config: AgentConfig, layout: Layout): Promise<Pull> {
+  return request(pullPath(id, number), 'PUT', { config, layout })
+}
+
+/** Makes the pull request's copy the next version, which goes live. */
+export function mergePull(id: string, number: number): Promise<Pull> {
+  return request(`${pullPath(id, number)}/merge`, 'POST')
 }

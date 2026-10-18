@@ -1,5 +1,6 @@
-// The bar at the top of every screen: where you are (Prosper, then the agent)
-// and, at the right, the open agent's actions.
+// The bar at the top of every screen: where you are (Prosper, the agent, and
+// what of it: live or a pull request) and, at the right, the open agent's
+// actions.
 //
 // The agent's name is the one control for agents. It opens the list of them,
 // with the open one checked and "New agent" at the end; picking a row opens
@@ -10,7 +11,7 @@
 import { ChevronsUpDown, Plus, Settings } from 'lucide-react'
 import { useRef, useState } from 'react'
 
-import type { AgentSummary } from '@/agents/types'
+import type { Agent } from '@/agents/types'
 import { Mark } from '@/components/Mark'
 import {
   DropdownMenu,
@@ -23,7 +24,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 type Props = {
-  agents: AgentSummary[]
+  agents: Agent[]
   agentId: string | null
   onPick: (id: string) => void
   /** The gear of an agent's row: its settings, opening the agent first if needed. */
@@ -31,17 +32,19 @@ type Props = {
   onNew: () => void
   /** The open agent's name as it is being edited, when it is. */
   name?: string
+  /** What of the open agent is shown (live or a pull request), next to its name. */
+  pill?: React.ReactNode
   /** The open agent's actions, at the right. */
   children?: React.ReactNode
 }
 
-export function TopBar({ agents, agentId, onPick, onSettings, onNew, name, children }: Props) {
+export function TopBar({ agents, agentId, onPick, onSettings, onNew, name, pill, children }: Props) {
   const [listOpen, setListOpen] = useState(false)
   // What was asked for from the list that opens a dialog, until the list has
   // closed. The dialog opens only then: the closing list would otherwise take
   // the focus back from it.
   const after = useRef<(() => void) | null>(null)
-  const title = (agent: AgentSummary) => (agent.id === agentId && name !== undefined ? name : agent.name)
+  const title = (agent: Agent) => (agent.id === agentId && name !== undefined ? name : agent.name)
   const open = agents.find((agent) => agent.id === agentId)
 
   return (
@@ -72,7 +75,7 @@ export function TopBar({ agents, agentId, onPick, onSettings, onNew, name, child
               <DropdownMenuRadioItem key={agent.id} value={agent.id} className="group/row pr-1">
                 <span className="min-w-0 flex-1 truncate">{title(agent) || 'Untitled agent'}</span>
                 <span className="text-xs text-muted-foreground tabular-nums">
-                  {agent.nodes} {agent.nodes === 1 ? 'node' : 'nodes'}
+                  {agent.live_version > 0 ? `v${agent.live_version} · live` : 'Not live yet'}
                 </span>
                 <button
                   aria-label="Agent settings"
@@ -103,6 +106,7 @@ export function TopBar({ agents, agentId, onPick, onSettings, onNew, name, child
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      {pill}
       {children}
     </header>
   )

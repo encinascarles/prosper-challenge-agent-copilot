@@ -6,12 +6,19 @@
 // target anyway, and the canvas can show where they are. What the backend
 // refuses for another reason is shown as its own sentence on the card it names.
 // Warnings are counted next to it and never change what the button does.
+//
+// On live there is nothing to save: an edit there opens a pull request, and
+// the control says so instead of offering a button.
 
 import { TriangleAlert } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 
 type Props = {
+  /** On the live version, which is never saved to. */
+  live: boolean
+  /** The first edit of live is opening a pull request. */
+  opening: boolean
   dirty: boolean
   saving: boolean
   saved: boolean // a save went through since the agent was opened
@@ -28,7 +35,7 @@ type Props = {
 const link = 'rounded px-1 text-[13px] font-medium text-bad outline-none hover:underline focus-visible:underline'
 
 export function SaveControl(props: Props) {
-  const { dirty, saving, saved, loose, warnings, problem } = props
+  const { live, opening, dirty, saving, saved, loose, warnings, problem } = props
   const { onSave, onShowLoose, onShowWarnings, onShowProblem } = props
   return (
     <div className="ml-auto flex items-center gap-3 text-[13px]">
@@ -44,7 +51,15 @@ export function SaveControl(props: Props) {
         )
       ) : (
         <span className="text-muted-foreground" aria-live="polite">
-          {dirty ? 'Unsaved changes' : saved ? 'Saved' : ''}
+          {live
+            ? opening
+              ? 'Opening a pull request…'
+              : 'Edits open a pull request'
+            : dirty
+              ? 'Unsaved changes'
+              : saved
+                ? 'Saved'
+                : ''}
         </span>
       )}
       {warnings > 0 && (
@@ -58,7 +73,7 @@ export function SaveControl(props: Props) {
           {warnings} {warnings === 1 ? 'warning' : 'warnings'}
         </button>
       )}
-      {loose > 0 ? (
+      {live ? null : loose > 0 ? (
         // Nothing to send yet: the button says what is missing and shows where.
         <Button
           size="sm"
