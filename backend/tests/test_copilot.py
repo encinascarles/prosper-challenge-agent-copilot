@@ -366,3 +366,15 @@ def test_what_was_read_is_summed_up():
     assert files.summary([pdf]) == "Read 1 file · 4 pages"
     assert files.summary([notes]) == "Read your notes"
     assert files.notes("   ") is None
+
+
+def test_every_problem_of_an_answer_goes_back_at_once():
+    one = {"name": "A", "caller": "x", "checks": ["Ends the call"]}
+    two = {"name": "B", "caller": "x", "checks": ["Ends the call", "Speaks in a warm tone"]}
+
+    with pytest.raises(ValueError) as refused:
+        artifacts.check_tests([one, two], _config())
+
+    assert str(refused.value).startswith("2 problems:")
+    assert "Test 'A' has 1 checks" in str(refused.value)
+    assert "checks style or wording" in str(refused.value)

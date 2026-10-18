@@ -22,4 +22,6 @@ Change details now asks the date of birth before opening a chart").
 Answer with the whole agent after your changes (unchanged steps word for
 word), the rules to add and the ids of rules to take out, the rewritten tests
 (by id), and any questions. Tasks stay at most 3 short sentences; rules are
-one sentence.
+one short sentence. A rewritten test has 2 to 4 checks: path checks written
+exactly "Reaches <step>", "Ends the call" or "<field> is recorded", and at
+most one judged line about the call as a whole, never about style.

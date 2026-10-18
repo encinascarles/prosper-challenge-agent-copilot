@@ -237,6 +237,32 @@ def keep_extras(config: dict, before: dict) -> dict:
     return {**config, **kept, "nodes": nodes}
 
 
+class Problems:
+    """Every problem of an answer at once, so the model fixes them all in one go.
+
+    Refusing on the first one sent the model back to fix that one, and it
+    broke another on the way: three attempts went by on three different
+    problems. `check` runs a check and keeps its sentence; `raise_any` raises
+    them all together.
+    """
+
+    def __init__(self):
+        self.found: list[str] = []
+
+    def check(self, run, *args) -> None:
+        try:
+            run(*args)
+        except ValueError as error:
+            self.found.append(str(error))
+
+    def raise_any(self) -> None:
+        if self.found:
+            listed = "\n".join(f"- {problem}" for problem in self.found)
+            raise ValueError(
+                f"{len(self.found)} problems:\n{listed}" if len(self.found) > 1 else self.found[0]
+            )
+
+
 def sentences(text: str) -> list[str]:
     return [part for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part]
 
@@ -306,20 +332,26 @@ def _check_step(rule: dict, steps: set) -> None:
 
 
 def check_rules(answer: dict, config: dict, sources: list[dict]) -> None:
+    problems = Problems()
+    for rule in answer["rules"]:
+        problems.check(_check_rule, rule, config, sources)
+    problems.raise_any()
+
+
+def _check_rule(rule: dict, config: dict, sources: list[dict]) -> None:
     steps = {node["name"] for node in config["nodes"]}
     texts = {source["name"]: _plain(source["text"]) for source in sources}
-    for rule in answer["rules"]:
-        _check_step(rule, steps)
-        if rule["source"] not in texts:
-            raise ValueError(
-                f"Rule '{rule['text']}' quotes '{rule['source']}', which is not one of the "
-                f"sources: {', '.join(texts)}."
-            )
-        if _plain(rule["quote"]).strip(" .") not in texts[rule["source"]]:
-            raise ValueError(
-                f"The quote of rule '{rule['text']}' is not in '{rule['source']}' word for "
-                "word. Copy the line exactly as it is written there."
-            )
+    _check_step(rule, steps)
+    if rule["source"] not in texts:
+        raise ValueError(
+            f"Rule '{rule['text']}' quotes '{rule['source']}', which is not one of the "
+            f"sources: {', '.join(texts)}."
+        )
+    if _plain(rule["quote"]).strip(" .") not in texts[rule["source"]]:
+        raise ValueError(
+            f"The quote of rule '{rule['text']}' is not in '{rule['source']}' word for "
+            "word. Copy the line exactly as it is written there."
+        )
 
 
 def rules_from(answer: dict, pull: int) -> list[dict]:
@@ -358,28 +390,37 @@ def check_tests(tests: list[dict], config: dict, count: Optional[tuple] = None) 
     if count and not count[0] <= len(tests) <= count[1]:
         raise ValueError(f"Write {count[0]} to {count[1]} tests, not {len(tests)}.")
     steps, fields = _names(config)
-    low, high = CHECKS_PER_TEST
+    problems = Problems()
     for test in tests:
-        name = test["name"]
-        if not low <= len(test["checks"]) <= high:
-            given = len(test["checks"])
-            raise ValueError(f"Test '{name}' has {given} checks: give it {low} to {high}.")
-        judged = []
-        for line in test["checks"]:
-            if problem := unknown_name(line, steps, fields):
-                raise ValueError(f"In test '{name}': {problem}")
-            if parse(line, steps, fields)["kind"] == "judged":
-                judged.append(line)
-                if _STYLE.search(line):
-                    raise ValueError(
-                        f"In test '{name}', '{line}' checks style or wording, which the "
-                        "guidelines do not ask for: check what happens in the call instead."
-                    )
-        if len(judged) > 1:
+        problems.check(_check_test, test, steps, fields)
+    problems.raise_any()
+
+
+def _check_test(test: dict, steps: list, fields: list) -> None:
+    low, high = CHECKS_PER_TEST
+    name = test["name"]
+    if not low <= len(test["checks"]) <= high:
+        given = len(test["checks"])
+        raise ValueError(f"Test '{name}' has {given} checks: give it {low} to {high}.")
+    judged = []
+    for line in test["checks"]:
+        if problem := unknown_name(line, steps, fields):
             raise ValueError(
-                f"Test '{name}' has {len(judged)} judged checks: keep the one it is about, "
-                "and make the rest path checks (Reaches, Ends the call, is recorded)."
+                f"In test '{name}': {problem} A path check is only 'Reaches <step>', "
+                "'Ends the call' or '<field> is recorded'; anything longer is judged."
             )
+        if parse(line, steps, fields)["kind"] == "judged":
+            judged.append(line)
+            if _STYLE.search(line):
+                raise ValueError(
+                    f"In test '{name}', '{line}' checks style or wording, which the "
+                    "guidelines do not ask for: check what happens in the call instead."
+                )
+    if len(judged) > 1:
+        raise ValueError(
+            f"Test '{name}' has {len(judged)} judged checks: keep the one it is about, "
+            "and make the rest path checks (Reaches, Ends the call, is recorded)."
+        )
 
 
 # ---- questions ---------------------------------------------------------------
@@ -418,11 +459,14 @@ def check_change(answer: dict, name: str, before: dict, removable: set = frozens
             )
     config = keep_extras(to_config(name, answer["agent"]), before)
     check_agent(config)
-    check_concise(config, before)
+    problems = Problems()
+    problems.check(check_concise, config, before)
     steps = {node["name"] for node in config["nodes"]}
     for rule in answer["rules"]:
-        _check_step(rule, steps)
-    check_tests(answer["tests"], config)
+        problems.check(_check_step, rule, steps)
+    for test in answer["tests"]:
+        problems.check(check_tests, [test], config)
+    problems.raise_any()
     return config
 
 
@@ -457,16 +501,19 @@ def check_review(answer: dict, failing: dict, before: dict, removable: set) -> d
             raise ValueError(f"'{item}' is not the id of a rule that can be taken out.")
     config = keep_extras(to_config(before["name"], answer["agent"]), before)
     check_agent(config)
-    check_concise(config, before)
+    problems = Problems()
+    problems.check(check_concise, config, before)
     steps = {node["name"] for node in config["nodes"]}
     for rule in answer["rules"]:
-        _check_step(rule, steps)
-    check_tests(answer["tests"], config)
+        problems.check(_check_step, rule, steps)
+    for test in answer["tests"]:
+        problems.check(check_tests, [test], config)
+    problems.check(check_questions, {"questions": answer["questions"]}, config)
+    problems.raise_any()
     if "agent" in verdicts.values() and not (
         config != before or answer["rules"] or answer["remove_rules"]
     ):
         raise ValueError("A verdict says the agent is wrong, but nothing in the agent changed.")
     if "gap" in verdicts.values() and not answer["questions"]:
         raise ValueError("A verdict says the guidelines leave a gap: ask about it.")
-    check_questions({"questions": answer["questions"]}, config)
     return config
