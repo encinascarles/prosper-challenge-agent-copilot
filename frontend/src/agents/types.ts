@@ -54,6 +54,65 @@ export type AgentConfig = {
   model?: string
 }
 
+/** Where the editor drew each node, by node name. Stored next to the agent, never in it. */
+export type Layout = Record<string, { x: number; y: number }>
+
+/** An agent as a whole. What it is made of is in its versions and pull requests. */
+export type Agent = {
+  id: string
+  name: string // the live version's, or PR #1's before the agent is live
+  live_version: number // what calls run on; 0 until PR #1 is merged
+  open_pulls: number
+  created_at: string
+  updated_at: string
+}
+
+/** One copy of the agent: the agent JSON and, next to it, its layout. */
+export type AgentCopy = {
+  config: AgentConfig
+  layout: Layout
+}
+
+/** A row of an agent's history: the version and the pull request it came from. */
+export type VersionSummary = {
+  number: number
+  pull: number | null // null for a version made before pull requests
+  title: string | null // that pull request's title
+  created_at: string
+}
+
+/** What callers get: an immutable snapshot of the agent. The latest version is live. */
+export type Version = AgentCopy & {
+  number: number
+  pull: number | null
+  created_at: string
+}
+
+export type PullEvent = {
+  type: 'opened' | 'saved' | 'merged' | 'closed'
+  by: string
+  at: string
+  version?: number | null // for "merged": the version it became
+}
+
+/** A proposed change to an agent, as lists show it. */
+export type PullSummary = {
+  number: number // per agent, shown as "PR #3"
+  title: string
+  kind: 'setup' | 'edit' // setup: PR #1 of a new agent
+  state: 'open' | 'merged' | 'closed'
+  base_version: number // the live version it was copied from; 0 for a setup
+  merged_version: number | null
+  created_at: string
+  updated_at: string
+}
+
+/** A pull request with its own copy of the agent, which is what the editor saves to. */
+export type Pull = PullSummary &
+  AgentCopy & {
+    events: PullEvent[]
+  }
+
 /** A row of the agent list. */
 export type AgentSummary = {
   id: string
@@ -61,9 +120,6 @@ export type AgentSummary = {
   nodes: number
   updated_at: string
 }
-
-/** Where the editor drew each node, by node name. Stored next to the agent, never in it. */
-export type Layout = Record<string, { x: number; y: number }>
 
 /** A stored agent: its id, the agent JSON and, next to it, its layout. */
 export type AgentRecord = {
