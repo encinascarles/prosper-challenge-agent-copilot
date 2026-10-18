@@ -1,11 +1,24 @@
 // The Conversation tab of a pull request: its log as a timeline, oldest first,
 // newest at the bottom. Each event is one muted line on a rail, with who did
-// it and when; a merge is the one solid mark. Prosper's own turns and the
+// it and when; a merge is the one solid mark. Rules and tests added or taken
+// out are logged with what they say, and each finished run of the checks with
+// how it went. Prosper's own turns and the
 // composer will join this same timeline.
 
-import { GitMerge, GitPullRequestArrow, GitPullRequestClosed, Pencil, RefreshCw } from 'lucide-react'
+import {
+  CircleCheck,
+  CircleX,
+  FlaskConical,
+  GitMerge,
+  GitPullRequestArrow,
+  GitPullRequestClosed,
+  ListChecks,
+  Pencil,
+  RefreshCw,
+} from 'lucide-react'
 
 import type { Pull, PullEvent } from '@/agents/types'
+import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
 
 import { versionLabel, when } from './model'
@@ -16,6 +29,8 @@ type Props = {
   agentName: string
   /** The Changes tab, which a save's line points to. */
   onShowChanges: () => void
+  /** The Checks tab, which a run's line points to. */
+  onShowChecks: () => void
 }
 
 function Who({ event }: { event: PullEvent }) {
@@ -35,7 +50,7 @@ function Mark({ children, solid }: { children: React.ReactNode; solid?: boolean 
   )
 }
 
-function Event({ event, pull, live, agentName, onShowChanges }: Props & { event: PullEvent }) {
+function Event({ event, pull, live, agentName, onShowChanges, onShowChecks }: Props & { event: PullEvent }) {
   const icon = 'size-3 text-foreground/70'
   let mark = <GitPullRequestArrow className={cn(icon, 'text-brand')} />
   let solid = false
@@ -105,6 +120,45 @@ function Event({ event, pull, live, agentName, onShowChanges }: Props & { event:
         </>
       )
       break
+    case 'rule':
+      mark = <ListChecks className={icon} />
+      text = (
+        <>
+          <Who event={event} /> {event.removed ? 'took out' : 'added'} a rule{' '}
+          {event.step ? `in ${humanize(event.step)}` : 'for every step'}:{' '}
+          <span className={cn('text-foreground', event.removed && 'line-through decoration-muted-foreground/50')}>
+            “{event.text}”
+          </span>
+        </>
+      )
+      break
+    case 'test':
+      mark = <FlaskConical className={icon} />
+      text = (
+        <>
+          <Who event={event} /> {event.removed ? 'took out' : 'added'} a test:{' '}
+          <span className={cn('text-foreground', event.removed && 'line-through decoration-muted-foreground/50')}>
+            “{event.text}”
+          </span>
+        </>
+      )
+      break
+    case 'checks': {
+      const failing = (event.total ?? 0) - (event.passed ?? 0)
+      mark = failing ? <CircleX className="size-3 text-bad" /> : <CircleCheck className="size-3 text-emerald-600" />
+      text = (
+        <>
+          <span className={cn('font-medium tabular-nums', failing ? 'text-bad' : 'text-emerald-700 dark:text-emerald-500')}>
+            Checks {event.passed}/{event.total}
+          </span>
+          {failing ? ` · ${failing} ${failing === 1 ? 'test' : 'tests'} failing` : ''} · 3 runs each
+          <button onClick={onShowChecks} className="ml-2 font-medium text-foreground/80 hover:underline">
+            Details →
+          </button>
+        </>
+      )
+      break
+    }
   }
   // The last event of an open pull request left behind says what is next.
   const behind = pull.state === 'open' && pull.base_version !== live && event === pull.events.at(-1)

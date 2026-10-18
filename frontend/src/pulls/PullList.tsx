@@ -1,6 +1,7 @@
 // The agent's pull requests: every proposed change, open, merged or closed, as
 // a dense list. A row is the pull request's number and title, one muted line
-// on what it is based on (or what became of it), and when it last changed.
+// on what it is based on (or what became of it), its checks while it is open,
+// and when it last changed.
 
 import { GitMerge, GitPullRequestArrow, GitPullRequestClosed, Plus } from 'lucide-react'
 import { useState } from 'react'
@@ -8,6 +9,8 @@ import { useState } from 'react'
 import type { Agent, PullSummary } from '@/agents/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { ChecksLine } from '@/suite/bits'
+import { pullChecks } from '@/suite/model'
 
 import { PullIcon } from './bits'
 import { isStale, pullLabel, pullMeta, versionLabel, when } from './model'
@@ -91,7 +94,8 @@ export function PullList({ agent, pulls, onOpen, onNew }: Props) {
                   {pullMeta(pull, live)}
                 </span>
               </span>
-              <span className="shrink-0 pt-0.5 text-right text-[12px] text-muted-foreground tabular-nums">
+              {pullChecks(pull) && <ChecksLine checks={pullChecks(pull)} className="shrink-0 pt-0.5 text-[12px]" />}
+              <span className="w-16 shrink-0 pt-0.5 text-right text-[12px] text-muted-foreground tabular-nums">
                 {when(pull.updated_at)}
               </span>
             </button>

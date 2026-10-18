@@ -1,8 +1,10 @@
 // A pull request's page: where a proposed change is read and decided on. Its
 // title (yours to rename while it is open), its state and what it is based
 // on, what to do with it (open it in Build, try it, merge it, update it if live
-// moved on, close or reopen it), and two tabs: the Conversation, its log, and
-// the Changes, what it changes compared with the version it is based on.
+// moved on, close or reopen it), and three tabs: the Conversation, its log;
+// the Changes, what it changes compared with the version it is based on,
+// rules and tests included; and the Checks, how its tests went on its copy. A
+// merge waits for those.
 //
 // Updating replays the pull request's changes on the live version (see
 // pulls/diff.ts) and sends the result: where both changed the same text, the
@@ -12,17 +14,21 @@ import { ArrowLeft, GitMerge, GitPullRequestArrow, GitPullRequestClosed, MoreHor
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { closePull, getPull, getVersion, mergePull, renamePull, reopenPull, updatePull } from '@/agents/api'
-import type { Agent, AgentCopy, Pull } from '@/agents/types'
+import type { Agent, AgentCopy, Pull, Suite } from '@/agents/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { callBlocker, checkFlow } from '@/draft/checks'
 import { openDraft } from '@/draft/draft'
 import { cn } from '@/lib/utils'
+import { ChecksLine } from '@/suite/bits'
+import { suiteChanges, summarize } from '@/suite/model'
+import { useChecks } from '@/suite/useChecks'
 
 import { Dot, StateBadge } from './bits'
 import { diffAgents, NOTHING, rebase, updateSummary } from './diff'
 import { basedOn, callsNote, isStale, mergeBlocker, mergeLabel, pullLabel, versionLabel } from './model'
 import { PullChanges } from './PullChanges'
+import { PullChecks } from './PullChecks'
 import { PullTimeline } from './PullTimeline'
 
 type Props = {
@@ -36,9 +42,11 @@ type Props = {
   onToast: (text: string) => void
 }
 
-type Tab = 'conversation' | 'changes'
+type Tab = 'conversation' | 'changes' | 'checks'
 
-const EMPTY: AgentCopy = { config: NOTHING, layout: {} }
+type Copy = AgentCopy & Suite
+
+const EMPTY: Copy = { config: NOTHING, layout: {}, rules: [], tests: [] }
 
 /** The title, renamed in place: Enter or leaving it keeps it, Escape takes it back. */
 function TitleInput({ title, onRename }: { title: string; onRename: (title: string) => void }) {
@@ -71,11 +79,14 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
   const live = agent.live_version
   const [pull, setPull] = useState<Pull | null>(null)
   // The version it is based on, which its changes are compared with.
-  const [fetched, setFetched] = useState<{ number: number; copy: AgentCopy } | null>(null)
+  const [fetched, setFetched] = useState<{ number: number; copy: Copy } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('conversation')
+  // Its checks, read again while they run. An update starts them again.
+  const [revision, setRevision] = useState(0)
+  const checks = useChecks(agent.id, number, 0, revision)
 
   useEffect(() => {
     let stale = false
@@ -104,6 +115,7 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
   const base = baseVersion === 0 ? EMPTY : fetched?.number === baseVersion ? fetched.copy : null
 
   const changes = useMemo(() => (pull && base ? diffAgents(base.config, pull.config) : null), [pull, base])
+  const suite = useMemo(() => (pull && base ? suiteChanges(base, pull) : null), [pull, base])
   // What would stop a test call of its copy, as the editor would say it.
   const callStop = useMemo(() => (pull ? callBlocker(false, checkFlow(openDraft(pull.config))) : null), [pull])
 
@@ -118,6 +130,7 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
     try {
       const changed = await action()
       setPull(changed)
+      setRevision((n) => n + 1)
       onChanged()
       if (done) onToast(done(changed))
     } catch (failure) {
@@ -149,13 +162,18 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
 
   const open = pull.state === 'open'
   const stale = isStale(pull, live)
-  const blocker = mergeBlocker(pull, live, false)
+  const checksNow = checks.run === undefined ? pull.checks : summarize(checks.run)
+  const blocker = mergeBlocker(pull, live, false, checksNow)
   const note = callsNote(pull, live)
   // PR #1 of an agent not live yet is how it goes live: it is not closed.
   const closable = open && !(pull.kind === 'setup' && live === 0)
-  const tabs: [Tab, string, number | null][] = [
+  const suiteCount = suite
+    ? suite.rulesAdded.length + suite.rulesRemoved.length + suite.testsAdded.length + suite.testsRemoved.length
+    : 0
+  const tabs: [Tab, string, React.ReactNode][] = [
     ['conversation', 'Conversation', null],
-    ['changes', 'Changes', changes?.length || null],
+    ['changes', 'Changes', (changes?.length ?? 0) + suiteCount || null],
+    ['checks', 'Checks', pull.tests.length ? <ChecksLine key="checks" checks={checksNow} className="text-[12px]" /> : null],
   ]
 
   return (
@@ -275,8 +293,10 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
                 )}
               >
                 {label}
-                {count !== null && (
+                {typeof count === 'number' ? (
                   <span className="rounded-full bg-muted px-1.5 text-[11px] font-normal text-muted-foreground tabular-nums">{count}</span>
+                ) : (
+                  count
                 )}
               </button>
             ))}
@@ -286,12 +306,29 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
       <div className="mx-auto max-w-[980px] px-8 pt-6 pb-16">
         {tab === 'conversation' ? (
           <div className="max-w-[720px]">
-            <PullTimeline pull={pull} live={live} agentName={agent.name} onShowChanges={() => setTab('changes')} />
+            <PullTimeline
+              pull={pull}
+              live={live}
+              agentName={agent.name}
+              onShowChanges={() => setTab('changes')}
+              onShowChecks={() => setTab('checks')}
+            />
           </div>
-        ) : changes === null ? (
+        ) : tab === 'checks' ? (
+          <PullChecks
+            pull={pull}
+            run={checks.run}
+            onRerun={() => void checks.rerun().catch((failure: Error) => setProblem(failure.message))}
+          />
+        ) : changes === null || suite === null ? (
           <p className="py-10 text-center text-[13px] text-muted-foreground">Loading…</p>
         ) : (
-          <PullChanges changes={changes} base={pull.base_version ? versionLabel(pull.base_version) : null} open={open} />
+          <PullChanges
+            changes={changes}
+            suite={suite}
+            base={pull.base_version ? versionLabel(pull.base_version) : null}
+            open={open}
+          />
         )}
       </div>
     </div>
