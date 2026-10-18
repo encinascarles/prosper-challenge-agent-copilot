@@ -86,6 +86,11 @@ TESTS = _object(tests=_list(_TEST))
 
 _OPTION = _object(label=_TEXT, rule=_object(step=_STEP, text=_TEXT))
 QUESTIONS = _object(questions=_list(_object(text=_TEXT, options=_list(_OPTION))))
+# Asked before anything is drawn, so an option is only what the clinic can pick:
+# the answer shapes the agent, and becomes rules once there are steps to put them on.
+FIRST_QUESTIONS = _object(questions=_list(_object(text=_TEXT, options=_list(_TEXT))))
+MAX_FIRST_QUESTIONS = 3
+ANSWER = "your answer"  # the source a rule names when it comes from the clinic's answer
 
 # A change asked for in the pull request's conversation: the agent whole, as it
 # should be after it, what to add to its rules and tests, and which of them to
@@ -331,11 +336,44 @@ def _check_step(rule: dict, steps: set) -> None:
         )
 
 
-def check_rules(answer: dict, config: dict, sources: list[dict]) -> None:
+def check_first_questions(answer: dict) -> None:
+    problems = Problems()
+    if len(answer["questions"]) > MAX_FIRST_QUESTIONS:
+        problems.found.append(f"Ask {MAX_FIRST_QUESTIONS} questions at most: the ones that matter.")
+    for question in answer["questions"]:
+        if not 2 <= len(question["options"]) <= 3:
+            problems.found.append(f"Question '{question['text']}' needs 2 or 3 options.")
+    problems.raise_any()
+
+
+def check_rules(answer: dict, config: dict, sources: list[dict], answers: tuple = ()) -> None:
+    """Every rule traced to a line of the guidelines, or to one of the clinic's `answers`.
+
+    Each answer becomes at least one rule, quoting it, on the step it is about.
+    """
     problems = Problems()
     for rule in answer["rules"]:
-        problems.check(_check_rule, rule, config, sources)
+        if rule["source"] == ANSWER:
+            problems.check(_check_answer_rule, rule, config, answers)
+        else:
+            problems.check(_check_rule, rule, config, sources)
+    quoted = {_plain(r["quote"]) for r in answer["rules"] if r["source"] == ANSWER}
+    for given in answers:
+        if _plain(given) not in quoted:
+            problems.found.append(
+                f"The clinic answered '{given}': write it as a rule on the step it is about, "
+                f"with source '{ANSWER}' and that answer as its quote."
+            )
     problems.raise_any()
+
+
+def _check_answer_rule(rule: dict, config: dict, answers: tuple) -> None:
+    _check_step(rule, {node["name"] for node in config["nodes"]})
+    if _plain(rule["quote"]) not in {_plain(a) for a in answers}:
+        raise ValueError(
+            f"Rule '{rule['text']}' quotes '{rule['quote']}', which is not one of the clinic's "
+            f"answers: {', '.join(answers) or 'none'}."
+        )
 
 
 def _check_rule(rule: dict, config: dict, sources: list[dict]) -> None:
@@ -360,12 +398,16 @@ def rules_from(answer: dict, pull: int) -> list[dict]:
         {
             "step": step_of(rule["step"]),
             "text": rule["text"],
-            "source": {
-                "kind": "guidelines",
-                "pull": pull,
-                "file": rule["source"],
-                "quote": rule["quote"],
-            },
+            "source": (
+                {"kind": "answer", "pull": pull, "quote": rule["quote"]}
+                if rule["source"] == ANSWER
+                else {
+                    "kind": "guidelines",
+                    "pull": pull,
+                    "file": rule["source"],
+                    "quote": rule["quote"],
+                }
+            ),
         }
         for rule in answer["rules"]
     ]

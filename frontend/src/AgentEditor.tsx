@@ -470,7 +470,11 @@ export function AgentEditor(props: Props) {
               {draft.config.nodes.length === 0 && prosper ? (
                 <div className="m-auto flex flex-col items-center gap-2 text-[13px] text-muted-foreground">
                   <Mark className="h-[22px]" />
-                  {prosper.prosper?.state === 'working' ? 'Prosper AI is reading your guidelines…' : 'Nothing drawn yet.'}
+                  {prosper.prosper?.state === 'working'
+                    ? 'Prosper AI is reading your guidelines…'
+                    : prosper.prosper?.state === 'waiting'
+                      ? `Prosper AI needs your answers before it draws ${draft.config.name || 'the agent'}.`
+                      : 'Nothing drawn yet.'}
                 </div>
               ) : (
                 <GraphCanvas />

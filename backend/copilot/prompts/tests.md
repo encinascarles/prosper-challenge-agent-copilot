@@ -16,8 +16,10 @@ model plays the caller, and the call is checked line by line.
 Write 5 to 7 tests: the main paths through the graph, and one test for each
 rule or guideline that matters most (medical advice, what to confirm).
 
-- Check only what the guidelines (or the clinic's answers) say the agent must
+- Check only what the guidelines and the clinic's answers say the agent must
   do. Nothing they leave open, nothing stricter than they are.
+- A caller gives what the agent's rules make it ask for (a date of birth, if
+  an answer says the agent checks it), and lets the agent end the call.
 - Each test has 2 to 4 checks: mostly path checks, and at most one judged
   line, the one the test is about, about the call as a whole ("Never gives
   medical advice"), never about every reply. No style or wording: not

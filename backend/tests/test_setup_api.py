@@ -1,7 +1,8 @@
 #
 # Building an agent with Prosper AI, through the API: the guidelines go in,
-# PR #1 fills in with the agent, its rules and tests, a question waits for its
-# answer, the suite runs, and the agent can go live. Prosper AI's model is
+# Prosper AI asks what they leave open, then with the answers PR #1 fills in
+# with the agent, its rules and its tests, the suite runs, and the agent can
+# go live. Prosper AI's model is
 # scripted and the simulated calls run on fakes: nothing here reaches OpenAI.
 #
 
@@ -52,7 +53,13 @@ TESTS = {
         ),
     ]
 }
+# Asked before anything is drawn: options are what the clinic picks.
 QUESTION = {
+    "text": "What should the agent do when no time works?",
+    "options": ["Offer the waitlist", "Ask them to call back"],
+}
+# Asked by the self-check, on a drawn agent: each option carries its rule.
+GAP = {
     "text": "What should the agent do when no time works?",
     "options": [
         {
@@ -65,6 +72,14 @@ QUESTION = {
         },
     ],
 }
+
+
+def answered(quote: str = "Offer the waitlist") -> dict:
+    """The rules, with the one the clinic's answer becomes."""
+    rule = {"step": "Collect details", "text": "Offer the waitlist if no time works."}
+    return {"rules": [*RULES["rules"], {**rule, "source": "your answer", "quote": quote}]}
+
+
 # A call through the drafted agent, from greeting to goodbye.
 CALL = [
     say("Hi, Riverside clinic. How can I help?"),
@@ -84,7 +99,7 @@ def scripted(prosper_model, fake_checks):
     def script(questions=(QUESTION,), agent=(DRAFT,), **more):
         prosper_model.script = {
             "agent": list(agent),
-            "rules": [RULES],
+            "rules": [answered() if questions else RULES],
             "tests": [TESTS],
             "questions": [{"questions": list(questions)}],
             **{name: list(answers) for name, answers in more.items()},
@@ -111,70 +126,78 @@ def _types(pull: dict) -> list[str]:
     return [event["type"] for event in pull["events"]]
 
 
-def test_prosper_ai_builds_pr_1_and_asks_what_the_guidelines_leave_open(client, scripted):
-    scripted()
+def _pick(client, agent_id: str, pull: dict, option: int = 0) -> dict:
+    question = next(e for e in reversed(pull["events"]) if e["type"] == "question")
+    response = client.post(
+        f"/api/agents/{agent_id}/pulls/1/answers",
+        json={"question": question["question"], "option": option},
+    )
+    assert response.status_code == 200, response.json()
+    setup.wait()
+    return client.get(f"/api/agents/{agent_id}/pulls/1").json()
+
+
+def test_prosper_ai_asks_what_the_guidelines_leave_open_before_drawing(client, scripted):
+    model = scripted()
 
     agent_id, pull = _create(client)
 
     assert pull["title"] == "Set up Riverside"
     assert pull["prosper"]["state"] == "waiting"
-    assert _types(pull) == ["request", "opened", "step", "step", "step", "step", "question"]
-    request, opened, read, drew, rules, tests, question = pull["events"]
+    assert pull["config"]["nodes"] == []  # nothing drawn yet
+    assert _types(pull) == ["request", "opened", "step", "message", "question"]
+    request, opened, read, said, question = pull["events"]
     assert (request["by"], request["notes"]) == ("you", NOTES)
     assert request["files"] == [{"name": "hours.txt", "kind": "TXT", "pages": None}]
     assert opened["by"] == "Prosper AI"
-    assert [e["text"] for e in (read, drew, rules, tests)] == [
-        "Read 1 file and your notes",
+    assert read["text"] == "Read 1 file and your notes"
+    assert said["text"] == "I need your answers before I draw Riverside."
+    assert (question["text"], question["options"]) == (QUESTION["text"], QUESTION["options"])
+    assert "agent" not in model.asked and "tests" not in model.asked
+    refused = client.post(f"/api/agents/{agent_id}/pulls/1/merge")
+    assert refused.json()["detail"] == "Prosper AI needs your answer in PR #1 first."
+
+
+def test_with_the_answers_it_draws_writes_rules_then_tests_and_runs_them(client, scripted):
+    model = scripted()
+    agent_id, pull = _create(client)
+
+    pull = _pick(client, agent_id, pull)
+    checks.wait()
+
+    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
+    assert _types(pull)[-5:] == ["answer", "step", "step", "step", "checks"]
+    assert [e["text"] for e in pull["events"][-4:-1]] == [
         "Drew 3 steps",
-        "Wrote 2 rules, each linked to its line",
+        "Wrote 3 rules, each linked to its line or your answer",
         "Wrote 5 tests",
     ]
-    assert (question["text"], question["options"]) == (
-        QUESTION["text"],
-        ["Offer the waitlist", "Ask them to call back"],
-    )
     assert [node["name"] for node in pull["config"]["nodes"]] == [
         "greeting",
         "collect_details",
         "confirm",
     ]
-    assert pull["rules"][1]["step"] == "collect_details"
-    assert pull["rules"][1]["source"] == {
-        "kind": "guidelines",
-        "pull": 1,
-        "file": "hours.txt",
-        "quote": "Tuesday 10 AM and Thursday 2 PM",
-    }
-    assert [test["name"] for test in pull["tests"]][:2] == ["Books", "Asks for advice"]
-    # The suite waits for the answer, which changes the agent.
-    assert pull["checks"] is None
-
-
-def test_it_cannot_merge_until_answered_then_the_suite_runs(client, scripted):
-    scripted()
-    agent_id, pull = _create(client)
-
-    refused = client.post(f"/api/agents/{agent_id}/pulls/1/merge")
-    assert refused.status_code == 409
-    assert refused.json()["detail"] == "Prosper AI needs your answer in PR #1 first."
-
-    question = pull["events"][-1]["question"]
-    answered = client.post(
-        f"/api/agents/{agent_id}/pulls/1/answers", json={"question": question, "option": 0}
+    # The answer is in what drew the agent, and became a rule on its step.
+    assert (
+        '"What should the agent do when no time works?" → "Offer the waitlist"'
+        in (model.asked["agent"][0][-1]["content"])
     )
-    assert answered.status_code == 200
-    rule = answered.json()["rules"][-1]
-    assert (rule["step"], rule["text"]) == ("collect_details", "Offer the waitlist.")
+    rule = pull["rules"][-1]
+    assert rule["step"] == "collect_details"
     assert rule["source"] == {
         "kind": "answer",
         "pull": 1,
         "file": None,
         "quote": "Offer the waitlist",
     }
-    checks.wait()
-
-    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
-    assert _types(pull)[-3:] == ["answer", "rule", "checks"]
+    assert pull["rules"][1]["source"] == {
+        "kind": "guidelines",
+        "pull": 1,
+        "file": "hours.txt",
+        "quote": "Tuesday 10 AM and Thursday 2 PM",
+    }
+    # Tests last, knowing the rules the answer became.
+    assert "Offer the waitlist if no time works." in model.asked["tests"][0][-1]["content"]
     assert pull["prosper"]["state"] == "done"
     assert pull["checks"]["state"] == "passed"
     merged = client.post(f"/api/agents/{agent_id}/pulls/1/merge")
@@ -182,30 +205,44 @@ def test_it_cannot_merge_until_answered_then_the_suite_runs(client, scripted):
     assert merged.json()["merged_version"] == 1
 
 
-def test_an_answer_in_its_own_words_goes_through_prosper_ai(client, scripted):
-    reply = {
-        "reply": "Added a rule to Collect details.",
-        "agent": DRAFT,
-        "rules": [{"step": "Collect details", "text": "Offer the waitlist if no time works."}],
-        "tests": [],
-        "remove": [],
-    }
-    model = scripted(change=[reply])
+def test_an_answer_must_become_a_rule_quoting_it(client, scripted):
+    model = scripted(rules=[RULES, answered()])
+    agent_id, pull = _create(client)
+
+    _pick(client, agent_id, pull)
+
+    refused = model.asked["rules"][1][-1]["content"]
+    assert "The clinic answered 'Offer the waitlist': write it as a rule" in refused
+
+
+def test_an_answer_in_its_own_words_is_kept_for_the_drawing(client, scripted):
+    model = scripted(rules=[answered("The waitlist, always")])
     agent_id, _ = _create(client)
 
     response = client.post(
-        f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "Put them on the waitlist"}
+        f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "The waitlist, always"}
     )
     assert response.json()["prosper"]["state"] == "working"
     setup.wait()
     checks.wait()
 
     pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
-    assert _types(pull)[-4:] == ["answer", "message", "rule", "checks"]
-    assert pull["rules"][-1]["source"]["kind"] == "answer"
-    assert pull["rules"][-1]["source"]["quote"] == "Put them on the waitlist"
-    (asked,) = model.asked["change"]
-    assert 'Their answer: "Put them on the waitlist"' in asked[-1]["content"]
+    assert pull["rules"][-1]["source"]["quote"] == "The waitlist, always"
+    assert '→ "The waitlist, always"' in model.asked["agent"][0][-1]["content"]
+    assert "change" not in model.asked
+    assert pull["checks"]["state"] == "passed"
+
+
+def test_with_no_gap_it_says_so_and_goes_straight_on(client, scripted):
+    scripted(questions=())
+
+    agent_id, pull = _create(client)
+
+    assert (
+        pull["events"][3]["text"]
+        == "Found no gaps in the guidelines that change how Riverside behaves"
+    )
+    assert len(pull["config"]["nodes"]) == 3 and len(pull["tests"]) == 5
 
 
 def test_a_request_in_the_conversation_changes_pr_1(client, scripted):
@@ -271,7 +308,7 @@ def test_a_change_can_take_out_what_this_pull_request_added(client, scripted):
 
 
 def test_a_drafted_agent_the_builder_refuses_is_drawn_again_with_the_error(client, scripted):
-    model = scripted(agent=({**DRAFT, "initial_node": "start"}, DRAFT))
+    model = scripted(questions=(), agent=({**DRAFT, "initial_node": "start"}, DRAFT))
 
     _, pull = _create(client)
 
@@ -280,7 +317,7 @@ def test_a_drafted_agent_the_builder_refuses_is_drawn_again_with_the_error(clien
 
 
 def test_when_it_cannot_finish_it_says_so_and_a_message_tries_again(client, scripted):
-    scripted(agent=[{**DRAFT, "initial_node": "start"}] * 3 + [DRAFT])
+    scripted(questions=(), agent=[{**DRAFT, "initial_node": "start"}] * 3 + [DRAFT])
 
     agent_id, pull = _create(client)
 
@@ -294,7 +331,7 @@ def test_when_it_cannot_finish_it_says_so_and_a_message_tries_again(client, scri
 
     pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
     assert len(pull["config"]["nodes"]) == 3
-    assert pull["prosper"]["state"] == "waiting"
+    assert pull["prosper"]["state"] == "done"
 
 
 def test_your_own_changes_wait_while_prosper_ai_works(client, scripted, agent):
@@ -363,7 +400,7 @@ def test_a_change_is_asked_with_what_failed_last_time(client, scripted, fake_che
     )
 
 
-def test_work_a_restart_interrupted_can_be_retried(client, scripted):
+def test_work_a_restart_interrupted_can_be_retried(client, scripted, agent):
     scripted()
     agent_id, _ = _create(client)
     store.prosper.set_state(agent_id, 1, "working", "Writing rules and tests")
@@ -374,17 +411,17 @@ def test_work_a_restart_interrupted_can_be_retried(client, scripted):
     assert pull["prosper"]["state"] == "failed"
     assert (pull["events"][-1]["type"], pull["events"][-1]["by"]) == ("interrupted", "Prosper AI")
     assert (
-        client.put(f"/api/agents/{agent_id}/pulls/1", json={"config": pull["config"]}).status_code
+        client.put(f"/api/agents/{agent_id}/pulls/1", json={"config": agent}).status_code
         == 200
     )
 
 
 def test_a_retry_finishes_the_setup_from_the_step_that_failed(client, scripted):
-    # The agent is drawn, then every request for its tests is refused.
+    # Drawn and given rules, then every request for its tests is refused.
     bad = {"tests": [{"name": "X", "caller": "Y", "checks": ["Reaches Waitlist"]}]}
-    model = scripted(tests=[bad] * 3)
-    model.script["tests"] = [bad] * 3 + [TESTS]
+    model = scripted(tests=[bad] * 3 + [TESTS])
     agent_id, pull = _create(client)
+    pull = _pick(client, agent_id, pull)
     assert pull["prosper"]["state"] == "failed"
     assert len(pull["config"]["nodes"]) == 3 and pull["tests"] == []
 
@@ -395,27 +432,9 @@ def test_a_retry_finishes_the_setup_from_the_step_that_failed(client, scripted):
     assert [t["name"] for t in pull["tests"]][:2] == ["Books", "Asks for advice"]
     assert len(model.asked["agent"]) == 1  # not drawn again
     assert len(model.asked["rules"]) == 1 and len(model.asked["questions"]) == 1
-    assert pull["prosper"]["state"] == "waiting"
-
-
-def test_a_retried_answer_stays_the_answer_to_its_question(client, scripted):
-    reply = {"reply": "Added a rule.", "agent": DRAFT, "tests": [], "remove": []}
-    reply["rules"] = [{"step": "Collect details", "text": "Offer the waitlist."}]
-    broken = {**reply, "agent": {**DRAFT, "initial_node": "start"}}
-    model = scripted(change=[broken, broken, broken, reply])
-    agent_id, _ = _create(client)
-
-    client.post(f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "The waitlist"})
-    setup.wait()
-    assert client.get(f"/api/agents/{agent_id}/pulls/1").json()["prosper"]["state"] == "failed"
-    client.post(f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "Try again"})
-    setup.wait()
-
-    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
-    assert pull["rules"][-1]["source"]["kind"] == "answer"
-    assert pull["rules"][-1]["source"]["quote"] == "The waitlist"
-    retried = model.asked["change"][-1][1]["content"]
-    assert 'Their answer: "The waitlist"' in retried and 'They then wrote: "Try again"' in retried
+    # The answer given before the failure is still the one the rules quote.
+    assert pull["rules"][-1]["source"]["quote"] == "Offer the waitlist"
+    assert pull["prosper"]["state"] == "done"
 
 
 # ---- Prosper AI checking its own draft ----------------------------------------
@@ -488,7 +507,7 @@ def test_a_test_asking_for_more_than_the_guidelines_is_rewritten(client, scripte
 
 
 def test_a_gap_the_failure_shows_becomes_a_question(client, scripted, fake_checks):
-    review = _review("gap", questions=[QUESTION])
+    review = _review("gap", questions=[GAP])
     agent_id, _ = _set_up_failing(client, scripted, fake_checks, [review])
 
     pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()

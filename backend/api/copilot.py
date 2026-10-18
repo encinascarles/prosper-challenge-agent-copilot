@@ -87,8 +87,12 @@ def from_guidelines(
 def answer(agent_id: str, number: int, body: Answer) -> dict:
     """Pick an option of Prosper AI's question: its rule goes into the copy."""
     get_pull(agent_id, number)
-    pull, done = _answer(store.prosper.pick, agent_id, number, body.question, body.option)
-    if done:
+    pull, done, before_drawing = _answer(
+        store.prosper.pick, agent_id, number, body.question, body.option
+    )
+    if done and before_drawing:
+        setup.build(agent_id, number)  # every answer is in: it draws the agent with them
+    elif done:
         checks.start(agent_id, pull=number)
     return store.get_pull(agent_id, number)
 
@@ -106,6 +110,9 @@ def message(agent_id: str, number: int, body: Message) -> dict:
     pull, answers, retry = _answer(store.prosper.take_message, agent_id, number, body.text)
     if retry is not None:
         setup.retry(agent_id, number, retry, body.text)
+    elif answers is not None and answers.get("setup"):
+        if not store.prosper.waiting_for(agent_id, number):
+            setup.build(agent_id, number)
     else:
         setup.change(agent_id, number, body.text, answers)
     return pull

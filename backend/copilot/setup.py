@@ -5,20 +5,22 @@
 # pull request's conversation as it lands, so the person watches it happen:
 #
 #   read the files (done before the job, as the agent is created)
-#   -> draw the agent       "Drew 5 steps"        the graph shows up in Build
-#   -> write its rules      "Wrote 5 rules, each linked to its line"
-#      write its tests      "Wrote 7 tests"
-#      look for gaps        questions with options, if the guidelines leave one
+#   -> look for gaps        questions with options, before anything is drawn;
+#                           Prosper AI waits for every answer
+#   -> draw the agent       "Drew 5 steps", with the answers: the graph shows up
+#   -> write its rules      each linked to its line, or to the answer it is
+#   -> write its tests      from the guidelines and the answers
 #   -> run the suite        the checks' own events
 #   -> check its own draft  for each failing test: is the agent wrong (fix it),
 #                           does the test ask for more than the guidelines say
 #                           (rewrite it, saying why), or is it a gap (ask)
 #                           at most MAX_ROUNDS times, then it says what still fails
 #
-# Rules, tests and gaps are asked for at once: each needs only the guidelines
-# and the agent. The suite runs once the questions have their answers, not
-# before: an answer changes the agent, and a run before it would be paid for
-# and thrown away.
+# Questions come first because an answer changes what gets drawn and what gets
+# tested: asked after, an answer turned into a rule could contradict tests
+# already written (a date of birth the test callers never give) and steps
+# drawn without it. Tests come last, so they test the agent the clinic
+# described, answers included.
 #
 # The person can also write to Prosper AI in the pull request (`change`): the
 # answer to a question in their own words, or a change ("make the greeting
@@ -198,74 +200,86 @@ def _build(llm: LLM, agent_id: str, number: int) -> None:
     work = store.prosper.work_of(agent_id, number)
     built = set(work.get("built", []))
     config = store.get_pull(agent_id, number)["config"]
+    name = config["name"]
     guidelines = _sources(work)
+
+    if "questions" not in built:
+        store.prosper.set_state(agent_id, number, "working", "Reading your guidelines")
+        asked = llm.ask(
+            "questions",
+            f"The agent will be called {name}.\n\n{guidelines}",
+            artifacts.FIRST_QUESTIONS,
+            artifacts.check_first_questions,
+        )
+        questions = [
+            {"text": q["text"], "options": [{"label": o, "rule": None} for o in q["options"]]}
+            for q in asked["questions"]
+        ]
+        store.prosper.mark_built(agent_id, number, "questions")
+        if questions:
+            text = f"I need your answers before I draw {name}."
+            store.prosper.log(agent_id, number, _event("message", text=text))
+            store.prosper.ask(agent_id, number, questions, setup=True)
+            return
+        said = f"Found no gaps in the guidelines that change how {name} behaves"
+        store.prosper.log(agent_id, number, _event("step", text=said))
+    work = store.prosper.work_of(agent_id, number)
+    setup_questions = [q for q in work.get("questions", []) if q.get("setup")]
+    if any(q["answer"] is None for q in setup_questions):
+        store.prosper.set_state(agent_id, number, "waiting")
+        return
+    answers = tuple(q["answer"] for q in setup_questions)
+    given = "\n".join(f'- "{q["text"]}" → "{q["answer"]}"' for q in setup_questions)
+    known = f"{guidelines}\n\nThe clinic's answers to your questions:\n{given or '(none asked)'}"
 
     if "agent" not in built:
         store.prosper.set_state(agent_id, number, "working", "Drawing the steps")
         drawn: dict = {}
 
         def agent_ok(answer: dict) -> None:
-            drawn["config"] = artifacts.to_config(config["name"], answer)
+            drawn["config"] = artifacts.to_config(name, answer)
             artifacts.check_agent(drawn["config"])
             artifacts.check_concise(drawn["config"])
 
-        name = config["name"]
-        llm.ask("agent", f"The agent is called {name}.\n\n{guidelines}", artifacts.AGENT, agent_ok)
+        llm.ask("agent", f"The agent is called {name}.\n\n{known}", artifacts.AGENT, agent_ok)
         config = drawn["config"]
         drew = _event("step", text=f"Drew {_count(len(config['nodes']), 'step')}")
         store.prosper.write(agent_id, number, drew, config=config, built="agent")
-    store.prosper.set_state(agent_id, number, "working", "Writing rules and tests")
 
-    about = f"{guidelines}\n\n{_agent(config)}"
-    asks = {
-        "rules": (artifacts.RULES, lambda a: artifacts.check_rules(a, config, work["sources"])),
-        "tests": (
+    about = f"{known}\n\n{_agent(config)}"
+    if "rules" not in built:
+        store.prosper.set_state(agent_id, number, "working", "Writing the rules")
+        rules = llm.ask(
+            "rules",
+            about,
+            artifacts.RULES,
+            lambda a: artifacts.check_rules(a, config, work["sources"], answers),
+        )
+        written = artifacts.rules_from(rules, number)
+        said = (
+            f"Wrote {_count(len(written), 'rule')}, each linked to its line or your answer"
+            if written
+            else "Wrote no rules: the steps already say everything the guidelines ask"
+        )
+        store.prosper.write(
+            agent_id, number, _event("step", text=said), rules=written, built="rules"
+        )
+
+    if "tests" not in built:
+        store.prosper.set_state(agent_id, number, "working", "Writing the tests")
+        pull = store.get_pull(agent_id, number)
+        listed = "\n".join(f"- {r['step'] or 'every step'}: {r['text']}" for r in pull["rules"])
+        tests = llm.ask(
+            "tests",
+            f"{about}\n\nIts rules:\n{listed or '(none)'}",
             artifacts.TESTS,
             lambda a: artifacts.check_tests(a["tests"], config, artifacts.SETUP_TESTS),
-        ),
-        "questions": (artifacts.QUESTIONS, lambda a: artifacts.check_questions(a, config)),
-    }
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        asked = {
-            what: pool.submit(llm.ask, what, about, schema, check)
-            for what, (schema, check) in asks.items()
-            if what not in built
-        }
-    # Each one kept as it is: one that failed does not lose the others, and the
-    # retry asks only for what is missing.
-    failure = None
-    questions: list = []
-    for what, future in asked.items():
-        try:
-            answer = future.result()
-        except Exception as error:  # noqa: BLE001 - raised below, after the others are kept
-            failure = failure or error
-            continue
-        if what == "rules":
-            written = artifacts.rules_from(answer, number)
-            said = (
-                f"Wrote {_count(len(written), 'rule')}, each linked to its line"
-                if written
-                else "Wrote no rules: the steps already say everything the guidelines ask"
-            )
-            store.prosper.write(
-                agent_id, number, _event("step", text=said), rules=written, built="rules"
-            )
-        elif what == "tests":
-            source = {"kind": "guidelines", "pull": number}
-            suite = [{**test, "source": source} for test in answer["tests"]]
-            done = _event("step", text=f"Wrote {_count(len(suite), 'test')}")
-            store.prosper.write(agent_id, number, done, tests=suite, built="tests")
-        else:
-            questions = answer["questions"]
-            for question in questions:
-                for option in question["options"]:
-                    option["rule"]["step"] = artifacts.step_of(option["rule"]["step"])
-            if questions:
-                store.prosper.ask(agent_id, number, questions)
-            store.prosper.mark_built(agent_id, number, "questions")
-    if failure is not None:
-        raise failure
+        )
+        source = {"kind": "guidelines", "pull": number}
+        suite = [{**test, "source": source} for test in tests["tests"]]
+        done = _event("step", text=f"Wrote {_count(len(suite), 'test')}")
+        store.prosper.write(agent_id, number, done, tests=suite, built="tests")
+
     if store.prosper.waiting_for(agent_id, number):
         store.prosper.set_state(agent_id, number, "waiting")
     else:

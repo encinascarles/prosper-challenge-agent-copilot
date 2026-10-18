@@ -283,6 +283,10 @@ def merge_pull(agent_id: str, number: int) -> Any:
     # The copy was valid when it was saved; it is checked again because what
     # goes live must pass the rules as they are now, not as they were then.
     pull = get_pull(agent_id, number)
+    # Prosper AI first: before its answers are in there may be no agent at all,
+    # and "the agent has no nodes" would not say why.
+    if reason := store.busy(pull, merging=True):
+        raise HTTPException(status_code=409, detail=reason)
     if found := problem(pull["config"]):
         return found
     return _answer(store.merge_pull, agent_id, number, YOU)

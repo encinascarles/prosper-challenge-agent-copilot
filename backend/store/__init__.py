@@ -10,6 +10,7 @@ from .pulls import (
     PROSPER,
     add_rule,
     add_test,
+    busy,
     close_pull,
     get_pull,
     label,
@@ -28,6 +29,7 @@ from .versions import get_version, list_versions
 
 __all__ = [
     "PROSPER",
+    "busy",
     "prosper",
     "Conflict",
     "add_result",

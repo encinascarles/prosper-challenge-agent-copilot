@@ -178,17 +178,19 @@ def log(agent_id: str, number: int, event: dict) -> dict:
         return _select(conn, agent_id, number)
 
 
-def ask(agent_id: str, number: int, questions: list[dict]) -> dict:
+def ask(agent_id: str, number: int, questions: list[dict], setup: bool = False) -> dict:
     """Ask the person `questions`, each { text, options: [{ label, rule }] }. Returns the PR.
 
     Each is logged as one event with its options; the rule each option becomes
-    stays in the store until it is picked. Prosper AI then waits.
+    stays in the store until it is picked. Prosper AI then waits. A `setup`
+    question is asked before anything is drawn: its options have no rule, and
+    once all of them have answers the setup goes on to draw the agent.
     """
     with connect() as conn:
         _require(conn, agent_id, number)
         work = _work(conn, agent_id, number)
         for question in questions:
-            asked = {"id": new_id(), **question, "answer": None}
+            asked = {"id": new_id(), **question, "answer": None, "setup": setup}
             work["questions"] = [*work.get("questions", []), asked]
             event = _event(
                 "question",
@@ -217,10 +219,12 @@ def _open_question(work: dict, question: Optional[str]) -> dict:
     return found
 
 
-def pick(agent_id: str, number: int, question: str, option: int) -> tuple[dict, bool]:
+def pick(agent_id: str, number: int, question: str, option: int) -> tuple[dict, bool, bool]:
     """The person picks option `option` of `question`: its rule goes into the copy.
 
-    Returns the pull request and whether every question has its answer now.
+    Returns the pull request, whether every question has its answer now, and
+    whether it was a setup question (no rule yet: the answer is kept for the
+    drawing, and Prosper AI goes on with it once every one has its answer).
     The rule's source is the answer, in this pull request. Refused while
     Prosper AI works (on an answer written to another question, say): the
     job would write over it, and checks could start halfway through.
@@ -233,22 +237,29 @@ def pick(agent_id: str, number: int, question: str, option: int) -> tuple[dict, 
             raise Conflict(f"That question has no option {option + 1}.")
         chosen = asked["options"][option]
         asked["answer"] = chosen["label"]
+        done = all(q["answer"] is not None for q in work["questions"])
+        answered = _event("answer", "you", question=question, text=chosen["label"])
+        if asked.get("setup"):
+            work.update(
+                state="working" if done else "waiting", doing="Drawing the steps" if done else None
+            )
+            _put(conn, agent_id, number, work)
+            _record_event(conn, agent_id, pull, answered)
+            return _select(conn, agent_id, number), done, True
         rule = {
             "id": new_id(),
             "step": chosen["rule"]["step"],
             "text": chosen["rule"]["text"],
             "source": {"kind": "answer", "pull": number, "quote": chosen["label"]},
         }
-        done = all(q["answer"] is not None for q in work["questions"])
         work.update(state="done" if done else "waiting", doing=None)
         _put(conn, agent_id, number, work)
-        answered = _event("answer", "you", question=question, text=chosen["label"])
         _record_event(conn, agent_id, pull, answered)
         pull = _select(conn, agent_id, number)
         added = _event("rule", PROSPER, step=rule["step"], text=rule["text"])
         rules = prune_rules([*pull["rules"], rule], pull["config"])
         _record_event(conn, agent_id, pull, added, rules=json.dumps(rules))
-        return _select(conn, agent_id, number), done
+        return _select(conn, agent_id, number), done, False
 
 
 def take_message(
@@ -267,13 +278,21 @@ def take_message(
         work = _work(conn, agent_id, number)
         answers = None
         retry = work.get("job") if work.get("state") == "failed" else None
+        doing = "Working on it"
         if work.get("state") == "waiting":
             answers = _open_question(work, None)
             answers["answer"] = text
             event = _event("answer", "you", question=answers["id"], text=text)
+            if answers.get("setup"):
+                # Kept for the drawing, like a picked option: no change to make yet.
+                doing = "Drawing the steps"
         else:
             event = _event("message", "you", text=text)
-        work.update(state="working", doing="Working on it")
+        open_left = [q for q in work.get("questions", []) if q["answer"] is None]
+        if answers is not None and answers.get("setup") and open_left:
+            work.update(state="waiting", doing=None)
+        else:
+            work.update(state="working", doing=doing)
         _put(conn, agent_id, number, work)
         _record_event(conn, agent_id, pull, event)
         return _select(conn, agent_id, number), answers, retry
