@@ -44,7 +44,8 @@ def test_the_sample_agent_starts_live_with_a_suite(client):
         "Asks for medical advice",
         "Gives everything at once",
     ]
-    assert all(test["source"] == {"kind": "manual", "pull": None} for test in version["tests"])
+    by_hand = {"kind": "manual", "pull": None, "file": None, "quote": None}
+    assert all(test["source"] == by_hand for test in version["tests"])
 
 
 def test_a_rule_is_added_to_the_pull_request_and_logged(client, on_pull):
@@ -58,7 +59,7 @@ def test_a_rule_is_added_to_the_pull_request_and_logged(client, on_pull):
     assert (rule["step"], rule["text"], rule["source"]) == (
         "confirm",
         "Read the date back.",
-        {"kind": "manual", "pull": 2},
+        {"kind": "manual", "pull": 2, "file": None, "quote": None},
     )
     event = pull["events"][-1]
     assert (event["type"], event["step"]) == ("rule", "confirm")

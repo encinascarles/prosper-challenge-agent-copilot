@@ -17,8 +17,9 @@ from fastapi.testclient import TestClient
 import api
 import store
 from api import checks
+from copilot import setup
 from store.db import DB_PATH_ENV
-from tests.fakes import FakeServices
+from tests.fakes import FakeServices, ScriptedModel
 
 EXAMPLE_FLOW = json.loads((Path(__file__).parent.parent / "example_flow.json").read_text())
 
@@ -29,6 +30,16 @@ def fake_checks(monkeypatch) -> FakeServices:
     services = FakeServices()
     monkeypatch.setattr(checks, "services", services)
     yield services
+    checks.wait()
+
+
+@pytest.fixture(autouse=True)
+def prosper_model(monkeypatch) -> ScriptedModel:
+    """Prosper AI's model, in every test: scripted, empty until a test scripts it."""
+    model = ScriptedModel({})
+    monkeypatch.setattr(setup, "new_llm", lambda: model)
+    yield model
+    setup.wait()
     checks.wait()
 
 

@@ -33,8 +33,12 @@ router = APIRouter(prefix="/api/agents/{agent_id}", tags=["versions and pull req
 
 
 class Source(BaseModel):
-    kind: Literal["manual"]  # written by hand; Prosper AI's will say what they came from
+    # manual: written by hand. Prosper AI's: from a line of the guidelines, from
+    # the person's answer to its question, or from something they asked for.
+    kind: Literal["manual", "guidelines", "answer", "request"]
     pull: int | None = None  # the pull request it was added in
+    file: str | None = None  # guidelines: the file it quotes, or "your notes"
+    quote: str | None = None  # the line it comes from, or the answer or request, word for word
 
 
 class Rule(BaseModel):
@@ -78,11 +82,32 @@ class Version(BaseModel):
     created_at: str
 
 
+class FileRead(BaseModel):
+    name: str
+    kind: str  # PDF, DOCX, TXT, MD
+    pages: int | None  # a PDF's
+
+
 class PullEvent(BaseModel):
     type: Literal[
-        "opened", "saved", "merged", "closed", "reopened", "updated", "rule", "test", "checks"
+        "opened",
+        "saved",
+        "merged",
+        "closed",
+        "reopened",
+        "updated",
+        "rule",
+        "test",
+        "checks",
+        # Prosper AI's conversation: what it was asked (notes and files), each
+        # step it finished, its questions and their answers, and messages.
+        "request",
+        "step",
+        "question",
+        "answer",
+        "message",
     ]
-    by: str  # "you" for now; Prosper AI's changes will carry its name; "checks" for checks
+    by: str  # "you", "Prosper AI", or "checks" for a run of the tests
     at: str
     # "opened": the version it was copied from; "merged": the version it became;
     # "updated": its new base.
@@ -94,6 +119,20 @@ class PullEvent(BaseModel):
     removed: bool | None = None  # the rule or test was taken out
     passed: int | None = None  # "checks": the tests that passed, of `total`
     total: int | None = None
+    # "request": the pasted notes and the files read. "step", "message": `text`.
+    notes: str | None = None
+    files: list[FileRead] | None = None
+    question: str | None = None  # "question", "answer": the question's id
+    options: list[str] | None = None  # "question": what can be picked
+    changed: bool | None = None  # "message": Prosper AI changed the agent with it
+
+
+class Prosper(BaseModel):
+    """What Prosper AI is up to on a pull request it works on."""
+
+    state: Literal["working", "waiting", "done", "failed"]  # waiting: for an answer
+    doing: str | None  # while working: the step under way
+    usage: dict[str, float] | None  # requests, tokens and USD spent so far
 
 
 class PullSummary(BaseModel):
@@ -106,6 +145,7 @@ class PullSummary(BaseModel):
     created_at: str
     updated_at: str
     checks: Checks | None  # its latest run of the tests; None if none ran
+    prosper: Prosper | None  # Prosper AI's work on it; None if it has no part in it
 
 
 class Pull(PullSummary):
