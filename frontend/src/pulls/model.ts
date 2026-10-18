@@ -68,3 +68,33 @@ export function openedForEdits(number: number, live: number): string {
 export function testCallLabel(on: On): string {
   return on === null ? 'Test call' : `Test call · ${pullLabel(on)}`
 }
+
+/**
+ * The muted line under a pull request's title in lists: what it is based on,
+ * or what became of it. A stale one says first that it needs an update.
+ */
+export function pullMeta(pull: PullSummary, live: number): string {
+  if (pull.state === 'merged') return `merged as ${versionLabel(pull.merged_version ?? 0)}`
+  if (pull.state === 'closed') return `closed · ${basedOn(pull)}`
+  return isStale(pull, live) ? `Needs update · ${basedOn(pull)}` : basedOn(pull)
+}
+
+/** What an open pull request means for calls, on its page. Null once it is merged or closed. */
+export function callsNote(pull: PullSummary, live: number): string | null {
+  if (pull.state !== 'open') return null
+  if (live === 0) return 'Nobody can call it until you merge'
+  return `Calls keep using ${versionLabel(live)} until you merge`
+}
+
+/** When something happened, as short as lists want it: the time today, the day before. */
+export function when(at: string, now = new Date()): string {
+  const date = new Date(at)
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  }
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+  })
+}
