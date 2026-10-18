@@ -17,6 +17,10 @@
 # change to a copy starts its checks again (runs.py), and a merge is refused
 # until they pass: what goes live has passed the agent's whole suite.
 #
+# Prosper AI can work on a pull request (prosper.py): while it does, the
+# person's own changes to that copy are refused, or the two would write over
+# each other, and so is a merge, until Prosper AI is done and has its answers.
+#
 # Merging is refused once live has moved past the version the pull request was
 # based on: its copy was made from an older agent, and merging it would quietly
 # undo whatever was merged in between. Updating it replaces its copy with its
@@ -33,6 +37,8 @@ from .suite import added_in, fingerprint, manual, new_id, prune_rules, rebase, r
 from .versions import insert_version, live_version
 
 KINDS = ("setup", "edit")
+# Who Prosper AI is in a pull request's log.
+PROSPER = "Prosper AI"
 
 
 def label(number: int) -> str:
@@ -55,6 +61,7 @@ def _to_record(conn: sqlite3.Connection, row: sqlite3.Row, full: bool) -> dict:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "checks": _checks(conn, row),
+        "prosper": _public(row["prosper"]),
     }
     if full:
         record["config"] = json.loads(row["config"])
@@ -63,6 +70,24 @@ def _to_record(conn: sqlite3.Connection, row: sqlite3.Row, full: bool) -> dict:
         record["tests"] = json.loads(row["tests"])
         record["events"] = json.loads(row["events"])
     return record
+
+
+def _public(work: Optional[str]) -> Optional[dict]:
+    # What screens show of Prosper AI's work. What it read stays in the store.
+    if work is None:
+        return None
+    work = json.loads(work)
+    return {key: work.get(key) for key in ("state", "doing", "usage")}
+
+
+def busy(pull: dict, merging: bool = False) -> Optional[str]:
+    """Why Prosper AI's work on `pull` stops a change by someone else (or a merge), or None."""
+    state = (pull.get("prosper") or {}).get("state")
+    if state == "working":
+        return f"Prosper AI is still working on {label(pull['number'])}."
+    if merging and state == "waiting":
+        return f"Prosper AI needs your answer in {label(pull['number'])} first."
+    return None
 
 
 def _checks(conn: sqlite3.Connection, row: sqlite3.Row) -> Optional[dict]:
@@ -79,8 +104,18 @@ def _select(conn: sqlite3.Connection, agent_id: str, number: int) -> Optional[di
     return _to_record(conn, row, full=True) if row else None
 
 
-def _require(conn: sqlite3.Connection, agent_id: str, number: int, state: str = "open") -> dict:
-    """The pull request, in `state`. Raises NotFound or Conflict otherwise."""
+def _require(
+    conn: sqlite3.Connection,
+    agent_id: str,
+    number: int,
+    state: str = "open",
+    by: Optional[str] = None,
+) -> dict:
+    """The pull request, in `state`. Raises NotFound or Conflict otherwise.
+
+    With `by`, a change is about to be made by them: refused while Prosper AI
+    works on it, unless they are Prosper AI.
+    """
     if not conn.execute("SELECT 1 FROM agents WHERE id = ?", (agent_id,)).fetchone():
         raise NotFound(f"No agent with id '{agent_id}'.")
     pull = _select(conn, agent_id, number)
@@ -88,6 +123,8 @@ def _require(conn: sqlite3.Connection, agent_id: str, number: int, state: str = 
         raise NotFound(f"The agent has no {label(number)}.")
     if pull["state"] != state:
         raise Conflict(f"{label(number)} is {pull['state']}.")
+    if by is not None and by != PROSPER and (reason := busy(pull)):
+        raise Conflict(reason)
     return pull
 
 
@@ -114,8 +151,15 @@ def insert_pull(
     by: str,
     rules: Optional[list] = None,
     tests: Optional[list] = None,
+    request: Optional[dict] = None,
+    then: Optional[list] = None,
+    prosper: Optional[dict] = None,
 ) -> dict:
-    """Open a pull request holding `config`, numbered from the agent's counter. Returns it."""
+    """Open a pull request holding `config`, numbered from the agent's counter. Returns it.
+
+    When Prosper AI opens it: `request` is what it was asked, logged before it
+    opened it, `then` what it did next, and `prosper` its work on it.
+    """
     (number,) = conn.execute(
         "UPDATE agents SET next_number = next_number + 1 WHERE id = ? RETURNING next_number - 1",
         (agent_id,),
@@ -124,8 +168,8 @@ def insert_pull(
     opened = _event("opened", by, **({"version": base_version} if base_version else {}))
     conn.execute(
         "INSERT INTO pulls (agent_id, number, title, kind, state, base_version, merged_version,"
-        " config, layout, rules, tests, events, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, 'open', ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
+        " config, layout, rules, tests, events, prosper, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, 'open', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             agent_id,
             number,
@@ -136,7 +180,8 @@ def insert_pull(
             json.dumps(prune(layout, config)),
             json.dumps(prune_rules(rules or [], config)),
             json.dumps(tests or []),
-            json.dumps([opened]),
+            json.dumps([*([request] if request else []), opened, *(then or [])]),
+            None if prosper is None else json.dumps(prosper),
             opened["at"],
             opened["at"],
         ),
@@ -209,7 +254,7 @@ def save_pull(
     them. Rules for steps that are gone are dropped.
     """
     with connect() as conn:
-        pull = _require(conn, agent_id, number)
+        pull = _require(conn, agent_id, number, by=by)
         if layout is None:
             layout = pull["layout"]
         rules = prune_rules(rename_rules(pull["rules"], renames or {}), config)
@@ -237,6 +282,8 @@ def merge_pull(agent_id: str, number: int, by: str) -> dict:
     """
     with connect() as conn:
         pull = _require(conn, agent_id, number)
+        if reason := busy(pull, merging=True):
+            raise Conflict(reason)
         live = live_version(conn, agent_id)
         if pull["base_version"] != live:
             based = f"v{pull['base_version']}" if pull["base_version"] else "no version"
@@ -369,7 +416,7 @@ def add_rule(agent_id: str, number: int, step: Optional[str], text: str, by: str
     Raises Conflict if `step` is not a step of its copy.
     """
     with connect() as conn:
-        pull = _require(conn, agent_id, number)
+        pull = _require(conn, agent_id, number, by=by)
         if step is not None and step not in {node["name"] for node in pull["config"]["nodes"]}:
             raise Conflict(f"There is no step '{step}' in {label(number)}.")
         rule = {"id": new_id(), "step": step, "text": text, "source": manual(number)}
@@ -386,7 +433,7 @@ def add_rule(agent_id: str, number: int, step: Optional[str], text: str, by: str
 def add_test(agent_id: str, number: int, test: dict, by: str) -> dict:
     """Add a test, { name, caller, checks }, to the pull request's copy. Returns the PR."""
     with connect() as conn:
-        pull = _require(conn, agent_id, number)
+        pull = _require(conn, agent_id, number, by=by)
         test = {"id": new_id(), **test, "source": manual(number)}
         _record_event(
             conn,
@@ -405,7 +452,7 @@ def take_out(agent_id: str, number: int, kind: str, item_id: str, by: str) -> di
     taking them out is not what a pull request that only adds can replay.
     """
     with connect() as conn:
-        pull = _require(conn, agent_id, number)
+        pull = _require(conn, agent_id, number, by=by)
         item = next((i for i in pull[kind] if i["id"] == item_id), None)
         what = "rule" if kind == "rules" else "test"
         if item is None:

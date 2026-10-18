@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS pulls (
     rules TEXT NOT NULL DEFAULT '[]',
     tests TEXT NOT NULL DEFAULT '[]',
     events TEXT NOT NULL,
+    -- Prosper AI's work on it, as JSON: its state, what it read, what it asked.
+    -- NULL for a pull request Prosper AI has no part in.
+    prosper TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (agent_id, number)
@@ -160,12 +163,14 @@ def _migrate_unversioned(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_untested(conn: sqlite3.Connection) -> None:
-    """Give copies from before rules and tests none of either."""
+    """Give copies from before rules and tests none of either, and pull requests no Prosper AI."""
     for table in ("versions", "pulls"):
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         for column in ("rules", "tests"):
             if column not in columns:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT '[]'")
+        if table == "pulls" and "prosper" not in columns:
+            conn.execute("ALTER TABLE pulls ADD COLUMN prosper TEXT")
 
 
 def _insert_agent(conn: sqlite3.Connection, name: str) -> str:
