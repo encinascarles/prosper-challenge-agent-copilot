@@ -29,6 +29,11 @@ from simulate.suite import prosper_model
 
 PROMPTS = Path(__file__).parent / "prompts"
 ATTEMPTS = 3
+# Low reasoning effort: each artifact is a well-specified piece, and at the
+# default the model can think for minutes and spend the whole budget before it
+# writes a word. MAX_TOKENS bounds what one request can cost.
+EFFORT = "low"
+MAX_TOKENS = 16000
 
 # USD per million tokens: input, cached input, output. A model not listed is
 # counted in tokens only.
@@ -114,13 +119,17 @@ class LLM:
                 "type": "json_schema",
                 "json_schema": {"name": name, "schema": schema, "strict": True},
             },
-            max_completion_tokens=16000,
+            reasoning_effort=EFFORT,
+            max_completion_tokens=MAX_TOKENS,
         )
         self.count(response.usage)
-        message = response.choices[0].message
-        if getattr(message, "refusal", None):
-            raise Failed(f"The model refused: {message.refusal}")
-        return message.content or ""
+        choice = response.choices[0]
+        if getattr(choice.message, "refusal", None):
+            raise Failed(f"The model refused: {choice.message.refusal}")
+        if choice.finish_reason == "length":
+            # Not retried: the same request would run out the same way, and pay for it again.
+            raise Failed("The model ran out of room before it finished its answer.")
+        return choice.message.content or ""
 
     def count(self, usage) -> None:
         if usage is None:

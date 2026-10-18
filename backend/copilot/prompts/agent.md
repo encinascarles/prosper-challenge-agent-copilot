@@ -13,14 +13,21 @@ How the agent works:
 - `persona` is said to every step: who the agent is, for which clinic, and how
   it talks. Replies are spoken aloud: one or two short sentences, no lists, no
   emojis. It always moves the call on through an edge.
+- The agent has no calendar, no records and no tools besides its edges: it
+  cannot check availability or look anything up. It works with what the
+  caller says and what the guidelines state.
 
 Draw what the guidelines describe, and nothing they do not:
 - One step per thing the caller and the agent do together (greet and find out
   what they want, collect details, offer times, confirm, goodbye). Usually 4 to
-  8 steps. Use the clinic's real details (names, times, addresses) in the tasks.
+  7 steps. Use the clinic's real details (times, addresses) in the tasks.
+- Keep edges few: the way on from each step, and a way out only where callers
+  often take one. A side request that can come at any time (symptoms, say)
+  gets one step reached from where it usually comes up, not an edge from
+  every step.
 - Every step that does not end the call has at least one edge, and some path
   ends the call. Edges target steps by their exact `name`.
 - Names are short snake_case words (`collect_details`, `offer_times`).
-- Rules that apply everywhere (never give medical advice, how to address
-  people) will be written separately as rules: keep them out of the tasks
-  unless a step is built around them.
+- What the agent must always or never do (never give medical advice, how to
+  address people) will be written separately as rules. Leave it out of the
+  persona and the tasks, unless a step exists for it.
