@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { PullEvent, PullSummary } from '@/agents/types'
 
-import { conversation, openQuestions, prosperBlocker, prosperStatus, sourceText, statusText } from './model'
+import { batchText, conversation, openQuestions, prosperBlocker, prosperStatus, sourceText, statusText } from './model'
 
 const at = '2026-10-18T10:00:00.000Z'
 const event = (type: PullEvent['type'], more: Partial<PullEvent> = {}): PullEvent => ({ type, by: 'Prosper AI', at, ...more })
@@ -55,7 +55,7 @@ describe('the conversation', () => {
   it('groups steps in a row into one turn and shows answers on their questions', () => {
     const items = conversation(events)
 
-    expect(items.map((item) => (item.kind === 'steps' ? `steps:${item.steps.length}` : item.event.type))).toEqual([
+    expect(items.map((item) => (item.kind === 'steps' ? `steps:${item.steps.length}` : item.kind === 'batch' ? 'batch' : item.event.type))).toEqual([
       'request',
       'opened',
       'steps:2',
@@ -63,6 +63,23 @@ describe('the conversation', () => {
       'question',
       'steps:1',
     ])
+  })
+
+  it('folds what a message changed under it, and a run of your changes into one entry', () => {
+    const items = conversation([
+      event('message', { text: 'Rewrote 2 tests', details: ['Books · the test asked for more'] }),
+      event('test', { text: 'Books', rewritten: true }),
+      event('rule', { text: 'Ask the date of birth here', step: 'change_details' }),
+      event('checks', { by: 'checks', passed: 5, total: 5 }),
+      event('test', { by: 'you', text: 'A', removed: true }),
+      event('test', { by: 'you', text: 'B', removed: true }),
+      event('rule', { by: 'you', text: 'C' }),
+    ])
+
+    expect(items.map((item) => item.kind)).toEqual(['event', 'event', 'batch'])
+    const [turn, , batch] = items
+    expect(turn.kind === 'event' && turn.changes.length).toBe(2)
+    expect(batch.kind === 'batch' && batchText(batch.changes)).toBe('took out 2 tests and added 1 rule')
   })
 
   it('knows which questions are still open', () => {

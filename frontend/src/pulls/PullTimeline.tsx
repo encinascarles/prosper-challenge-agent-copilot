@@ -13,16 +13,19 @@ import {
   GitMerge,
   GitPullRequestArrow,
   GitPullRequestClosed,
+  ChevronRight,
   ListChecks,
   Loader2,
   Pencil,
   RefreshCw,
 } from 'lucide-react'
 
+import { useState } from 'react'
+
 import type { Pull, PullEvent } from '@/agents/types'
 import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
-import { answerTo, conversation, isProsper } from '@/prosper/model'
+import { answerTo, batchText, conversation, isProsper } from '@/prosper/model'
 import { FileChips, Notes, Question, Steps, Turn } from '@/prosper/parts'
 
 import { versionLabel, when } from './model'
@@ -46,11 +49,54 @@ function Who({ event }: { event: PullEvent }) {
   return <b className="font-medium text-foreground">{event.by === 'you' ? 'You' : event.by}</b>
 }
 
+/** One change, as a line under the turn or batch it belongs to. */
+function changeText(event: PullEvent): React.ReactNode {
+  const verb = event.removed ? 'Took out' : event.rewritten ? 'Rewrote' : 'Added'
+  const where = event.type === 'rule' ? (event.step ? ` in ${humanize(event.step)}` : ' for every step') : ''
+  return (
+    <>
+      {verb} a {event.type}
+      {where}:{' '}
+      <span className={cn('text-foreground', event.removed && 'line-through decoration-muted-foreground/50')}>“{event.text}”</span>
+      {event.why && <span> · {event.why}</span>}
+    </>
+  )
+}
+
+/** The details of a turn, folded until opened: what it decided, then what it changed. */
+function Folded({ lines, changes }: { lines: string[]; changes: PullEvent[] }) {
+  const [open, setOpen] = useState(false)
+  const count = lines.length + changes.length
+  if (count === 0) return null
+  return (
+    <div className="text-[12.5px] text-muted-foreground">
+      <button onClick={() => setOpen((now) => !now)} className="flex items-center gap-1 font-medium text-foreground/75 hover:text-foreground">
+        <ChevronRight className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
+        {open ? 'Hide details' : `${count} ${count === 1 ? 'detail' : 'details'}`}
+      </button>
+      {open && (
+        <ul className="mt-1.5 space-y-1 border-l pl-3">
+          {lines.map((line, i) => (
+            <li key={`l${i}`} className="leading-snug text-foreground/85">
+              {line}
+            </li>
+          ))}
+          {changes.map((change, i) => (
+            <li key={`c${i}`} className="leading-snug">
+              {changeText(change)}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 // Events that are turns of the conversation rather than lines on the rail.
 const TURNS = new Set<PullEvent['type']>(['request', 'question', 'message', 'answer'])
 
-/** An event that is a turn of the conversation: what was said, by whom. */
-function TurnOf({ event, pull, onShowChanges, onPick, picking }: Props & { event: PullEvent }) {
+/** An event that is a turn of the conversation: what was said, by whom, and what it changed. */
+function TurnOf({ event, changes, pull, onShowChanges, onPick, picking }: Props & { event: PullEvent; changes: PullEvent[] }) {
   switch (event.type) {
     case 'request':
       return (
@@ -80,6 +126,7 @@ function TurnOf({ event, pull, onShowChanges, onPick, picking }: Props & { event
       return (
         <Turn who={event.by} at={event.at}>
           <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{event.text}</p>
+          <Folded lines={event.details ?? []} changes={changes} />
           {event.changed && (
             <button onClick={onShowChanges} className="text-[12.5px] font-medium text-foreground/80 hover:underline">
               Changes →
@@ -247,6 +294,26 @@ function Event({ event, pull, live, agentName, onShowChanges, onShowChecks }: Pr
   )
 }
 
+/** A run of changes by one person (or Prosper AI after an answer): one line, details folded. */
+function Batch({ by, changes, at }: { by: string; changes: PullEvent[]; at: string }) {
+  const icon = cn('size-3', by === 'Prosper AI' ? 'text-brand' : 'text-foreground/70')
+  return (
+    <div className="relative flex items-start gap-2.5 text-[12.5px] text-muted-foreground">
+      <Mark>{changes.every((c) => c.type === 'test') ? <FlaskConical className={icon} /> : <ListChecks className={icon} />}</Mark>
+      <span className="min-w-0 flex-1 space-y-1 pt-0.5 leading-relaxed">
+        <span className="block">
+          <b className="font-medium text-foreground">{by === 'you' ? 'You' : by}</b> {batchText(changes)}
+          {changes.length === 1 && <>: {changeText(changes[0])}</>}
+        </span>
+        {changes.length > 1 && <Folded lines={[]} changes={changes} />}
+      </span>
+      <span className="shrink-0 pt-0.5 text-[11.5px] tabular-nums" title={new Date(at).toLocaleString('en-US')}>
+        {when(at)}
+      </span>
+    </div>
+  )
+}
+
 // A summary is written to stand alone ("Edited Confirm"); after "You" it reads lower case.
 const lower = (text: string) => text[0].toLowerCase() + text.slice(1)
 
@@ -265,8 +332,10 @@ export function PullTimeline(props: Props) {
             <Steps steps={item.steps} doing={i === lastSteps && i === items.length - 1 ? doing : null} />
           </Turn>
         ) : (
-          TURNS.has(item.event.type) ? (
-            <TurnOf key={i} {...props} event={item.event} />
+          item.kind === 'batch' ? (
+            <Batch key={i} by={item.by} changes={item.changes} at={item.at} />
+          ) : TURNS.has(item.event.type) ? (
+            <TurnOf key={i} {...props} event={item.event} changes={item.changes} />
           ) : (
             <Event key={i} event={item.event} {...props} />
           )

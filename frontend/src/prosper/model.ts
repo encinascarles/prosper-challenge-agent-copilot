@@ -48,20 +48,55 @@ export function answerTo(events: PullEvent[], event: PullEvent): PullEvent | nul
   return events.find((e) => e.type === 'answer' && e.question === event.question) ?? null
 }
 
-/** A conversation as it is read: Prosper AI's steps in a row are one turn, with its progress. */
-export type Item = { kind: 'steps'; steps: PullEvent[]; at: string } | { kind: 'event'; event: PullEvent }
+/**
+ * A conversation as it is read, one entry per turn rather than one per change:
+ * Prosper AI's steps in a row are one list with its progress; what one of its
+ * messages changed (rules and tests added, rewritten, taken out) is folded
+ * under that message; and a run of changes by one person is one entry too.
+ */
+export type Item =
+  | { kind: 'steps'; steps: PullEvent[]; at: string }
+  | { kind: 'event'; event: PullEvent; changes: PullEvent[] }
+  | { kind: 'batch'; by: string; changes: PullEvent[]; at: string }
+
+const isChange = (event: PullEvent) => event.type === 'rule' || event.type === 'test'
 
 export function conversation(events: PullEvent[]): Item[] {
   const items: Item[] = []
   for (const event of events) {
     const last = items.at(-1)
-    if (event.type === 'step' && last?.kind === 'steps') last.steps.push(event)
-    else if (event.type === 'step') items.push({ kind: 'steps', steps: [event], at: event.at })
-    // An answer is shown on its question's card.
-    else if (event.type !== 'answer' || !events.some((e) => e.type === 'question' && e.question === event.question))
-      items.push({ kind: 'event', event })
+    if (event.type === 'step') {
+      if (last?.kind === 'steps') last.steps.push(event)
+      else items.push({ kind: 'steps', steps: [event], at: event.at })
+    } else if (isChange(event) && last?.kind === 'event' && last.event.type === 'message' && last.event.by === event.by) {
+      last.changes.push(event)
+    } else if (isChange(event) && last?.kind === 'batch' && last.by === event.by) {
+      last.changes.push(event)
+    } else if (isChange(event)) {
+      items.push({ kind: 'batch', by: event.by, changes: [event], at: event.at })
+    } else if (event.type !== 'answer' || !events.some((e) => e.type === 'question' && e.question === event.question)) {
+      // An answer is shown on its question's card.
+      items.push({ kind: 'event', event, changes: [] })
+    }
   }
   return items
+}
+
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
+
+/** One line for a batch of changes: "added 2 rules and took out 5 tests". */
+export function batchText(changes: PullEvent[]): string {
+  const counts = new Map<string, number>()
+  for (const change of changes) {
+    const verb = change.removed ? 'took out' : change.rewritten ? 'rewrote' : 'added'
+    const key = `${verb}|${change.type}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const parts = [...counts].map(([key, n]) => {
+    const [verb, type] = key.split('|')
+    return `${verb} ${plural(n, type)}`
+  })
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : (parts[0] ?? '')
 }
 
 /** What a file's chip says next to its name: its pages, for a PDF. */
@@ -85,6 +120,7 @@ export function sourceText(source: Source): string | null {
   if (source.kind === 'guidelines') return source.file === 'your notes' ? 'Your notes' : (source.file ?? 'The guidelines')
   if (source.kind === 'answer') return `Your answer${where}`
   if (source.kind === 'request') return `Your request${where}`
+  if (source.kind === 'check') return `A failing test${where}`
   return null
 }
 

@@ -79,7 +79,7 @@ export type AgentCopy = {
  * you asked it for. `pull` is the pull request it was added in.
  */
 export type Source = {
-  kind: 'manual' | 'guidelines' | 'answer' | 'request'
+  kind: 'manual' | 'guidelines' | 'answer' | 'request' | 'check' // check: from a failing test
   pull?: number | null // none for one older than pull requests
   file?: string | null // guidelines: the file it quotes, or "your notes"
   quote?: string | null // the line it comes from, or your answer or request, word for word
@@ -212,6 +212,9 @@ export type PullEvent = {
   question?: string | null // "question", "answer": the question's id
   options?: string[] | null // "question": what can be picked
   changed?: boolean | null // "message": Prosper AI changed the agent with it
+  details?: string[] | null // "message": one line per thing it decided, folded under it
+  rewritten?: boolean | null // "test": Prosper AI rewrote it; `why` says why
+  why?: string | null
 }
 
 /** What Prosper AI is up to on a pull request it works on. */
