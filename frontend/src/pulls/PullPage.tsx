@@ -15,6 +15,8 @@ import { closePull, getPull, getVersion, mergePull, renamePull, reopenPull, upda
 import type { Agent, AgentCopy, Pull } from '@/agents/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { callBlocker, checkFlow } from '@/draft/checks'
+import { openDraft } from '@/draft/draft'
 import { cn } from '@/lib/utils'
 
 import { Dot, StateBadge } from './bits'
@@ -102,6 +104,8 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
   const base = baseVersion === 0 ? EMPTY : fetched?.number === baseVersion ? fetched.copy : null
 
   const changes = useMemo(() => (pull && base ? diffAgents(base.config, pull.config) : null), [pull, base])
+  // What would stop a test call of its copy, as the editor would say it.
+  const callStop = useMemo(() => (pull ? callBlocker(false, checkFlow(openDraft(pull.config))) : null), [pull])
 
   if (error) return <p className="m-auto text-sm text-bad">{error}</p>
   if (!pull) return <p className="m-auto text-sm text-muted-foreground">Loading…</p>
@@ -197,9 +201,11 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
                   <Button size="sm" variant="outline" onClick={() => onOpenInBuild(number)}>
                     Open in Build
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => onTry(number)}>
-                    <Phone className="size-3.5" /> Try it
-                  </Button>
+                  <span title={callStop ?? undefined} className="flex">
+                    <Button size="sm" variant="outline" disabled={callStop !== null} onClick={() => onTry(number)}>
+                      <Phone className="size-3.5" /> Try it
+                    </Button>
+                  </span>
                   {stale ? (
                     <Button size="sm" disabled={busy !== null} onClick={() => void update()}>
                       <RefreshCw className={cn('size-3.5', busy === 'update' && 'animate-spin')} />
