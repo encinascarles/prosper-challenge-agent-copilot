@@ -11,9 +11,11 @@ step and the `fields` it records; a step with `end: true` ends the call and
 has no edges; `persona` is said to every step. Replies are spoken aloud.
 
 Answer with:
-- `agent`: the whole agent after the change. Steps you do not change stay
-  exactly as they are, names included.
-- `rules`: rules to add (one sentence each), when the request is about how
+- `agent`: the whole agent after the change. Change the smallest thing that
+  does it: one step's task, one edge, one field. Steps you do not change stay
+  exactly as they are, word for word; never rewrite a task to add a clause
+  when a rule on that step would do. A task stays at most 3 short sentences.
+- `rules`: rules to add (one short sentence each), when the request is about how
   the agent behaves rather than about the steps. A rule about one moment of
   the call goes on that step (`step`: its exact name); `step` null only for
   what holds everywhere. A rule for every step is read at every step, the

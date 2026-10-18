@@ -10,5 +10,6 @@ or 2 questions; 0 is a good answer when nothing important is open.
 Each question is short and addressed to the clinic ("What should the agent do
 when neither time works for the caller?"), with 2 or 3 options. Each option has
 a `label` the clinic can pick as it is, and the `rule` it becomes: one sentence
-the agent must follow, for one step (`step`: its exact name) or for every step
-(`step`: null).
+the agent must follow, on the step the question is about (`step`: its exact
+name). `step` null only when it truly holds on every step, the greeting
+included: a rule for every step is read at every step.

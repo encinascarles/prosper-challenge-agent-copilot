@@ -21,6 +21,7 @@ Draw what the guidelines describe, and nothing they do not:
 - One step per thing the caller and the agent do together (greet and find out
   what they want, collect details, offer times, confirm, goodbye). Usually 4 to
   7 steps. Use the clinic's real details (times, addresses) in the tasks.
+- A task is at most 3 short sentences: what to do in this step, nothing else.
 - Keep edges few: the way on from each step, and a way out only where callers
   often take one. A side request that can come at any time (symptoms, say)
   gets one step reached from where it usually comes up, not an edge from
