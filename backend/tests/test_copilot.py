@@ -118,6 +118,14 @@ def test_an_unknown_target_is_refused_as_a_save_would_say_it():
         artifacts.check_agent(config)
 
 
+def test_nothing_may_lead_back_into_the_start_step():
+    config = _config()
+    config["nodes"][1]["edges"][0]["target"] = "greeting"
+
+    with pytest.raises(ValueError, match="goes back to the start step 'greeting'"):
+        artifacts.check_agent(config)
+
+
 @pytest.mark.parametrize(
     "change, problem",
     [

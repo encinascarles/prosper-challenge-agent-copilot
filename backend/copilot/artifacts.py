@@ -304,6 +304,15 @@ def check_agent(config: dict) -> None:
     if not ends:
         raise ValueError("No step ends the call: mark the goodbye step with end true.")
     for node in builder.config.nodes:
+        # The editor lets nothing lead into the start step (a call begins
+        # there), and draws such an edge as not connected.
+        for edge in node.edges:
+            if edge.target == builder.config.initial_node:
+                raise ValueError(
+                    f"Edge '{edge.function}' of step '{node.name}' goes back to the start step "
+                    f"'{edge.target}', and nothing may lead into the start step. Point it at "
+                    "the step that handles what the caller wants next."
+                )
         if node.end and node.edges:
             raise ValueError(f"Step '{node.name}' ends the call, so it cannot have edges.")
         if not node.end and not node.edges:
