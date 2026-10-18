@@ -197,12 +197,17 @@ def merge_pull(agent_id: str, number: int, by: str) -> dict:
                 f"{label(number)} is based on {based}, but live is now v{live}. "
                 f"It has to be updated to v{live} before it can merge."
             )
-        version = insert_version(conn, agent_id, pull["config"], pull["layout"], pull=number)
+        # One moment for both: the version is created when the PR is merged.
+        merged = _event("merged", by)
+        version = insert_version(
+            conn, agent_id, pull["config"], pull["layout"], pull=number, at=merged["at"]
+        )
+        merged["version"] = version
         _record_event(
             conn,
             agent_id,
             pull,
-            _event("merged", by, version=version),
+            merged,
             state="merged",
             merged_version=version,
         )
