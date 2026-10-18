@@ -55,19 +55,23 @@ export function progress(run: SuiteRun): { done: number; of: number } {
 
 const tests = (n: number) => `${n} ${n === 1 ? 'test' : 'tests'}`
 
-/** The checks in a few words: "Checks 5/5", "2 tests failing", "Checks running…". */
-export function checksText(checks: Checks | null): string {
-  if (checks === null) return 'No checks yet'
-  if (checks.state === 'running') return 'Checks running…'
-  if (checks.state === 'stopped') return "Checks didn't finish"
+/**
+ * The checks in a few words: "Checks 5/5", "2 tests failing", "Checks running…".
+ * `bare` leaves out the word "Checks", for where it is already the label.
+ */
+export function checksText(checks: Checks | null, bare = false): string {
+  const word = bare ? '' : 'Checks '
+  if (checks === null) return bare ? 'not run' : 'No checks yet'
+  if (checks.state === 'running') return bare ? 'running…' : 'Checks running…'
+  if (checks.state === 'stopped') return bare ? "didn't finish" : "Checks didn't finish"
   if (checks.failing) return `${tests(checks.failing)} failing`
-  return `Checks ${checks.passed}/${checks.total}`
+  return `${word}${checks.passed}/${checks.total}`
 }
 
 /** Why checks in this state keep a copy from going live, or null if they pass. */
 export function checksBlocker(checks: Checks | null): string | null {
   if (checks === null) return 'Checks have not run on the latest change yet.'
-  if (checks.state === 'running') return 'Wait for the checks to finish.'
+  if (checks.state === 'running') return 'Checks are still running.'
   if (checks.state === 'stopped') return "Its checks didn't finish: run them again."
   if (checks.failing) return `${tests(checks.failing)} failing.`
   return null

@@ -64,7 +64,7 @@ describe('merging', () => {
     const failing = { state: 'failed', passed: 3, failing: 2, total: 5 } as const
     expect(mergeBlocker(pull(), 1, false, failing)).toBe('2 tests failing.')
     expect(mergeBlocker(pull(), 1, false, { ...failing, state: 'running', failing: 0 })).toBe(
-      'Wait for the checks to finish.',
+      'Checks are still running.',
     )
     expect(mergeBlocker(pull({ checks: null }), 1, false)).toBe(
       'Checks have not run on the latest change yet.',

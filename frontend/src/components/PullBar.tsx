@@ -62,10 +62,17 @@ export function PullBar(props: Props) {
         <ChecksLine checks={checks} />
       </button>
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        {problem && (
+        {problem ? (
           <span role="alert" className="mr-1 max-w-[44ch] truncate text-bad" title={problem}>
             {problem}
           </span>
+        ) : (
+          blocker &&
+          !stale && (
+            <span className="mr-1 max-w-[44ch] truncate text-muted-foreground" title={blocker}>
+              Merge waits: {blocker}
+            </span>
+          )
         )}
         <span title={callBlocker ?? undefined} className="flex">
           <Button size="sm" variant="outline" className="h-7 bg-card text-[12.5px]" disabled={callBlocker !== null} onClick={onTry}>

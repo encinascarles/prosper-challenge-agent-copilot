@@ -33,26 +33,26 @@ export function ScoreText({ score, className }: { score: Score | null; className
 }
 
 /** A copy's checks in one line: "✓ Checks 5/5", "✕ 2 tests failing", "Checks running…". */
-export function ChecksLine({ checks, className }: { checks: Checks | null; className?: string }) {
+export function ChecksLine({ checks, bare = false, className }: { checks: Checks | null; bare?: boolean; className?: string }) {
   const base = cn('flex items-center gap-1 whitespace-nowrap tabular-nums', className)
-  if (checks === null) return <span className={cn(base, 'text-muted-foreground')}>{checksText(null)}</span>
+  if (checks === null) return <span className={cn(base, 'text-muted-foreground')}>{checksText(null, bare)}</span>
   if (checks.state === 'running') {
     return (
       <span className={cn(base, 'text-muted-foreground')}>
-        <Loader2 className="size-3.5 animate-spin text-brand" /> {checksText(checks)}
+        <Loader2 className="size-3.5 animate-spin text-brand" /> {checksText(checks, bare)}
       </span>
     )
   }
   if (checks.state === 'passed') {
     return (
       <span className={cn(base, 'text-emerald-700 dark:text-emerald-500')}>
-        <CircleCheck className="size-3.5" /> {checksText(checks)}
+        <CircleCheck className="size-3.5" /> {checksText(checks, bare)}
       </span>
     )
   }
   return (
     <span className={cn(base, checks.state === 'stopped' ? 'text-warn' : 'text-bad')}>
-      <CircleX className="size-3.5" /> {checksText(checks)}
+      <CircleX className="size-3.5" /> {checksText(checks, bare)}
     </span>
   )
 }

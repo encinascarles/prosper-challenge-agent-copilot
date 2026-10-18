@@ -173,7 +173,7 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
   const tabs: [Tab, string, React.ReactNode][] = [
     ['conversation', 'Conversation', null],
     ['changes', 'Changes', (changes?.length ?? 0) + suiteCount || null],
-    ['checks', 'Checks', pull.tests.length ? <ChecksLine key="checks" checks={checksNow} className="text-[12px]" /> : null],
+    ['checks', 'Checks', pull.tests.length ? <ChecksLine key="checks" checks={checksNow} bare className="text-[12px]" /> : null],
   ]
 
   return (
@@ -202,9 +202,12 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
               </h1>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12.5px] text-muted-foreground tabular-nums">
                 <StateBadge pull={pull} />
-                <span className={cn('ml-1', stale && 'font-medium text-warn')}>
-                  {stale ? `Needs update · ${basedOn(pull)}` : basedOn(pull)}
-                </span>
+                {/* A merged setup was based on nothing; "not live yet" would read as now. */}
+                {!(pull.kind === 'setup' && pull.state === 'merged') && (
+                  <span className={cn('ml-1', stale && 'font-medium text-warn')}>
+                    {stale ? `Needs update · ${basedOn(pull)}` : basedOn(pull)}
+                  </span>
+                )}
                 {note && (
                   <>
                     <Dot />
@@ -275,10 +278,15 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
               )}
             </div>
           </div>
-          {problem && (
+          {problem ? (
             <p role="alert" className="mt-3 text-[12.5px] text-bad">
               {problem}
             </p>
+          ) : (
+            // Why Merge is off, where it can be read: a disabled button says nothing.
+            open &&
+            !stale &&
+            blocker && <p className="mt-3 text-right text-[12.5px] text-muted-foreground">Merge waits: {blocker}</p>
           )}
           <nav role="tablist" className="mt-4 -mb-px flex gap-1">
             {tabs.map(([key, label, count]) => (
