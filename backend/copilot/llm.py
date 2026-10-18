@@ -36,6 +36,9 @@ ATTEMPTS = 3
 # past it has got stuck, which happens now and then; it is tried once more.
 EFFORT = "low"
 MAX_TOKENS = 6000
+# A review or a change writes the whole agent back with its verdicts, tests and
+# rules: a real one ran past 6,000 tokens of plain answer, twice.
+LONGER = {"review": 12000, "change": 12000}
 
 # USD per million tokens: input, cached input, output. A model not listed is
 # counted in tokens only.
@@ -139,7 +142,7 @@ class LLM:
                 "format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}
             },
             reasoning={"effort": EFFORT},
-            max_output_tokens=MAX_TOKENS,
+            max_output_tokens=LONGER.get(name, MAX_TOKENS),
         )
         self.count(response.usage)
         for item in response.output:
