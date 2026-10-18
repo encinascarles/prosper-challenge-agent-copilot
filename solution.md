@@ -306,21 +306,44 @@ them that is cheap enough to do on every save.
 **Trade-offs.** A test is `{ name, caller, checks }`: who calls (a model plays
 them) and one check per line. "Reaches <step>", "Ends the call" and "<field>
 is recorded" are decided from the path, exactly and for free; anything else
-is judged by a model on the transcript, yes or no with one line why. The agent
-runs on its own model, since that is what is tested; the caller and the judge
-on ours (`PROSPER_MODEL`). The agent's turn ends at the end of a response that
+is judged by a model on the transcript, yes or no with one line why. A line
+is a path check only when it names a step or a field the copy has; "Reaches a
+decision about the doctor" is a sentence, so it is judged rather than failing
+every run, and the form says which kind each line is before it runs. The
+agent's turn ends at the end of a response that
 called no function, a rule pinned by tests that run Pipecat's OpenAI service
 on a scripted stream. Those tests found that the function-call frame, being a
 system frame, can overtake the response's start, so calls are counted between
 response ends.
 
+**Models.** The agent runs on the model its own JSON names (gpt-4o for the
+sample), because what is tested must be what calls run. The simulated caller
+and the judge are ours, and they need judgment rather than latency: they play
+a person from a paragraph and decide whether a transcript meets a sentence. So
+they use the newest general model available on the key, `gpt-6.1-sol`, set by
+one variable (`PROSPER_MODEL`) so it can change without touching code.
+
 A simulated call does not always go the same way, so each test runs 3 times
 and shows as 3/3, 2/3, 0/3; it passes only at 3/3. Every change to a pull
 request's copy (save, update, rule or test added or taken out) runs the whole
-suite again, replacing the run in progress, and a merge is refused until it
-passes (409 on the server, a disabled button in the UI), PR #1 included. All
-calls of a suite run at once, 12 at a time: 5 tests × 3 took 26 s and about
-USD 0.25 on the sample agent. They run on an event loop in a thread of their
+suite again, and a merge is refused until it passes (409 on the server, a
+disabled button in the UI), PR #1 included. Each run stores a fingerprint of
+the config, rules and tests it ran on, and a merge needs the latest run to
+match the copy as it is now: a change stored a moment before its run starts
+cannot slip through on the run before it. All calls of a suite run at once,
+12 at a time.
+
+**What it costs.** Measured on the sample agent: 5 tests × 3 calls took 26 s
+of wall-clock (12.9 s per call on average) and about USD 0.25, almost all of
+it the agent's own gpt-4o tokens, since each turn resends the whole context;
+the caller and the judge add a few cents. To keep that from being paid for
+nothing: a save that does not change the config, rules or tests (moving
+cards) keeps the run it has; a new change cancels the run in progress, so a
+burst of saves pays for the calls already started, not for a suite each; and
+"Run again" is the only way to repeat a run on the same copy. At scale, the
+next steps would be to run only the tests a change can affect (those whose
+path goes through an edited step, and the new ones) and to make the full
+suite run on demand or before a merge rather than on every save. They run on an event loop in a thread of their
 own, so voice calls on the server's loop never wait behind them. Results are
 written as each call finishes and the editor polls them every 1.5 s while a
 run is going; a stream would be more moving parts for a run that lasts under a
