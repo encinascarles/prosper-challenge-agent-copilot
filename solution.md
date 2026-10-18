@@ -405,21 +405,56 @@ the greeting shorter"). It rewrites PR #1's copy through the same checks, adds
 or takes out rules and tests (only those PR #1 added), sees what failed in the
 last run and why, says what it changed, and the suite runs again.
 
+**Checking its own draft.** A first draft fails some of its own tests, and
+fixing that by hand (taking tests out, adding rules) is the manual work this
+is meant to remove. So when a run that follows a change of Prosper AI's own
+fails, it reads each failing test's runs and gives it one verdict, written
+as a line in the conversation: the agent is wrong (it makes the smallest
+change), the test asks for more than the guidelines say (it rewrites the
+test in place and says why), or the guidelines leave a gap (it asks the
+clinic). It never takes a test out, and code checks that every failing test
+got a verdict and that each verdict did what it says. Two rounds at most,
+then it says what still fails and hands over: past that, more rounds mostly
+spend money on a flaky model. Everything it writes is held short in code (a
+task at most three sentences, a rule one, a test 2–4 checks with at most one
+judged and none about style), and every problem of an answer goes back at
+once, since refusing on the first one let the model fix one thing and break
+another.
+
+**When it stops halfway.** Jobs run in the server's process, so a restart
+marks any work still going as interrupted. Prosper AI remembers the job it is
+on: a message after a failure retries it, the setup from the step it stopped
+at, an answer still tied to its question. While it works, the person's
+changes to that copy (an option clicked included) wait.
+
 **What it costs, measured.** A setup from the sample PDF and DOCX: 5 requests,
 about 8k tokens in and 3k out, USD 0.05; graph drawn 40 s after the click,
 questions at 56 s; a change request 20–50 s and USD 0.02–0.04. The suite after
 it dominates: 9 tests × 3 calls in 38 s, about USD 0.26, mostly the agent's own
 gpt-4o. Two things found on the way: at default reasoning effort a request
 could think for minutes and spend its whole token budget writing nothing, so
-requests use low effort; even then one now and then runs to the limit, so the
-limit is 6,000 tokens (USD 0.06) and a cut-off answer is asked for once more.
+requests use low effort; even then, on Chat Completions, about one agent
+request in two thought to its 6,000-token limit and wrote nothing. The same
+request through the Responses API thinks a few hundred tokens, so Prosper AI
+uses that; a cut-off answer is still asked for once more.
+
+With the self-check, a setup from the samples to its last check took about
+4 minutes and USD 1.4 (3 suites of 7 tests, USD 0.4 each, and USD 0.09 of
+Prosper AI). It did not reach green: two rounds took the checks from 3/7 to
+4/7 and back to 2/7, mostly tests passing 2 runs in 3 because the voice agent
+(gpt-4o) sometimes answers in the wrong step or says goodbye without taking
+the edge to the end, and tests written before the clinic's answers whose
+callers do not give what an answer made the agent ask for. Both are now in
+the prompts (the persona says how the agent moves on; the review knows the
+second case is the test's), but that was not run again.
 
 **Trade-offs and what is next.** The first agent is a draft: on the samples it
 was sensible (greet, booking or change details, offer the two slots, confirm,
 nurse callback, goodbye) but wordy, and its first suite failed where an answer
 had become a rule for every step (the greeting began asking for a date of
-birth). Getting to green took three requests to Prosper AI and one rule and five
-test removals by hand, which is the point of keeping it in a pull request.
+birth). In the first version of this, getting to green took three requests to
+Prosper AI and one rule and five test removals by hand; the self-check is the
+answer to that, and is not yet enough on its own (above).
 Prosper AI only works in PR #1 for now; it cannot edit a rule in place (it
 takes it out and adds another), it does not run tests itself to try a fix
 before proposing it, and a test whose check is flaky has to be judged by a
