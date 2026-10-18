@@ -15,8 +15,8 @@ from pipecat.frames.frames import LLMSetToolsFrame
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat_flows import FlowManager
 
-import bot
 from agent_builder import AgentBuilder
+from agent_builder.runtime import report_nodes
 
 
 class RecordingWorker:
@@ -64,7 +64,7 @@ def _flow(worker: RecordingWorker, report: bool = True) -> FlowManager:
     aggregator.assistant.return_value.has_function_calls_in_progress = False
     flow_manager = FlowManager(llm=MagicMock(), context_aggregator=aggregator, worker=worker)
     if report:
-        bot.report_nodes(flow_manager, worker)
+        report_nodes(flow_manager, worker)
     return flow_manager
 
 

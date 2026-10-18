@@ -6,7 +6,17 @@
 // Saving is one request with the agent and its layout, to a pull request's
 // copy: nothing here writes to a live version.
 
-import type { Agent, AgentConfig, AgentCopy, Layout, Pull, PullSummary, Version, VersionSummary } from './types'
+import type {
+  Agent,
+  AgentConfig,
+  AgentCopy,
+  Layout,
+  Pull,
+  PullSummary,
+  SuiteRun,
+  Version,
+  VersionSummary,
+} from './types'
 
 export class ApiError extends Error {
   status: number
@@ -121,7 +131,8 @@ export function openPull(id: string, title: string): Promise<Pull> {
 /**
  * Replaces the pull request's copy and its layout: both or neither, the
  * backend validates the agent first. `summary`, one line on what changed, goes
- * in the pull request's log.
+ * in the pull request's log. `renames` are the steps this save renamed, old
+ * name to new: their rules follow them. Every save runs its checks again.
  */
 export function savePull(
   id: string,
@@ -129,8 +140,48 @@ export function savePull(
   config: AgentConfig,
   layout: Layout,
   summary: string | null = null,
+  renames: Record<string, string> = {},
 ): Promise<Pull> {
-  return request(pullPath(id, number), 'PUT', { config, layout, summary })
+  return request(pullPath(id, number), 'PUT', { config, layout, summary, renames })
+}
+
+/** Adds a rule to the pull request's copy: for the step `step`, or every step if null. */
+export function addRule(id: string, number: number, step: string | null, text: string): Promise<Pull> {
+  return request(`${pullPath(id, number)}/rules`, 'POST', { step, text })
+}
+
+/** Takes out a rule the pull request added. */
+export function removeRule(id: string, number: number, rule: string): Promise<Pull> {
+  return request(`${pullPath(id, number)}/rules/${encodeURIComponent(rule)}`, 'DELETE')
+}
+
+export function addTest(
+  id: string,
+  number: number,
+  test: { name: string; caller: string; checks: string[] },
+): Promise<Pull> {
+  return request(`${pullPath(id, number)}/tests`, 'POST', test)
+}
+
+/** Takes out a test the pull request added. */
+export function removeTest(id: string, number: number, test: string): Promise<Pull> {
+  return request(`${pullPath(id, number)}/tests/${encodeURIComponent(test)}`, 'DELETE')
+}
+
+/** Where a copy's checks are: a pull request's, or a version's. */
+export type ChecksOf = { pull: number } | { version: number }
+
+const checksPath = (id: string, of: ChecksOf) =>
+  'pull' in of ? `${pullPath(id, of.pull)}/checks` : `${agentPath(id)}/versions/${of.version}/checks`
+
+/** The latest run of the copy's tests, finished or not; null if none ran. */
+export function getChecks(id: string, of: ChecksOf): Promise<SuiteRun | null> {
+  return request(checksPath(id, of))
+}
+
+/** Runs the copy's tests again, replacing the latest run. */
+export function runChecks(id: string, of: ChecksOf): Promise<SuiteRun> {
+  return request(checksPath(id, of), 'POST')
 }
 
 /** Makes the pull request's copy the next version, which goes live. */

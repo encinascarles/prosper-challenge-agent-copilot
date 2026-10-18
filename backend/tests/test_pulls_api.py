@@ -23,6 +23,12 @@ def _renamed(agent: dict, name: str) -> dict:
     return {**agent, "name": name}
 
 
+def _save(client, agent_id: str, number: int) -> None:
+    """Save the pull request's copy as it is, which runs its checks: a merge needs them."""
+    pull = client.get(f"{_pulls(agent_id)}/{number}").json()
+    assert client.put(f"{_pulls(agent_id)}/{number}", json={"config": pull["config"]}).is_success
+
+
 # ---- before the agent is live --------------------------------------------------
 
 
@@ -158,6 +164,7 @@ def test_a_pull_request_based_on_an_older_live_version_cannot_merge(client, live
     agent_id = live_agent()
     client.post(_pulls(agent_id), json={"title": "First"})
     client.post(_pulls(agent_id), json={"title": "Second"})
+    _save(client, agent_id, 2)
     assert client.post(f"{_pulls(agent_id)}/2/merge").status_code == 200
 
     response = client.post(f"{_pulls(agent_id)}/3/merge")
@@ -198,6 +205,7 @@ def test_an_invalid_copy_is_refused_at_merge_naming_where(client, live_agent, ag
 def test_a_pull_request_that_is_not_open_cannot_change(client, live_agent, agent, ended):
     agent_id = live_agent()
     client.post(_pulls(agent_id), json={"title": "Your edits"})
+    _save(client, agent_id, 2)
     client.post(f"{_pulls(agent_id)}/2/{ended}")
     state = {"merge": "merged", "close": "closed"}[ended]
 
@@ -272,6 +280,7 @@ def test_only_a_closed_pull_request_can_be_reopened(client, live_agent, state):
     agent_id = live_agent()
     client.post(_pulls(agent_id), json={"title": "Your edits"})
     if state == "merged":
+        _save(client, agent_id, 2)
         client.post(f"{_pulls(agent_id)}/2/merge")
 
     response = client.post(f"{_pulls(agent_id)}/2/reopen")

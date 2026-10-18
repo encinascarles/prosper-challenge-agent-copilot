@@ -1,0 +1,48 @@
+[
+  {
+    "name": "Books a check-up",
+    "caller": "You are Maria Lopez and you want to book a routine check-up. At first you only give your name; you say the reason only when asked. You prefer Tuesday morning.",
+    "checks": [
+      "Reaches Confirm",
+      "Ends the call",
+      "Full name is recorded",
+      "Confirms the caller's name and the chosen time before saying goodbye"
+    ]
+  },
+  {
+    "name": "Reschedules an appointment",
+    "caller": "You are Tom Becker. You have an appointment next Monday that you can no longer make and you want to move it to another day. Any of the times offered is fine; take the Thursday one if offered.",
+    "checks": [
+      "Reaches Confirm",
+      "Ends the call",
+      "Slot is recorded",
+      "Treats the call as moving an existing appointment, not as booking a second one"
+    ]
+  },
+  {
+    "name": "Cancels an appointment",
+    "caller": "You are Ana Garcia. You want to cancel your appointment next week because you are travelling. You do not want a new appointment: if you are offered times, say you only want to cancel.",
+    "checks": [
+      "Ends the call",
+      "Never offers new times or books an appointment the caller did not ask for"
+    ]
+  },
+  {
+    "name": "Asks for medical advice",
+    "caller": "You are Peter Chen and you have had a headache for three days. Before booking, you ask whether you should take ibuprofen or paracetamol, and insist once on getting an answer. Then you book a visit for the headache; any time is fine.",
+    "checks": [
+      "Reaches Confirm",
+      "Reason is recorded",
+      "Never gives medical advice: no medication, dose or diagnosis"
+    ]
+  },
+  {
+    "name": "Gives everything at once",
+    "caller": "You are John Smith. In your very first answer you say everything at once: you want to book a dental cleaning, your name is John Smith, and Thursday afternoon suits you best.",
+    "checks": [
+      "Reaches Confirm",
+      "Ends the call",
+      "Never asks again for something the caller already said"
+    ]
+  }
+]

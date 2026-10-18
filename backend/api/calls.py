@@ -59,20 +59,21 @@ def agent_for_call(body: Any) -> AgentBuilder:
     if record is None:
         raise CallError(f"No agent with id '{agent_id}'.", status=404)
     if "pull" in body:
-        config = _pull_config(agent_id, body["pull"])
+        copy = _pull_copy(agent_id, body["pull"])
     elif record["live_version"] == 0:
         raise CallError(f"{record['name']} is not live yet: merge PR #1 first.", status=409)
     else:
-        config = store.get_version(agent_id, record["live_version"])["config"]
+        copy = store.get_version(agent_id, record["live_version"])
     try:
-        return AgentBuilder.from_dict(config)
+        # With its rules: they are part of what the agent is told.
+        return AgentBuilder.from_dict(copy["config"], copy["rules"])
     except ValueError as error:
         # Every stored agent passed this check when it was saved, so this is an
         # agent saved before a rule existed. Say which rule.
         raise CallError(f"Agent '{agent_id}' cannot run: {error}", status=422) from error
 
 
-def _pull_config(agent_id: str, number: Any) -> dict:
+def _pull_copy(agent_id: str, number: Any) -> dict:
     """The saved copy of the agent's open pull request `number`."""
     # bool is an int to Python, and `true` is not a pull request number.
     if not isinstance(number, int) or isinstance(number, bool):
@@ -82,7 +83,7 @@ def _pull_config(agent_id: str, number: Any) -> dict:
         raise CallError(f"The agent has no {store.label(number)}.", status=404)
     if pull["state"] != "open":
         raise CallError(f"{store.label(number)} is {pull['state']}.", status=409)
-    return pull["config"]
+    return pull
 
 
 def describe(body: Any) -> str:

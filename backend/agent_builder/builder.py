@@ -17,6 +17,15 @@
 # The type is reserved (schema.py refuses it in an agent's own actions), so the
 # handler only ever sees the builder's.
 #
+# Rules are compiled in here too. A rule is a short instruction the agent must
+# follow, on every step or on one: `{ "step": "<node name>" | null, "text" }`.
+# They are kept apart from the agent JSON (stored next to it, like the layout)
+# so the cards stay what the person wrote, and are added to the prompt only
+# when the graph is built: the rules for every step at the end of the role
+# message each node carries, a step's own rules as one more task message of
+# that node. Every runner of the agent goes through here, so a voice call and a
+# test run the same prompt.
+#
 
 import json
 import re
@@ -42,15 +51,17 @@ async def _log_node(action: dict, flow_manager: FlowManager) -> None:
 class AgentBuilder:
     """Builds a runnable Pipecat Flows graph from a declarative AgentConfig."""
 
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, rules: Optional[list] = None):
         self.config = config
         self._nodes_by_name = {n.name: n for n in config.nodes}
         self._validate()
+        self.rules = rules or []
+        self._validate_rules()
 
     # ---- loading -----------------------------------------------------------
     @classmethod
-    def from_dict(cls, data: dict) -> "AgentBuilder":
-        return cls(AgentConfig.from_dict(data))
+    def from_dict(cls, data: dict, rules: Optional[list] = None) -> "AgentBuilder":
+        return cls(AgentConfig.from_dict(data), rules)
 
     @classmethod
     def from_json(cls, path: Union[str, Path]) -> "AgentBuilder":
@@ -104,6 +115,17 @@ class AgentBuilder:
                         edge=edge.function,
                     )
 
+    def _validate_rules(self) -> None:
+        for i, rule in enumerate(self.rules, start=1):
+            if not isinstance(rule, dict) or not isinstance(rule.get("text"), str):
+                raise ValueError(f"Rule {i} must be an object with a 'text'.")
+            step = rule.get("step")
+            if step is not None and step not in self._nodes_by_name:
+                raise ValueError(f"Rule {i} is for step '{step}', which is not a node.")
+
+    def _rules_for(self, step: Optional[str]) -> list[str]:
+        return [rule["text"] for rule in self.rules if rule.get("step") == step]
+
     # ---- compilation -------------------------------------------------------
     def build_initial_node(self) -> NodeConfig:
         """Return the entry NodeConfig; downstream nodes are built lazily on transition."""
@@ -129,8 +151,12 @@ class AgentBuilder:
         }
         node_config: NodeConfig = {
             "name": node.name,
-            "role_message": node.role_message or self.config.persona,
-            "task_messages": node.task_messages,
+            "role_message": _with_rules(
+                node.role_message or self.config.persona,
+                self._rules_for(None),
+                "Always follow these rules, on every step of the call:",
+            ),
+            "task_messages": self._task_messages(node),
             "functions": [self._make_edge_function(node, edge) for edge in node.edges],
             # First, so the node is reported before any of its own pre-actions
             # speaks.
@@ -142,6 +168,15 @@ class AgentBuilder:
         elif node.end:
             node_config["post_actions"] = [{"type": "end_conversation"}]
         return node_config
+
+    def _task_messages(self, node: Node) -> list:
+        rules = self._rules_for(node.name)
+        if not rules:
+            return node.task_messages
+        # Same role as the node's own instructions: they are more of the same.
+        role = node.task_messages[0]["role"] if node.task_messages else "developer"
+        text = _with_rules("", rules, "Rules for this step:")
+        return [*node.task_messages, {"role": role, "content": text}]
 
     def _make_edge_function(self, node: Node, edge: Edge) -> FlowsFunctionSchema:
         async def handler(args: dict, flow_manager: FlowManager):
@@ -163,3 +198,11 @@ class AgentBuilder:
             required=edge.required,
             handler=handler,
         )
+
+
+def _with_rules(text: str, rules: list[str], heading: str) -> str:
+    """`text` followed by `rules` as a list under `heading`, or `text` alone without rules."""
+    if not rules:
+        return text
+    listed = "\n".join(f"- {rule}" for rule in rules)
+    return f"{text}\n\n{heading}\n{listed}".strip()

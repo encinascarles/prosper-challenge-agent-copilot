@@ -1,17 +1,18 @@
 // The slim bar under the top bar while the editor is on a pull request: which
-// one (its title opens its page), what it is based on, and what to do with it
-// (try it, merge it, or go back to live).
+// one (its title opens its page), what it is based on, how its checks are
+// going, and what to do with it (try it, merge it, or go back to live).
 //
 // Merging takes the saved copy, so it waits for the save. A pull request based
 // on a version that is no longer live cannot merge: its copy is of an older
-// agent, and merging it would undo what was merged since. The bar says so
-// where the button is.
+// agent, and merging it would undo what was merged since. Nor can one whose
+// checks are running or failing. The bar says so where the button is.
 
 import { ArrowLeft, GitMerge, GitPullRequestArrow, Phone } from 'lucide-react'
 
-import type { PullSummary } from '@/agents/types'
+import type { Checks, PullSummary } from '@/agents/types'
 import { Button } from '@/components/ui/button'
 import { basedOn, isStale, mergeBlocker, mergeLabel, pullLabel } from '@/pulls/model'
+import { ChecksLine } from '@/suite/bits'
 
 type Props = {
   pull: PullSummary
@@ -20,6 +21,8 @@ type Props = {
   merging: boolean
   /** A test call is on screen: merging would end it and change the graph under it. */
   callOpen: boolean
+  /** Its checks as they are now: the latest run of its tests. */
+  checks: Checks | null
   /** Why the last merge was refused, when it was not about a card. */
   problem: string | null
   /** Why a test call cannot be placed now, or null. */
@@ -33,9 +36,10 @@ type Props = {
 
 const dot = <span className="text-muted-foreground/60">·</span>
 
-export function PullBar({ pull, live, dirty, merging, callOpen, problem, callBlocker, onTry, onMerge, onBack, onOpenPage }: Props) {
+export function PullBar(props: Props) {
+  const { pull, live, dirty, merging, callOpen, checks, problem, callBlocker, onTry, onMerge, onBack, onOpenPage } = props
   const stale = isStale(pull, live)
-  const blocker = mergeBlocker(pull, live, dirty) ?? (callOpen ? 'Close the test call first.' : null)
+  const blocker = mergeBlocker(pull, live, dirty, checks) ?? (callOpen ? 'Close the test call first.' : null)
   return (
     <div className="flex h-10 shrink-0 items-center gap-2 border-b bg-brand-tint/40 px-4 text-[12.5px]">
       <GitPullRequestArrow className="size-3.5 shrink-0 text-brand" />
@@ -53,11 +57,22 @@ export function PullBar({ pull, live, dirty, merging, callOpen, problem, callBlo
         {stale && <span className="font-medium text-warn">Needs update · </span>}
         {basedOn(pull)}
       </span>
+      {dot}
+      <button onClick={onOpenPage} title="Its checks, on its page" className="shrink-0 rounded outline-none hover:underline">
+        <ChecksLine checks={checks} />
+      </button>
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        {problem && (
+        {problem ? (
           <span role="alert" className="mr-1 max-w-[44ch] truncate text-bad" title={problem}>
             {problem}
           </span>
+        ) : (
+          blocker &&
+          !stale && (
+            <span className="mr-1 max-w-[44ch] truncate text-muted-foreground" title={blocker}>
+              Merge waits: {blocker}
+            </span>
+          )
         )}
         <span title={callBlocker ?? undefined} className="flex">
           <Button size="sm" variant="outline" className="h-7 bg-card text-[12.5px]" disabled={callBlocker !== null} onClick={onTry}>

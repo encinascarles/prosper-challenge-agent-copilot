@@ -15,6 +15,9 @@
 # part of an agent. A layout is keyed by node name and never names a node its
 # config lacks.
 #
+# The sample agent is seeded with a few tests (example_tests.json), so a fresh
+# checkout has a suite to run and the checks have something to say.
+#
 # This module only stores. Checking that a config is a valid agent is the
 # caller's job (AgentBuilder), so there is one place that defines "valid". The
 # one agent the store writes on its own, the seed, goes through that same check.
@@ -27,11 +30,14 @@ from typing import Optional
 
 from agent_builder import AgentBuilder
 
+from . import runs
 from .db import BACKEND_DIR, connect, db_path, now
 from .pulls import insert_pull
+from .suite import manual, new_id
 from .versions import insert_version
 
 SEED_FLOW = BACKEND_DIR / "example_flow.json"
+SEED_TESTS = BACKEND_DIR / "example_tests.json"
 
 _SCHEMA = (
     """
@@ -50,6 +56,8 @@ CREATE TABLE IF NOT EXISTS versions (
     number INTEGER NOT NULL,
     config TEXT NOT NULL,
     layout TEXT NOT NULL,
+    rules TEXT NOT NULL DEFAULT '[]',
+    tests TEXT NOT NULL DEFAULT '[]',
     pull INTEGER,  -- the pull request it was merged from; NULL if it predates them
     created_at TEXT NOT NULL,
     PRIMARY KEY (agent_id, number)
@@ -65,11 +73,14 @@ CREATE TABLE IF NOT EXISTS pulls (
     merged_version INTEGER,
     config TEXT NOT NULL,
     layout TEXT NOT NULL,
+    rules TEXT NOT NULL DEFAULT '[]',
+    tests TEXT NOT NULL DEFAULT '[]',
     events TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (agent_id, number)
 )""",
+    runs.SCHEMA,
 )
 
 # What the lists and the agent's page read: the row, plus the two facts every
@@ -103,10 +114,17 @@ def init_db() -> None:
             AgentBuilder.from_dict(seed)
         _migrate_unversioned(conn)
         _create(conn)
+        _migrate_untested(conn)
+        runs.migrate(conn)
+        runs.stop_unfinished(conn)
         if seed is not None:
             # The example is live from the start, as v1: it is there to be called.
             agent_id = _insert_agent(conn, seed["name"])
-            insert_version(conn, agent_id, seed, {}, pull=None)
+            tests = [
+                {"id": new_id(), **test, "source": manual(None)}
+                for test in json.loads(SEED_TESTS.read_text())
+            ]
+            insert_version(conn, agent_id, seed, {}, pull=None, tests=tests)
 
 
 def _create(conn: sqlite3.Connection) -> None:
@@ -139,6 +157,15 @@ def _migrate_unversioned(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE agents DROP COLUMN config")
     if "layout" in columns:
         conn.execute("ALTER TABLE agents DROP COLUMN layout")
+
+
+def _migrate_untested(conn: sqlite3.Connection) -> None:
+    """Give copies from before rules and tests none of either."""
+    for table in ("versions", "pulls"):
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for column in ("rules", "tests"):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT '[]'")
 
 
 def _insert_agent(conn: sqlite3.Connection, name: str) -> str:

@@ -8,8 +8,9 @@
 //
 // Words: "PR #5" and "v2", always prefixed, so a number never stands alone.
 
-import type { PullSummary } from '@/agents/types'
+import type { Checks, PullSummary } from '@/agents/types'
 import type { Draft } from '@/draft/draft'
+import { checksBlocker } from '@/suite/model'
 
 /** The pull request the editor is on, or null for live. */
 export type On = number | null
@@ -39,15 +40,21 @@ export function basedOn(pull: PullSummary): string {
 /**
  * Why `pull` cannot be merged now, or null if it can. A merge takes the saved
  * copy, so changes that are not saved stand in the way: merging would quietly
- * leave them out.
+ * leave them out. And its checks must have passed on that copy: `checks`, the
+ * latest run as the caller has it (by default, as the list had it).
  */
-export function mergeBlocker(pull: PullSummary, live: number, dirty: boolean): string | null {
+export function mergeBlocker(
+  pull: PullSummary,
+  live: number,
+  dirty: boolean,
+  checks: Checks | null = pull.checks,
+): string | null {
   if (pull.state !== 'open') return `${pullLabel(pull.number)} is ${pull.state}.`
   if (isStale(pull, live)) {
     return `Live is ${versionLabel(live)} now, and this was ${basedOn(pull)}. It needs updating before it can merge.`
   }
   if (dirty) return 'Save your changes first.'
-  return null
+  return checksBlocker(checks)
 }
 
 /**

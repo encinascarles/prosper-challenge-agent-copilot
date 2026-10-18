@@ -37,13 +37,14 @@ describe('pull requests', () => {
   it('save to the pull request, never to the agent', async () => {
     const fetch = answer(200, {})
     vi.stubGlobal('fetch', fetch)
-    await savePull('a b', 2, NEW_AGENT, { greeting: { x: 1, y: 2 } })
+    await savePull('a b', 2, NEW_AGENT, { greeting: { x: 1, y: 2 } }, null, { hello: 'greeting' })
     const [url, init] = fetch.mock.calls[0] as [string, RequestInit]
     expect([url, init.method]).toEqual(['/api/agents/a%20b/pulls/2', 'PUT'])
     expect(JSON.parse(init.body as string)).toEqual({
       config: NEW_AGENT,
       layout: { greeting: { x: 1, y: 2 } },
       summary: null,
+      renames: { hello: 'greeting' },
     })
   })
 

@@ -1,7 +1,8 @@
 #
 # Versions — what an agent's callers get.
 #
-# A version is an immutable snapshot of an agent (config and layout), numbered
+# A version is an immutable snapshot of an agent (config and layout, with its
+# rules and tests: see suite.py), numbered
 # v1, v2… per agent. The latest one is live: calls run on it. A version is only
 # ever added, by merging a pull request (pulls.py), so each one says which pull
 # request it came from, and an older one can always be read back.
@@ -12,6 +13,7 @@ import sqlite3
 from typing import Optional
 
 from .db import connect, now, prune
+from .suite import prune_rules
 
 
 def live_version(conn: sqlite3.Connection, agent_id: str) -> int:
@@ -29,17 +31,21 @@ def insert_version(
     layout: dict,
     pull: Optional[int],
     at: Optional[str] = None,
+    rules: Optional[list] = None,
+    tests: Optional[list] = None,
 ) -> int:
     """Add the agent's next version, which makes it live. Returns its number."""
     number = live_version(conn, agent_id) + 1
     conn.execute(
-        "INSERT INTO versions (agent_id, number, config, layout, pull, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO versions (agent_id, number, config, layout, rules, tests, pull, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             agent_id,
             number,
             json.dumps(config),
             json.dumps(prune(layout, config)),
+            json.dumps(prune_rules(rules or [], config)),
+            json.dumps(tests or []),
             pull,
             at or now(),
         ),
@@ -58,6 +64,8 @@ def select_version(conn: sqlite3.Connection, agent_id: str, number: int) -> Opti
         "pull": row["pull"],
         "config": json.loads(row["config"]),
         "layout": json.loads(row["layout"]),
+        "rules": json.loads(row["rules"]),
+        "tests": json.loads(row["tests"]),
         "created_at": row["created_at"],
     }
 
@@ -76,6 +84,6 @@ def list_versions(agent_id: str) -> list[dict]:
 
 
 def get_version(agent_id: str, number: int) -> Optional[dict]:
-    """Version `number` of the agent, config and layout included, or None."""
+    """Version `number` of the agent, config, layout, rules and tests included, or None."""
     with connect() as conn:
         return select_version(conn, agent_id, number)

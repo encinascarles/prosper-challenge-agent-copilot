@@ -26,6 +26,7 @@ const pull = (fields: Partial<PullSummary> = {}): PullSummary => ({
   merged_version: null,
   created_at: '',
   updated_at: '',
+  checks: { state: 'passed', passed: 1, failing: 0, total: 1 },
   ...fields,
 })
 const setup = pull({ number: 1, title: 'Set up Anna', kind: 'setup', base_version: 0 })
@@ -57,6 +58,19 @@ describe('merging', () => {
   it('is closed to a pull request that is not open', () => {
     expect(mergeBlocker(pull({ state: 'merged' }), 2, false)).toBe('PR #2 is merged.')
     expect(isStale(pull({ state: 'merged' }), 2)).toBe(false)
+  })
+
+  it('waits for the checks to pass on the saved copy', () => {
+    const failing = { state: 'failed', passed: 3, failing: 2, total: 5 } as const
+    expect(mergeBlocker(pull(), 1, false, failing)).toBe('2 tests failing.')
+    expect(mergeBlocker(pull(), 1, false, { ...failing, state: 'running', failing: 0 })).toBe(
+      'Checks are still running.',
+    )
+    expect(mergeBlocker(pull({ checks: null }), 1, false)).toBe(
+      'Checks have not run on the latest change yet.',
+    )
+    // Unsaved changes first: saving them runs the checks again anyway.
+    expect(mergeBlocker(pull(), 1, true, failing)).toBe('Save your changes first.')
   })
 })
 
