@@ -13,11 +13,14 @@ from openai import AsyncOpenAI
 
 HANG_UP = "[HANGS UP]"
 
+# The caller lets the agent end the call: a caller who hangs up after their own
+# goodbye would fail "Ends the call" for the caller's manners, not the agent's.
 _INSTRUCTIONS = (
     "You are on a phone call with an automated assistant, playing this person:\n\n{who}\n\n"
     "Reply with only what you say next: one or two short spoken sentences, nothing else. "
-    "When what you called for is done and the assistant has said goodbye, or the call "
-    f"is going nowhere, reply exactly {HANG_UP}."
+    "Do not hang up yourself: when you are done, say so and let the assistant end the call. "
+    f"Reply exactly {HANG_UP} only if the description says you hang up, or if the assistant "
+    "has said goodbye twice and the call still has not ended."
 )
 
 

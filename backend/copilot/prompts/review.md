@@ -13,6 +13,14 @@ what failed and the call itself. Decide, for each one, which is wrong:
   2 or 3 options, each with the one-sentence rule it becomes, on the step it
   is about.
 
+When the call stayed in a step and never reached the one a check names (the
+agent answered there instead of taking the edge), that is an `agent` verdict:
+make the edge's description a plainer condition, or end the step's task with
+when to move on. Not a test rewrite.
+
+A test that failed some runs but passed 2 of 3 is flaky, not failing: you are
+only given failing ones; do not chase the others.
+
 Two things that look like the agent's fault and are not:
 - A test written before the clinic answered your questions can have a caller
   who never gives what the answers now make the agent ask for (a date of

@@ -124,7 +124,7 @@ export function endedText(ended: string): string {
     case 'caller_hung_up':
       return 'The caller hung up'
     case 'turn_cap':
-      return 'Cut after 16 turns'
+      return 'Cut after 20 turns'
     case 'stuck':
       return 'The agent stopped answering'
     case 'end_not_reached':
