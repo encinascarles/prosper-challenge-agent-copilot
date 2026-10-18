@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, UNREACHABLE, getAgent, mergePull, savePull } from './api'
+import { ApiError, UNREACHABLE, getAgent, mergePull, reopenPull, savePull, updatePull } from './api'
 import { NEW_AGENT } from './template'
 
 const answer = (status: number, body: unknown) =>
@@ -40,7 +40,11 @@ describe('pull requests', () => {
     await savePull('a b', 2, NEW_AGENT, { greeting: { x: 1, y: 2 } })
     const [url, init] = fetch.mock.calls[0] as [string, RequestInit]
     expect([url, init.method]).toEqual(['/api/agents/a%20b/pulls/2', 'PUT'])
-    expect(JSON.parse(init.body as string)).toEqual({ config: NEW_AGENT, layout: { greeting: { x: 1, y: 2 } } })
+    expect(JSON.parse(init.body as string)).toEqual({
+      config: NEW_AGENT,
+      layout: { greeting: { x: 1, y: 2 } },
+      summary: null,
+    })
   })
 
   it('merge with a POST to the merge of that pull request', async () => {
@@ -55,5 +59,23 @@ describe('pull requests', () => {
     vi.stubGlobal('fetch', answer(409, { detail: 'PR #3 is based on v1, but live is now v2.' }))
     const error = (await mergePull('a', 3).catch((e: unknown) => e)) as ApiError
     expect([error.status, error.message]).toEqual([409, 'PR #3 is based on v1, but live is now v2.'])
+  })
+
+  it('reopen and update with a POST to that pull request', async () => {
+    const fetch = vi.fn().mockImplementation(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetch)
+    await reopenPull('a', 4)
+    await updatePull('a', 4, { config: NEW_AGENT, layout: {} }, 2, 'kept your text in Greeting')
+    const calls = fetch.mock.calls as [string, RequestInit][]
+    expect(calls.map(([url, init]) => [url, init.method])).toEqual([
+      ['/api/agents/a/pulls/4/reopen', 'POST'],
+      ['/api/agents/a/pulls/4/update', 'POST'],
+    ])
+    expect(JSON.parse(calls[1][1].body as string)).toEqual({
+      config: NEW_AGENT,
+      layout: {},
+      onto: 2,
+      summary: 'kept your text in Greeting',
+    })
   })
 })

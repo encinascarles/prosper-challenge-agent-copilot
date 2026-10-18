@@ -42,6 +42,7 @@ import { toLayout, type Draft } from '@/draft/draft'
 import { EditorContext, useNewEditor, type EditorCore, type Refusal } from '@/draft/editor'
 import { GraphCanvas } from '@/graph/GraphCanvas'
 import { looseEdges, toGraph } from '@/graph/model'
+import { diffAgents, summarize } from '@/pulls/diff'
 import { changesAgent, testCallLabel, type On } from '@/pulls/model'
 
 type Props = {
@@ -123,7 +124,7 @@ export function AgentEditor(props: Props) {
     () => (locked ? { ...gated, apply: () => {}, cancel: () => {}, undo: () => {}, redo: () => {} } : gated),
     [gated, locked],
   )
-  const { draft, undo, redo, markSaved, seal } = core
+  const { draft, undo, redo, markSaved, seal, saved: lastSaved } = core
   // Only a pull request has something to save. On live the draft can differ
   // from what was loaded by where cards were moved, which is not saved.
   const dirty = on !== null && core.dirty
@@ -150,9 +151,12 @@ export function AgentEditor(props: Props) {
     if (loose.length > 0) return showLoose()
     if (!dirty) return
     const sent = draft
+    // What this save changes, for the pull request's log. The draft follows a
+    // step by id, so a step renamed and rewritten in one go is still one step.
+    const changes = diffAgents(lastSaved.config, sent.config, sent.ids.map((id) => lastSaved.ids.indexOf(id)))
     setSaving(true)
     try {
-      const stored = await savePull(agent.id, on, sent.config, toLayout(sent))
+      const stored = await savePull(agent.id, on, sent.config, toLayout(sent), summarize(changes))
       markSaved(sent)
       setSaved(true)
       setRefused(null)
