@@ -9,19 +9,36 @@
 // Updating replays the pull request's changes on the live version (see
 // pulls/diff.ts) and sends the result: where both changed the same text, the
 // pull request's text is kept, and its event says where.
+//
+// On a pull request Prosper AI works on, the page follows it while it works
+// and while its checks run, its questions are answered in the conversation,
+// and the composer under it writes to Prosper AI.
 
 import { ArrowLeft, GitMerge, GitPullRequestArrow, GitPullRequestClosed, MoreHorizontal, Phone, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { closePull, getPull, getVersion, mergePull, renamePull, reopenPull, updatePull } from '@/agents/api'
+import {
+  answerQuestion,
+  closePull,
+  getVersion,
+  mergePull,
+  renamePull,
+  reopenPull,
+  sendMessage,
+  updatePull,
+} from '@/agents/api'
 import type { Agent, AgentCopy, Pull, Suite } from '@/agents/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { callBlocker, checkFlow } from '@/draft/checks'
 import { openDraft } from '@/draft/draft'
 import { cn } from '@/lib/utils'
+import { Composer } from '@/prosper/Composer'
+import { prosperStatus } from '@/prosper/model'
+import { Status } from '@/prosper/parts'
+import { useFollow } from '@/prosper/useFollow'
 import { ChecksLine } from '@/suite/bits'
-import { suiteChanges, summarize } from '@/suite/model'
+import { progress, suiteChanges, summarize } from '@/suite/model'
 import { useChecks } from '@/suite/useChecks'
 
 import { Dot, StateBadge } from './bits'
@@ -77,7 +94,11 @@ function TitleInput({ title, onRename }: { title: string; onRename: (title: stri
 
 export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChanged, onToast }: Props) {
   const live = agent.live_version
-  const [pull, setPull] = useState<Pull | null>(null)
+  // Read again while Prosper AI works on it or its checks run.
+  const followed = useFollow(agent.id, number, true)
+  const pull = followed.pull
+  const setPull = followed.put
+  const [picking, setPicking] = useState<number | null>(null)
   // The version it is based on, which its changes are compared with.
   const [fetched, setFetched] = useState<{ number: number; copy: Copy } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -86,18 +107,9 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
   const [tab, setTab] = useState<Tab>('conversation')
   // Its checks, read again while they run. An update starts them again.
   const [revision, setRevision] = useState(0)
-  const checks = useChecks(agent.id, number, 0, revision)
-
-  useEffect(() => {
-    let stale = false
-    getPull(agent.id, number).then(
-      (loaded) => !stale && setPull(loaded),
-      (failure: Error) => !stale && setError(failure.message),
-    )
-    return () => {
-      stale = true
-    }
-  }, [agent.id, number])
+  // Prosper AI starts them too, after a change it made: each new event of the
+  // pull request is a reason to read them again.
+  const checks = useChecks(agent.id, number, 0, revision + (pull?.events.length ?? 0))
 
   const baseVersion = pull?.base_version ?? null
   useEffect(() => {
@@ -119,7 +131,7 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
   // What would stop a test call of its copy, as the editor would say it.
   const callStop = useMemo(() => (pull ? callBlocker(false, checkFlow(openDraft(pull.config))) : null), [pull])
 
-  if (error) return <p className="m-auto text-sm text-bad">{error}</p>
+  if (error || followed.error) return <p className="m-auto text-sm text-bad">{error ?? followed.error}</p>
   if (!pull) return <p className="m-auto text-sm text-muted-foreground">Loading…</p>
 
   // One action at a time; what it answers replaces the pull request shown.
@@ -160,8 +172,29 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
       },
     )
 
+  // A question answered by picking an option needs no model: its rule goes in.
+  const pick = async (question: string, option: number) => {
+    if (picking !== null) return
+    setPicking(option)
+    setProblem(null)
+    try {
+      setPull(await answerQuestion(agent.id, number, question, option))
+      setRevision((n) => n + 1)
+      onChanged()
+    } catch (failure) {
+      setProblem((failure as Error).message)
+    } finally {
+      setPicking(null)
+    }
+  }
+  const send = async (text: string) => {
+    setPull(await sendMessage(agent.id, number, text))
+    onChanged()
+  }
+
   const open = pull.state === 'open'
   const stale = isStale(pull, live)
+  const status = prosperStatus(pull)
   const checksNow = checks.run === undefined ? pull.checks : summarize(checks.run)
   const blocker = mergeBlocker(pull, live, false, checksNow)
   const note = callsNote(pull, live)
@@ -212,6 +245,12 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
                   <>
                     <Dot />
                     <span>{note}</span>
+                  </>
+                )}
+                {status && (
+                  <>
+                    <Dot />
+                    <Status status={status} className="-my-1 h-6 px-1" />
                   </>
                 )}
               </div>
@@ -320,7 +359,11 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
               agentName={agent.name}
               onShowChanges={() => setTab('changes')}
               onShowChecks={() => setTab('checks')}
+              onPick={(question, option) => void pick(question, option)}
+              picking={picking}
+              running={checks.run?.state === 'running' ? progress(checks.run) : null}
             />
+            {open && pull.prosper && <Composer pull={pull} onSend={send} />}
           </div>
         ) : tab === 'checks' ? (
           <PullChecks
