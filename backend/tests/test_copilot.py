@@ -241,6 +241,22 @@ def test_it_gives_up_after_three_refusals():
     assert len(model.asked["agent"]) == 3
 
 
+def test_an_answer_cut_off_is_asked_for_again_once():
+    from copilot.llm import CutOff
+
+    class Stuck(ScriptedModel):
+        def _complete(self, messages, name, schema):
+            self.asked.setdefault(name, []).append(list(messages))
+            raise CutOff("The model ran out of room before it finished its answer.")
+
+    model = Stuck({})
+    with pytest.raises(CutOff):
+        model.ask("agent", "x", artifacts.AGENT)
+    assert len(model.asked["agent"]) == 2
+    # The same request again, not the cut-off answer fed back.
+    assert model.asked["agent"][0] == model.asked["agent"][1]
+
+
 def test_usage_is_priced_by_model():
     from types import SimpleNamespace
 

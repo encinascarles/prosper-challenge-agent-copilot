@@ -31,9 +31,11 @@ PROMPTS = Path(__file__).parent / "prompts"
 ATTEMPTS = 3
 # Low reasoning effort: each artifact is a well-specified piece, and at the
 # default the model can think for minutes and spend the whole budget before it
-# writes a word. MAX_TOKENS bounds what one request can cost.
+# writes a word. MAX_TOKENS bounds what one request can cost (USD 0.06 on
+# PROSPER_MODEL): a whole agent is about 2,000 tokens, and a request that runs
+# past it has got stuck, which happens now and then; it is tried once more.
 EFFORT = "low"
-MAX_TOKENS = 16000
+MAX_TOKENS = 6000
 
 # USD per million tokens: input, cached input, output. A model not listed is
 # counted in tokens only.
@@ -46,6 +48,10 @@ PRICES = {
 
 class Failed(RuntimeError):
     """The model gave no answer that passed its check. The message says the last problem."""
+
+
+class CutOff(Failed):
+    """The answer ran past MAX_TOKENS before it was finished."""
 
 
 def prompt(name: str) -> str:
@@ -89,7 +95,15 @@ class LLM:
         problem = ""
         for attempt in range(1, ATTEMPTS + 1):
             started = time.monotonic()
-            raw = self._complete(messages, name, schema)
+            try:
+                raw = self._complete(messages, name, schema)
+            except CutOff as error:
+                # Not the model's fault to correct: ask the same again, once.
+                problem = str(error)
+                logger.warning(f"Prosper AI · {name} · attempt {attempt} · {problem}")
+                if attempt >= 2:
+                    raise
+                continue
             took = time.monotonic() - started
             logger.info(f"Prosper AI · {name} · attempt {attempt} · {took:.1f}s")
             try:
@@ -127,8 +141,13 @@ class LLM:
         if getattr(choice.message, "refusal", None):
             raise Failed(f"The model refused: {choice.message.refusal}")
         if choice.finish_reason == "length":
-            # Not retried: the same request would run out the same way, and pay for it again.
-            raise Failed("The model ran out of room before it finished its answer.")
+            details = getattr(response.usage, "completion_tokens_details", None)
+            thought = getattr(details, "reasoning_tokens", 0) or 0
+            logger.warning(
+                f"Prosper AI · {name} · cut off: {thought} tokens thinking, "
+                f"wrote {(choice.message.content or '')[:120]!r}…"
+            )
+            raise CutOff("The model ran out of room before it finished its answer.")
         return choice.message.content or ""
 
     def count(self, usage) -> None:
