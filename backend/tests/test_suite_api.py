@@ -7,6 +7,7 @@
 import pytest
 
 import api
+import store
 from api import checks
 
 
@@ -224,3 +225,45 @@ def test_a_call_on_a_pull_request_is_told_its_rules(client, on_pull):
     builder = api.agent_for_call({"agent_id": on_pull, "pull": 2})
 
     assert [(rule["step"], rule["text"]) for rule in builder.rules] == [(None, "Be brief.")]
+
+
+def test_a_merge_waits_for_checks_on_the_latest_change(client, on_pull, agent):
+    # A change stored but whose checks have not started yet: the window between
+    # a save and its run. The passing run is about the copy before it.
+    _add_test(client, on_pull, ["Reaches Confirm"])
+    agent["nodes"][0]["task_messages"][0]["content"] = "Say hello."
+    store.save_pull(on_pull, 2, agent, None, "you")
+
+    response = client.post(f"{_pull(on_pull)}/merge")
+
+    assert (response.status_code, response.json()) == (
+        409,
+        {"detail": "PR #2 cannot merge: checks have not run on the latest change yet."},
+    )
+    assert client.get(_pull(on_pull)).json()["checks"] is None
+    assert client.post(f"{_pull(on_pull)}/checks").status_code == 200
+    checks.wait()
+    assert client.post(f"{_pull(on_pull)}/merge").status_code == 200
+
+
+def test_a_save_that_only_moves_cards_keeps_the_run(client, on_pull):
+    _add_test(client, on_pull, ["Reaches Confirm"])
+    before = client.get(f"{_pull(on_pull)}/checks").json()
+    config = client.get(_pull(on_pull)).json()["config"]
+
+    client.put(_pull(on_pull), json={"config": config, "layout": {"greeting": {"x": 5, "y": 9}}})
+    checks.wait()
+
+    assert client.get(f"{_pull(on_pull)}/checks").json()["id"] == before["id"]
+    assert client.post(f"{_pull(on_pull)}/merge").status_code == 200
+
+
+def test_running_again_by_hand_always_runs(client, on_pull):
+    _add_test(client, on_pull, ["Reaches Confirm"])
+    before = client.get(f"{_pull(on_pull)}/checks").json()
+
+    again = client.post(f"{_pull(on_pull)}/checks").json()
+    checks.wait()
+
+    assert again["id"] != before["id"]
+    assert again["fingerprint"] == before["fingerprint"]

@@ -67,7 +67,7 @@ describe('merging', () => {
       'Wait for the checks to finish.',
     )
     expect(mergeBlocker(pull({ checks: null }), 1, false)).toBe(
-      "Its checks haven't run yet: save a change or run them.",
+      'Checks have not run on the latest change yet.',
     )
     // Unsaved changes first: saving them runs the checks again anyway.
     expect(mergeBlocker(pull(), 1, true, failing)).toBe('Save your changes first.')

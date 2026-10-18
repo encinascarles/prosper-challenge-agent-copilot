@@ -29,7 +29,7 @@ from typing import Optional
 
 from . import runs
 from .db import Conflict, NotFound, connect, now, prune
-from .suite import added_in, manual, new_id, prune_rules, rebase, rename_rules
+from .suite import added_in, fingerprint, manual, new_id, prune_rules, rebase, rename_rules
 from .versions import insert_version, live_version
 
 KINDS = ("setup", "edit")
@@ -54,7 +54,7 @@ def _to_record(conn: sqlite3.Connection, row: sqlite3.Row, full: bool) -> dict:
         "merged_version": row["merged_version"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
-        "checks": runs.summary(runs.select_run(conn, row["agent_id"], pull=row["number"])),
+        "checks": _checks(conn, row),
     }
     if full:
         record["config"] = json.loads(row["config"])
@@ -63,6 +63,13 @@ def _to_record(conn: sqlite3.Connection, row: sqlite3.Row, full: bool) -> dict:
         record["tests"] = json.loads(row["tests"])
         record["events"] = json.loads(row["events"])
     return record
+
+
+def _checks(conn: sqlite3.Connection, row: sqlite3.Row) -> Optional[dict]:
+    # Only a run on the copy as it is now says anything about it.
+    run = runs.select_run(conn, row["agent_id"], pull=row["number"])
+    copy = {key: json.loads(row[key]) for key in ("config", "rules", "tests")}
+    return runs.summary(run) if runs.is_of(run, fingerprint(copy)) else None
 
 
 def _select(conn: sqlite3.Connection, agent_id: str, number: int) -> Optional[dict]:
@@ -238,7 +245,7 @@ def merge_pull(agent_id: str, number: int, by: str) -> dict:
                 f"It has to be updated to v{live} before it can merge."
             )
         run = runs.select_run(conn, agent_id, pull=number)
-        if blocker := runs.merge_blocker(run):
+        if blocker := runs.merge_blocker(run, fingerprint(pull)):
             raise Conflict(f"{label(number)} cannot merge: {blocker[0].lower()}{blocker[1:]}")
         # One moment for both: the version is created when the PR is merged.
         merged = _event("merged", by)

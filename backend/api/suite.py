@@ -101,6 +101,8 @@ class SuiteRun(BaseModel):
     pull: int | None
     version: int | None
     state: Literal["running", "done", "stopped"]
+    # Of the config, rules and tests it ran on; None for a run from before fingerprints.
+    fingerprint: str | None
     repeats: int
     tests: list[TestRun]
     started_at: str
@@ -149,7 +151,7 @@ def run_pull_checks(agent_id: str, number: int) -> dict:
     pull = get_pull(agent_id, number)
     if pull["state"] != "open":
         raise HTTPException(status_code=409, detail=f"{store.label(number)} is {pull['state']}.")
-    return checks.start(agent_id, pull=number)
+    return checks.start(agent_id, pull=number, again=True)
 
 
 @router.get("/versions/{number}/checks", response_model=SuiteRun | None, responses=_MISSING)
@@ -162,7 +164,7 @@ def version_checks(agent_id: str, number: int) -> dict | None:
 @router.post("/versions/{number}/checks", response_model=SuiteRun, responses=_MISSING)
 def run_version_checks(agent_id: str, number: int) -> dict:
     _version(agent_id, number)
-    return checks.start(agent_id, version=number)
+    return checks.start(agent_id, version=number, again=True)
 
 
 def _version(agent_id: str, number: int) -> None:

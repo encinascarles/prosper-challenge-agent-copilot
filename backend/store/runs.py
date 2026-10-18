@@ -12,6 +12,11 @@
 # results are written as each run finishes, so a screen can show them coming
 # in; they are one JSON list in the row, read and written whole.
 #
+# A run records the fingerprint of what it ran on (suite.py: config, rules
+# and tests). That is how a merge knows the run is about the copy as it is now,
+# and how a change that does not touch them (moving cards) keeps its run
+# instead of paying for the same calls again.
+#
 # A run left unfinished by a server that stopped is marked "stopped" when the
 # next one starts: nothing is running it any more.
 #
@@ -29,6 +34,7 @@ CREATE TABLE IF NOT EXISTS runs (
     pull INTEGER,  -- the pull request whose copy it ran on
     version INTEGER,  -- the version it ran on, or became once its pull request merged
     state TEXT NOT NULL,  -- running, done, stopped
+    fingerprint TEXT,  -- of the config, rules and tests it ran on
     repeats INTEGER NOT NULL,
     tests TEXT NOT NULL,  -- [{ id, name, runs: [...] }], in the order of the suite
     started_at TEXT NOT NULL,
@@ -42,6 +48,7 @@ def _to_record(row: sqlite3.Row) -> dict:
         "pull": row["pull"],
         "version": row["version"],
         "state": row["state"],
+        "fingerprint": row["fingerprint"],
         "repeats": row["repeats"],
         "tests": json.loads(row["tests"]),
         "started_at": row["started_at"],
@@ -79,6 +86,7 @@ def start_run(
     agent_id: str,
     tests: list,
     repeats: int,
+    fingerprint: str,
     pull: Optional[int] = None,
     version: Optional[int] = None,
 ) -> dict:
@@ -103,13 +111,14 @@ def start_run(
             )
         entries = [{"id": test["id"], "name": test["name"], "runs": []} for test in tests]
         (run_id,) = conn.execute(
-            "INSERT INTO runs (agent_id, pull, version, state, repeats, tests, started_at,"
-            " finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            "INSERT INTO runs (agent_id, pull, version, state, fingerprint, repeats, tests,"
+            " started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
             (
                 agent_id,
                 pull,
                 version,
                 "running" if tests else "done",
+                fingerprint,
                 repeats,
                 json.dumps(entries),
                 at,
@@ -143,6 +152,13 @@ def finish_run(run_id: int, state: str = "done") -> Optional[dict]:
         return _to_record(row) if row else None
 
 
+def migrate(conn: sqlite3.Connection) -> None:
+    """Give runs from before fingerprints the column. Theirs stays empty: they match no copy."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(runs)")}
+    if "fingerprint" not in columns:
+        conn.execute("ALTER TABLE runs ADD COLUMN fingerprint TEXT")
+
+
 def stop_unfinished(conn: sqlite3.Connection) -> None:
     """Mark as stopped the runs a stopped server left running."""
     conn.execute(
@@ -170,11 +186,17 @@ def summary(run: Optional[dict]) -> Optional[dict]:
     return {"state": state, "passed": passed, "failing": failing, "total": len(run["tests"])}
 
 
-def merge_blocker(run: Optional[dict]) -> Optional[str]:
-    """Why a copy with this last run cannot go live, or None if its checks pass."""
+def is_of(run: Optional[dict], fingerprint: str) -> bool:
+    """Whether the run ran on a copy with this fingerprint."""
+    return run is not None and run["fingerprint"] == fingerprint
+
+
+def merge_blocker(run: Optional[dict], fingerprint: str) -> Optional[str]:
+    """Why a copy with this fingerprint and this last run cannot go live, or None if it can."""
+    if not is_of(run, fingerprint):
+        # None, or about an older copy: a change landed after it.
+        return "Checks have not run on the latest change yet."
     checks = summary(run)
-    if checks is None:
-        return "Its checks have not run yet: run them first."
     if checks["state"] == "running":
         return "Its checks are still running."
     if checks["state"] == "stopped":

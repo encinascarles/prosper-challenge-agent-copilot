@@ -36,6 +36,7 @@ const run = (results: boolean[][], state: SuiteRun['state'] = 'done'): SuiteRun 
   pull: 2,
   version: null,
   state,
+  fingerprint: 'f',
   repeats: 3,
   tests: results.map((runs, i) => ({ id: `t${i}`, name: `Test ${i}`, runs: runs.map(call) })),
   started_at: '',

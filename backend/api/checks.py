@@ -4,7 +4,9 @@
 # Every change to a pull request's copy (a save, an update, a rule or a test
 # added or taken out) starts its whole suite again, replacing the run in
 # progress: only the run on the copy as it is now can say whether it may
-# merge. A version's suite runs when someone asks.
+# merge. A change that leaves the config, rules and tests as they were (moving
+# cards) keeps the run it has: same fingerprint, same calls, nothing to pay
+# for twice. A version's suite runs when someone asks, and asking always runs.
 #
 # Runs happen on one event loop in a thread of its own, not on the server's:
 # a suite is a few dozen calls to the LLM at once, and the voice calls on the
@@ -24,6 +26,7 @@ from loguru import logger
 
 import simulate
 import store
+from store.suite import fingerprint
 
 services: Optional[simulate.Services] = None
 
@@ -41,15 +44,26 @@ def _the_loop() -> asyncio.AbstractEventLoop:
         return _loop
 
 
-def start(agent_id: str, pull: Optional[int] = None, version: Optional[int] = None) -> dict:
+def start(
+    agent_id: str, pull: Optional[int] = None, version: Optional[int] = None, again: bool = False
+) -> dict:
     """Run the suite of the pull request's copy, or of the version, replacing any run on it.
 
-    Returns the new run, as it starts.
+    Returns the new run, as it starts. Unless `again`, a run on the same
+    config, rules and tests that finished or is still going is kept and
+    returned instead: running it twice would only spend more.
     """
     copy = store.get_pull(agent_id, pull) if pull is not None else None
     if pull is None:
         copy = store.get_version(agent_id, version)
-    run = store.start_run(agent_id, copy["tests"], simulate.REPEATS, pull=pull, version=version)
+    ran_on = fingerprint(copy)
+    last = store.get_run(agent_id, pull=pull, version=version)
+    if not again and last is not None and last["fingerprint"] == ran_on:
+        if last["state"] in ("running", "done"):
+            return last
+    run = store.start_run(
+        agent_id, copy["tests"], simulate.REPEATS, ran_on, pull=pull, version=version
+    )
     key = (agent_id, pull, version)
     with _lock:
         before = _running.pop(key, None)

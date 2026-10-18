@@ -143,6 +143,7 @@ export type SuiteRun = {
   pull: number | null
   version: number | null
   state: 'running' | 'done' | 'stopped'
+  fingerprint: string | null // of the config, rules and tests it ran on
   repeats: number
   tests: TestRun[]
   started_at: string
@@ -188,7 +189,7 @@ export type PullSummary = {
   merged_version: number | null
   created_at: string
   updated_at: string
-  checks: Checks | null // its latest run of the tests; null if none ran
+  checks: Checks | null // its latest run on the copy as it is now; null if none ran on it
 }
 
 /** A pull request with its own copy of the agent, which is what the editor saves to. */

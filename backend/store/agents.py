@@ -115,6 +115,7 @@ def init_db() -> None:
         _migrate_unversioned(conn)
         _create(conn)
         _migrate_untested(conn)
+        runs.migrate(conn)
         runs.stop_unfinished(conn)
         if seed is not None:
             # The example is live from the start, as v1: it is there to be called.

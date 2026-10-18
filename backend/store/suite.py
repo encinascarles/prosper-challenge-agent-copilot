@@ -18,6 +18,8 @@
 # with it when the step is removed, like the step's position in the layout.
 #
 
+import hashlib
+import json
 import uuid
 from typing import Optional
 
@@ -45,6 +47,16 @@ def prune_rules(rules: list, config: dict) -> list:
 def rename_rules(rules: list, renames: dict) -> list:
     """`rules` with their steps renamed as `renames` says: { old name: new name }."""
     return [{**rule, "step": renames.get(rule["step"], rule["step"])} for rule in rules]
+
+
+def fingerprint(copy: dict) -> str:
+    """What a run of a copy's tests depends on: its config, rules and tests, never its layout.
+
+    Two copies with the same fingerprint run the same calls, so a run of one
+    is a run of the other.
+    """
+    what = {key: copy[key] for key in ("config", "rules", "tests")}
+    return hashlib.sha256(json.dumps(what, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def rebase(own: list, onto: list) -> list:

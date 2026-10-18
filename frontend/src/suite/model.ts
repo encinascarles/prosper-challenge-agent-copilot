@@ -66,7 +66,7 @@ export function checksText(checks: Checks | null): string {
 
 /** Why checks in this state keep a copy from going live, or null if they pass. */
 export function checksBlocker(checks: Checks | null): string | null {
-  if (checks === null) return "Its checks haven't run yet: save a change or run them."
+  if (checks === null) return 'Checks have not run on the latest change yet.'
   if (checks.state === 'running') return 'Wait for the checks to finish.'
   if (checks.state === 'stopped') return "Its checks didn't finish: run them again."
   if (checks.failing) return `${tests(checks.failing)} failing.`
