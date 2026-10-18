@@ -101,7 +101,8 @@ def insert_pull(
         "UPDATE agents SET next_number = next_number + 1 WHERE id = ? RETURNING next_number - 1",
         (agent_id,),
     ).fetchone()
-    opened = _event("opened", by)
+    # The version it was opened on: its base may move later, with an update.
+    opened = _event("opened", by, **({"version": base_version} if base_version else {}))
     conn.execute(
         "INSERT INTO pulls (agent_id, number, title, kind, state, base_version, merged_version,"
         " config, layout, events, created_at, updated_at)"

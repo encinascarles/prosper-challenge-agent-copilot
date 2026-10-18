@@ -114,6 +114,7 @@ def test_a_pull_request_is_a_copy_of_live_numbered_from_the_agents_counter(
         "open",
     )
     assert pull["base_version"] == 1
+    assert pull["events"][0]["version"] == 1
     v1 = client.get(f"/api/agents/{agent_id}/versions/1").json()
     assert (pull["config"], pull["layout"]) == (v1["config"], v1["layout"])
     assert client.get(f"/api/agents/{agent_id}").json()["open_pulls"] == 1

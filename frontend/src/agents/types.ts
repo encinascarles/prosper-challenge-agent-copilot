@@ -92,7 +92,7 @@ export type PullEvent = {
   type: 'opened' | 'saved' | 'merged' | 'closed' | 'reopened' | 'updated'
   by: string
   at: string
-  version?: number | null // "merged": the version it became; "updated": its new base
+  version?: number | null // "opened": copied from; "merged": became; "updated": its new base
   summary?: string | null // "saved", "updated": one line on what changed
 }
 

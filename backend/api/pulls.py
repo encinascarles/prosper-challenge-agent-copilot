@@ -46,7 +46,9 @@ class PullEvent(BaseModel):
     type: Literal["opened", "saved", "merged", "closed", "reopened", "updated"]
     by: str  # "you" for now; Prosper's own changes will carry its name
     at: str
-    version: int | None = None  # "merged": the version it became; "updated": its new base
+    # "opened": the version it was copied from; "merged": the version it became;
+    # "updated": its new base.
+    version: int | None = None
     summary: str | None = None  # "saved", "updated": one line on what changed
 
 
