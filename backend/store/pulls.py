@@ -501,5 +501,5 @@ def record_checks(agent_id: str, number: int, run: dict) -> None:
         pull = _select(conn, agent_id, number)
         if pull is None or checks is None:
             return
-        counts = {key: checks[key] for key in ("passed", "total")}
+        counts = {key: checks[key] for key in ("passed", "flaky", "total")}
         _record_event(conn, agent_id, pull, _event("checks", "checks", **counts))

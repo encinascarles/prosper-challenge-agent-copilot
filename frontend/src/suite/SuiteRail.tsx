@@ -213,7 +213,7 @@ export function SuiteRail(props: Props) {
         <div className={cn(heading, 'mt-3 border-t')}>
           Tests
           <span className="ml-auto font-normal tracking-normal normal-case tabular-nums">
-            {done ? `Running ${done.done}/${done.of}` : checks && checks.total > 0 ? `${checks.passed}/${checks.total} pass` : ''}
+            {done ? `Running ${done.done}/${done.of}` : checks && checks.total > 0 ? `${checks.passed}/${checks.total} pass${checks.flaky ? ` · ${checks.flaky} flaky` : ''}` : ''}
           </span>
           {suite.tests.length > 0 && (
             <button

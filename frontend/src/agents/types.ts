@@ -112,7 +112,8 @@ export type Suite = {
 export type Checks = {
   state: 'running' | 'passed' | 'failed' | 'stopped'
   passed: number // tests that passed every one of their runs
-  failing: number // tests that failed at least one
+  flaky: number // tests that passed all their runs but one: shown, never blocking
+  failing: number // tests that failed more than one run: these block a merge
   total: number
 }
 
@@ -206,6 +207,7 @@ export type PullEvent = {
   text?: string | null // "rule": its text; "test": its name
   removed?: boolean | null // the rule or test was taken out
   passed?: number | null // "checks": tests that passed, of `total`
+  flaky?: number | null // "checks": tests that passed all their runs but one
   total?: number | null
   notes?: string | null // "request": the notes pasted
   files?: FileRead[] | null // "request": the files read

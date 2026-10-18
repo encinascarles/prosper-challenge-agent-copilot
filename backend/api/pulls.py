@@ -62,7 +62,8 @@ class Checks(BaseModel):
 
     state: Literal["running", "passed", "failed", "stopped"]
     passed: int  # tests that passed every one of their runs
-    failing: int  # tests that failed at least one
+    flaky: int  # tests that passed all their runs but one: shown, not in the way of a merge
+    failing: int  # tests that failed more than one run: these block a merge
     total: int
 
 
@@ -120,6 +121,7 @@ class PullEvent(BaseModel):
     text: str | None = None
     removed: bool | None = None  # the rule or test was taken out
     passed: int | None = None  # "checks": the tests that passed, of `total`
+    flaky: int | None = None  # "checks": the tests that passed all their runs but one
     total: int | None = None
     # "request": the pasted notes and the files read. "step", "message": `text`.
     notes: str | None = None

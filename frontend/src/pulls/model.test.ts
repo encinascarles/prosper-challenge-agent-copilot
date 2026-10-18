@@ -26,7 +26,7 @@ const pull = (fields: Partial<PullSummary> = {}): PullSummary => ({
   merged_version: null,
   created_at: '',
   updated_at: '',
-  checks: { state: 'passed', passed: 1, failing: 0, total: 1 },
+  checks: { state: 'passed', passed: 1, flaky: 0, failing: 0, total: 1 },
   prosper: null,
   ...fields,
 })
@@ -62,7 +62,7 @@ describe('merging', () => {
   })
 
   it('waits for the checks to pass on the saved copy', () => {
-    const failing = { state: 'failed', passed: 3, failing: 2, total: 5 } as const
+    const failing = { state: 'failed', passed: 3, flaky: 0, failing: 2, total: 5 } as const
     expect(mergeBlocker(pull(), 1, false, failing)).toBe('2 tests failing.')
     expect(mergeBlocker(pull(), 1, false, { ...failing, state: 'running', failing: 0 })).toBe(
       'Checks are still running.',

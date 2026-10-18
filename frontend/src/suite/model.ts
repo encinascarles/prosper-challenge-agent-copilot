@@ -2,7 +2,9 @@
 //
 // A test runs several times, because a simulated call does not always go the
 // same way, so its result is a score ("2/3"), never a bare pass or fail: it
-// passes at 3/3, is at risk below that and fails at 0/3. A copy's checks are
+// passes at 3/3, is flaky at 2/3 (shown, never in the way of a merge) and
+// fails below that: a voice agent on an LLM does not answer the same way every
+// time, and one unlucky call should not block a merge. A copy's checks are
 // the latest run of its whole suite (backend/store/runs.py); `summarize` says
 // of a run what the backend says of it, so the bar and the lists agree while
 // it is still coming in.
@@ -16,7 +18,10 @@ import type { Call } from '@/call/path'
 /** How many runs of a test passed, of how many it gets, and how many are done. */
 export type Score = { passed: number; done: number; of: number }
 
-export type Verdict = 'running' | 'pass' | 'risk' | 'fail'
+export type Verdict = 'running' | 'pass' | 'flaky' | 'fail'
+
+/** How many of a test's runs may fail before the test does: as backend/store/runs.py. */
+const ALLOWED_MISSES = 1
 
 export function score(test: TestRun | undefined, repeats: number): Score {
   const runs = test?.runs ?? []
@@ -25,9 +30,9 @@ export function score(test: TestRun | undefined, repeats: number): Score {
 
 /** What a score says: every run passed, some did, none did, or not all are in yet. */
 export function verdict({ passed, done, of }: Score): Verdict {
+  if (done - passed > ALLOWED_MISSES) return 'fail'
   if (done < of) return 'running'
-  if (passed === of) return 'pass'
-  return passed === 0 ? 'fail' : 'risk'
+  return passed === of ? 'pass' : 'flaky'
 }
 
 /** "2/3", or "…" while its runs are coming in. */
@@ -39,10 +44,10 @@ export function scoreText(s: Score): string {
 export function summarize(run: SuiteRun | null): Checks | null {
   if (run === null) return null
   const scores = run.tests.map((test) => score(test, run.repeats))
-  const passed = scores.filter((s) => s.done === s.of && s.passed === s.of).length
-  const failing = scores.filter((s) => s.passed < s.done).length
+  const count = (kind: Verdict) => scores.filter((s) => verdict(s) === kind).length
+  const [passed, flaky, failing] = [count('pass'), count('flaky'), count('fail')]
   const state = run.state === 'done' ? (failing ? 'failed' : 'passed') : run.state
-  return { state, passed, failing, total: run.tests.length }
+  return { state, passed, flaky, failing, total: run.tests.length }
 }
 
 /** How many of a run's calls are done, of how many. */
@@ -65,7 +70,8 @@ export function checksText(checks: Checks | null, bare = false): string {
   if (checks.state === 'running') return bare ? 'running…' : 'Checks running…'
   if (checks.state === 'stopped') return bare ? "didn't finish" : "Checks didn't finish"
   if (checks.failing) return `${tests(checks.failing)} failing`
-  return `${word}${checks.passed}/${checks.total}`
+  const flaky = checks.flaky ? ` · ${checks.flaky} flaky` : ''
+  return `${word}${checks.passed}/${checks.total}${flaky}`
 }
 
 /** Why checks in this state keep a copy from going live, or null if they pass. */

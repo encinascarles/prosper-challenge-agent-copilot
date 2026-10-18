@@ -43,6 +43,7 @@ from loguru import logger
 import store
 from store.db import now
 from store.prosper import PROSPER
+from store.runs import verdict
 from store.suite import added_in
 
 from . import artifacts
@@ -349,12 +350,12 @@ def _change(
 
 
 def _failing_tests(agent_id: str, number: int) -> dict:
-    """The tests that failed in the latest run, by id: their names."""
-    run = store.get_run(agent_id, pull=number) or {"tests": []}
+    """The tests that failed in the latest run, by id: their names. Flaky ones are not here."""
+    run = store.get_run(agent_id, pull=number) or {"tests": [], "repeats": 0}
     return {
         test["id"]: test["name"]
         for test in run["tests"]
-        if any(not r["passed"] for r in test["runs"])
+        if verdict(test, run["repeats"]) == "failing"
     }
 
 

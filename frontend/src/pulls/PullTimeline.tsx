@@ -257,14 +257,16 @@ function Event({ event, pull, live, agentName, onShowChanges, onShowChecks }: Pr
       )
       break
     case 'checks': {
-      const failing = (event.total ?? 0) - (event.passed ?? 0)
+      const flaky = event.flaky ?? 0
+      const failing = (event.total ?? 0) - (event.passed ?? 0) - flaky
       mark = failing ? <CircleX className="size-3 text-bad" /> : <CircleCheck className="size-3 text-emerald-600" />
       text = (
         <>
           <span className={cn('font-medium tabular-nums', failing ? 'text-bad' : 'text-emerald-700 dark:text-emerald-500')}>
             Checks {event.passed}/{event.total}
           </span>
-          {failing ? ` · ${failing} ${failing === 1 ? 'test' : 'tests'} failing` : ''} · 3 runs each
+          {failing ? ` · ${failing} ${failing === 1 ? 'test' : 'tests'} failing` : ''}
+          {flaky ? ` · ${flaky} flaky` : ''} · 3 runs each
           <button onClick={onShowChecks} className="ml-2 font-medium text-foreground/80 hover:underline">
             Details →
           </button>

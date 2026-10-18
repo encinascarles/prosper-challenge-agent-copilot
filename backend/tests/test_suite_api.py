@@ -122,7 +122,7 @@ def test_adding_a_test_runs_the_suite_three_times_per_test(client, on_pull):
     assert [step["node"] for step in first["path"]][-1] == "confirm"
     assert first["path"][1]["from"] == "greeting"
     pull = client.get(_pull(on_pull)).json()
-    assert pull["checks"] == {"state": "passed", "passed": 1, "failing": 0, "total": 1}
+    assert pull["checks"] == {"state": "passed", "passed": 1, "flaky": 0, "failing": 0, "total": 1}
     event = pull["events"][-1]
     assert (event["type"], event["passed"], event["total"]) == ("checks", 1, 1)
 
@@ -138,7 +138,7 @@ def test_a_failing_test_blocks_the_merge(client, on_pull, fake_checks):
         {"detail": "PR #2 cannot merge: 1 test failing."},
     )
     checks_ = client.get(_pull(on_pull)).json()["checks"]
-    assert checks_ == {"state": "failed", "passed": 0, "failing": 1, "total": 1}
+    assert checks_ == {"state": "failed", "passed": 0, "flaky": 0, "failing": 1, "total": 1}
 
 
 def test_running_checks_block_the_merge(client, on_pull, monkeypatch):
@@ -278,3 +278,37 @@ def test_a_run_is_marked_done_even_if_its_log_entry_fails(client, on_pull, monke
     _add_test(client, on_pull, ["Ends the call"])
 
     assert store.get_run(on_pull, pull=2)["state"] == "done"
+
+
+def _run_with(*results: list[bool]) -> dict:
+    return {
+        "state": "done",
+        "repeats": 3,
+        "tests": [{"runs": [{"passed": p} for p in runs]} for runs in results],
+    }
+
+
+def test_a_test_fails_only_below_two_of_three():
+    run = _run_with([True, True, True], [True, False, True], [False, True, False])
+
+    assert store.summary(run) == {
+        "state": "failed",
+        "passed": 1,
+        "flaky": 1,
+        "failing": 1,
+        "total": 3,
+    }
+    assert store.merge_blocker({**run, "fingerprint": "f"}, "f") == "1 test failing."
+
+
+def test_flaky_tests_do_not_block_a_merge():
+    run = {**_run_with([True, True, True], [True, True, False]), "fingerprint": "f"}
+
+    assert store.summary(run)["state"] == "passed"
+    assert store.merge_blocker(run, "f") is None
+
+
+def test_a_test_is_failing_as_soon_as_two_runs_failed():
+    run = {**_run_with([False, False]), "state": "running"}
+
+    assert store.summary(run)["failing"] == 1

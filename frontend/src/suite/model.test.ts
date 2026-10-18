@@ -62,34 +62,44 @@ const test = (id: string, pull?: number): Test => ({
 
 describe('a test result', () => {
   it('is a score out of its runs, never a bare pass or fail', () => {
-    const [passing, risky, failing, running] = run([
+    const [passing, flaky, failing, running, failed] = run([
       [true, true, true],
       [true, false, true],
       [false, false, false],
       [true],
+      [false, false],
     ]).tests.map((t) => score(t, 3))
-    expect([passing, risky, failing, running].map(verdict)).toEqual(['pass', 'risk', 'fail', 'running'])
-    expect(scoreText(risky)).toBe('2/3')
+    expect([passing, flaky, failing, running, failed].map(verdict)).toEqual(['pass', 'flaky', 'fail', 'running', 'fail'])
+    expect(scoreText(flaky)).toBe('2/3')
     expect(scoreText(running)).toBe('…')
   })
 })
 
 describe('a run of the suite', () => {
-  it('fails as soon as one run of a test fails, and passes once all are in', () => {
-    expect(summarize(run([[true, true, true], [true, false]], 'running'))).toEqual({
+  it('fails only once a test failed two of its runs; 2/3 is flaky and does not fail it', () => {
+    expect(summarize(run([[true, true, true], [false, false]], 'running'))).toEqual({
       state: 'running',
       passed: 1,
+      flaky: 0,
       failing: 1,
       total: 2,
     })
-    expect(summarize(run([[true, true, true], [true, false, true]]))?.state).toBe('failed')
+    expect(summarize(run([[true, true, true], [true, false, true]]))).toEqual({
+      state: 'passed',
+      passed: 1,
+      flaky: 1,
+      failing: 0,
+      total: 2,
+    })
+    expect(summarize(run([[true, true, true], [false, false, true]]))?.state).toBe('failed')
     expect(summarize(run([[true, true, true]]))?.state).toBe('passed')
     expect(summarize(null)).toBeNull()
   })
 
   it('says how it went in a few words', () => {
     expect(checksText(summarize(run([[true, true, true], [true, true, true]])))).toBe('Checks 2/2')
-    expect(checksText(summarize(run([[true, false, true], [false, false, false]])))).toBe('2 tests failing')
+    expect(checksText(summarize(run([[true, false, false], [false, false, false]])))).toBe('2 tests failing')
+    expect(checksText(summarize(run([[true, true, true], [true, false, true]])))).toBe('Checks 1/2 · 1 flaky')
     expect(checksText(summarize(run([[true]], 'running')))).toBe('Checks running…')
   })
 
