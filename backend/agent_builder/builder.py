@@ -17,6 +17,12 @@
 # The type is reserved (schema.py refuses it in an agent's own actions), so the
 # handler only ever sees the builder's.
 #
+# Every step that moves on gets one more instruction, the same for every
+# agent: do only this step, and call a function as soon as its condition
+# holds. Without it the voice model often did the next step's work in the
+# current one and said goodbye itself, so the call never moved and never
+# ended; the graph is only worth what the model's function calls follow.
+#
 # Rules are compiled in here too. A rule is a short instruction the agent must
 # follow, on every step or on one: `{ "step": "<node name>" | null, "text" }`.
 # They are kept apart from the agent JSON (stored next to it, like the layout)
@@ -40,6 +46,13 @@ from .schema import NODE_ACTION, AgentConfig, AgentError, Edge, Node
 # What the LLM APIs accept as a tool name. An edge's function is sent as one.
 _TOOL_NAME = re.compile(r"[a-zA-Z0-9_-]{1,64}")
 
+# Said to every step that moves on (see the header).
+STEP_GUIDE = (
+    "Do only what this step asks. As soon as the condition of one of your functions holds, "
+    "call that function before you say anything else. Never handle another step's part of the "
+    "call here, and never say goodbye or end the call yourself: the step that ends the call "
+    "does that."
+)
 
 
 async def _log_node(action: dict, flow_manager: FlowManager) -> None:
@@ -171,11 +184,12 @@ class AgentBuilder:
 
     def _task_messages(self, node: Node) -> list:
         rules = self._rules_for(node.name)
-        if not rules:
+        guide = STEP_GUIDE if node.edges and not node.end else ""
+        if not rules and not guide:
             return node.task_messages
         # Same role as the node's own instructions: they are more of the same.
         role = node.task_messages[0]["role"] if node.task_messages else "developer"
-        text = _with_rules("", rules, "Rules for this step:")
+        text = _with_rules(guide, rules, "Rules for this step:")
         return [*node.task_messages, {"role": role, "content": text}]
 
     def _make_edge_function(self, node: Node, edge: Edge) -> FlowsFunctionSchema:
