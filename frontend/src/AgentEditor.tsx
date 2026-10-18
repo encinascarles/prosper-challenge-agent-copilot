@@ -32,6 +32,11 @@
 // left to save. While its card is on screen, running or ended, the editor is
 // read-only: the path it draws is over this very graph, by node and edge name,
 // and an edit would leave it pointing at things that changed.
+//
+// On a pull request Prosper AI is building or asking about, the editor is
+// read-only too: the copy is Prosper AI's to write until it is done, and the
+// graph is opened again each time it changes. The top bar says what Prosper
+// AI is doing, and a card over the graph shows its steps and its questions.
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 
 import { addRule, addTest, ApiError, mergePull, removeRule, removeTest, savePull } from '@/agents/api'
@@ -49,6 +54,10 @@ import { toLayout, type Draft } from '@/draft/draft'
 import { EditorContext, useNewEditor, type EditorCore, type Refusal } from '@/draft/editor'
 import { GraphCanvas } from '@/graph/GraphCanvas'
 import { looseEdges, toGraph } from '@/graph/model'
+import { Mark } from '@/components/Mark'
+import { prosperStatus, statusText } from '@/prosper/model'
+import { Status } from '@/prosper/parts'
+import { SetupCard } from '@/prosper/SetupCard'
 import { diffAgents, summarize as summarizeChanges } from '@/pulls/diff'
 import { changesAgent, pullLabel, testCallLabel, versionLabel, type On } from '@/pulls/model'
 import { addedIn, asCall, namesOf, summarize } from '@/suite/model'
@@ -93,6 +102,10 @@ type Props = {
   sections: React.ReactNode
   /** Start a test call once open: "Try it" on a pull request's page brought it here. */
   autoCall: boolean
+  /** The pull request the editor is on, as last read, when Prosper AI has a part in it. */
+  prosper: Pull | null
+  /** Something here changed that pull request (an answer was picked). */
+  onProsper: (pull: Pull) => void
 }
 
 // The steps a save renames, old name to new: their rules follow them. The
@@ -121,6 +134,9 @@ function locate(sent: Draft, error: unknown): Refusal {
 export function AgentEditor(props: Props) {
   const { agent, pulls, versions, on, copy, agents, onPick, onSettings, onNew, onDelete, showSettings } = props
   const { onDirty, onSaved, onSwitch, onOpenForEdits, onNewPull, onMerged, onProblem, onOpenPage, sections, autoCall } = props
+  const { prosper, onProsper } = props
+  // Building or waiting for an answer: the copy is Prosper AI's until then.
+  const status = prosper ? prosperStatus(prosper) : null
   const pull = on === null ? null : (pulls.find((p) => p.number === on) ?? null)
   const open = useNewEditor(copy.config, copy.layout)
   const testCall = useTestCall(agent.id, on)
@@ -129,7 +145,8 @@ export function AgentEditor(props: Props) {
   // them bumps `revision`, so the run it started is read at once.
   const [suite, setSuite] = useState(props.suite)
   const [revision, setRevision] = useState(0)
-  const checks = useChecks(agent.id, on, agent.live_version, revision)
+  // Prosper AI starts them when it is done: a new event of its is a reason to read them again.
+  const checks = useChecks(agent.id, on, agent.live_version, revision + (prosper?.events.length ?? 0))
   const checksNow = checks.run === undefined ? (pull?.checks ?? null) : summarize(checks.run)
   // The test whose card is open ('new' for a new one), and the run of it shown.
   const [testOpen, setTestOpen] = useState<string | null>(null)
@@ -140,7 +157,7 @@ export function AgentEditor(props: Props) {
   // The run on the graph, while no test call is: the graph is read-only then,
   // as during a call, since the path is drawn over these very names.
   const litRun = testCall.call === null ? (shownResult?.runs[runShown] ?? null) : null
-  const locked = testCall.call !== null || litRun !== null
+  const locked = testCall.call !== null || litRun !== null || status !== null
 
   // On live, the first edit that changes the agent opens a pull request and
   // goes on into the same draft. Until the editor is on it, further edits
@@ -385,25 +402,30 @@ export function AgentEditor(props: Props) {
             }
             sections={sections}
           >
-            <SaveControl
-              live={on === null}
-              opening={openingPull}
-              dirty={dirty}
-              saving={saving}
-              saved={saved}
-              loose={loose.length}
-              warnings={warnings.length}
-              problem={refusal && { message: refusal.message, onCard: refusal.node !== null }}
-              onSave={() => void save()}
-              onShowLoose={showLoose}
-              onShowWarnings={() => setFramed({ ids: [...new Set(warnings.map((w) => w.node))] })}
-              onShowProblem={() => refusal?.node && setFramed({ ids: [refusal.node] })}
-            />
+            {status ? (
+              <Status status={status} className="ml-auto" onClick={() => on !== null && onOpenPage(on)} />
+            ) : (
+              <SaveControl
+                live={on === null}
+                opening={openingPull}
+                dirty={dirty}
+                saving={saving}
+                saved={saved}
+                loose={loose.length}
+                warnings={warnings.length}
+                problem={refusal && { message: refusal.message, onCard: refusal.node !== null }}
+                onSave={() => void save()}
+                onShowLoose={showLoose}
+                onShowWarnings={() => setFramed({ ids: [...new Set(warnings.map((w) => w.node))] })}
+                onShowProblem={() => refusal?.node && setFramed({ ids: [refusal.node] })}
+              />
+            )}
             <TestCallButton
               label={testCallLabel(on)}
               dirty={unsaved}
               warnings={warnings}
               open={testCall.call !== null}
+              waitFor={status && `${statusText(status)}.`}
               onStart={startCall}
             />
           </TopBar>
@@ -416,7 +438,13 @@ export function AgentEditor(props: Props) {
               callOpen={testCall.call !== null}
               checks={checksNow}
               problem={mergeProblem}
-              callBlocker={testCall.call !== null ? 'The test call is on screen' : callBlocker(unsaved, warnings)}
+              callBlocker={
+                status
+                  ? `${statusText(status)}.`
+                  : testCall.call !== null
+                    ? 'The test call is on screen'
+                    : callBlocker(unsaved, warnings)
+              }
               onTry={startCall}
               onMerge={() => void merge()}
               onBack={() => onSwitch(null)}
@@ -439,7 +467,17 @@ export function AgentEditor(props: Props) {
               onRerun={() => void checks.rerun().catch((error: Error) => onProblem(error.message))}
             />
             <div className="relative flex min-w-0 flex-1">
-              <GraphCanvas />
+              {draft.config.nodes.length === 0 && prosper ? (
+                <div className="m-auto flex flex-col items-center gap-2 text-[13px] text-muted-foreground">
+                  <Mark className="h-[22px]" />
+                  {prosper.prosper?.state === 'working' ? 'Prosper AI is reading your guidelines…' : 'Nothing drawn yet.'}
+                </div>
+              ) : (
+                <GraphCanvas />
+              )}
+              {prosper && on !== null && (status !== null || prosper.prosper?.state === 'failed') && (
+                <SetupCard agentId={agent.id} pull={prosper} onChanged={onProsper} onOpenPage={() => onOpenPage(on)} />
+              )}
               {testCall.call && (
                 <CallCard
                   call={testCall.call}

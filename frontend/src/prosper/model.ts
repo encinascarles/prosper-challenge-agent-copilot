@@ -7,7 +7,7 @@
 // its state, and its events in the log like anyone else's. So the Build
 // screen, the pull request's page and the top bar read the same thing.
 
-import type { FileRead, PullEvent, PullSummary, Source } from '@/agents/types'
+import type { AgentConfig, FileRead, PullEvent, PullSummary, Rule, Source, Test } from '@/agents/types'
 
 import { pullLabel } from '@/pulls/model'
 
@@ -86,4 +86,13 @@ export function sourceText(source: Source): string | null {
   if (source.kind === 'answer') return `Your answer${where}`
   if (source.kind === 'request') return `Your request${where}`
   return null
+}
+
+/** Whether two copies are the same agent with the same rules and tests (where cards sit aside). */
+export function sameCopy(
+  a: { config: AgentConfig; rules: Rule[]; tests: Test[] },
+  b: { config: AgentConfig; rules: Rule[]; tests: Test[] },
+): boolean {
+  const key = (copy: typeof a) => JSON.stringify([copy.config, copy.rules, copy.tests])
+  return key(a) === key(b)
 }
