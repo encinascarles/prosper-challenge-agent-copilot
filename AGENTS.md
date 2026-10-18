@@ -32,7 +32,9 @@ Design decisions and their rationale live in `solution.md`.
 | `backend/agent_builder/schema.py` | The agent contract: `AgentConfig` / `Node` / `Edge`. What the UI edits and the Copilot reads and writes. |
 | `backend/agent_builder/builder.py` | `AgentBuilder`: validates an agent and compiles it into a Pipecat Flows graph. |
 | `frontend/` | Agent Builder UI: Vite + React + TypeScript, Tailwind, shadcn/ui. `src/components/ui/` is shadcn-generated, add components with `npx shadcn@latest add <name>` rather than hand-editing. |
+| `backend/simulate/` | Tests as text calls on the same Pipecat pipeline as voice calls: simulated caller, checks, the suite (3 runs per test). Unit tests use a scripted LLM, never OpenAI. |
 | `backend/example_flow.json` | Sample agent (clinic scheduler), only to illustrate the format. |
+| `backend/example_tests.json` | The tests the sample agent is seeded with. |
 | `solution.md` | Overview and key architectural decisions (part of the deliverable). |
 | `tools/wt/`, `t3.json` | Worktree tooling: prepare a fresh worktree, run it on free ports, list them. See Worktrees below. |
 
