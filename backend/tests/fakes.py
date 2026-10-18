@@ -54,7 +54,9 @@ class ScriptedLLM(OpenAILLMService):
 
     async def get_chat_completions(self, context):
         self.requests += 1
-        response = self.script.pop(0)
+        # Past its script it only says goodbye, so a call it was not written
+        # for ends with the caller hanging up instead of waiting forever.
+        response = self.script.pop(0) if self.script else say("Goodbye.")
 
         async def stream():
             if response[0] == "say":

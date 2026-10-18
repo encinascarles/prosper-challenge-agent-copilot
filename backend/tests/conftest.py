@@ -1,7 +1,9 @@
 #
 # Shared fixtures. Tests never touch the real database, the network or an LLM:
 # the store points at a temp file and the API runs on a bare FastAPI app, with
-# no Pipecat runner and no voice pipeline behind it.
+# no Pipecat runner and no voice pipeline behind it. The checks every change
+# starts run on fakes (tests/fakes.py), and each test waits for them to end
+# before its database goes away.
 #
 
 import copy
@@ -14,9 +16,20 @@ from fastapi.testclient import TestClient
 
 import api
 import store
+from api import checks
 from store.db import DB_PATH_ENV
+from tests.fakes import FakeServices
 
 EXAMPLE_FLOW = json.loads((Path(__file__).parent.parent / "example_flow.json").read_text())
+
+
+@pytest.fixture(autouse=True)
+def fake_checks(monkeypatch) -> FakeServices:
+    """What the checks talk to, in every test: never OpenAI."""
+    services = FakeServices()
+    monkeypatch.setattr(checks, "services", services)
+    yield services
+    checks.wait()
 
 
 @pytest.fixture

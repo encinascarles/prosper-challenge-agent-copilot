@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 import store
 
+from . import checks
 from .models import INVALID, NOT_FOUND, YOU, AgentSave, not_found, problem
 from .pulls import Pull
 
@@ -72,7 +73,8 @@ def create_agent(save: AgentSave) -> Any:
     if found := problem(save.config):
         return found
     agent, pull = store.create_agent(save.config, save.positions(), by=YOU)
-    return {"agent": agent, "pull": pull}
+    checks.start(agent["id"], pull=pull["number"])
+    return {"agent": agent, "pull": store.get_pull(agent["id"], pull["number"])}
 
 
 @router.delete("/{agent_id}", status_code=204, responses=NOT_FOUND)

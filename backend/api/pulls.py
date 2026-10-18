@@ -8,6 +8,10 @@
 # 409 when the state forbids it (a merged pull request, a stale base), 422 with
 # the located problem when the copy is not an agent the bot could run.
 #
+# A copy also carries its rules and tests (suite.py has their routes), and each
+# change to a pull request's copy starts its checks again (checks.py). A merge
+# is refused (409) until they have passed on the copy as it is.
+#
 # A pull request left behind by a merge is updated by sending its changes
 # replayed on the new live version. The replay is worked out by the client
 # (frontend/src/pulls/diff.ts), which already compares versions to show what a
@@ -22,9 +26,39 @@ from pydantic import BaseModel, Field, StringConstraints
 
 import store
 
+from . import checks
 from .models import INVALID, YOU, AgentSave, Position, Problem, not_found, problem
 
 router = APIRouter(prefix="/api/agents/{agent_id}", tags=["versions and pull requests"])
+
+
+class Source(BaseModel):
+    kind: Literal["manual"]  # written by hand; Prosper AI's will say what they came from
+    pull: int | None = None  # the pull request it was added in
+
+
+class Rule(BaseModel):
+    id: str
+    step: str | None  # the step (node name) it is for; None for every step
+    text: str
+    source: Source
+
+
+class Test(BaseModel):
+    id: str
+    name: str
+    caller: str  # who calls and what they want
+    checks: list[str]  # one line each
+    source: Source
+
+
+class Checks(BaseModel):
+    """How the latest run of a copy's tests is going."""
+
+    state: Literal["running", "passed", "failed", "stopped"]
+    passed: int  # tests that passed every one of their runs
+    failing: int  # tests that failed at least one
+    total: int
 
 
 class VersionSummary(BaseModel):
@@ -39,17 +73,27 @@ class Version(BaseModel):
     pull: int | None
     config: dict[str, Any]  # the agent JSON, as agent_builder/schema.py defines it
     layout: dict[str, Position]  # where the editor drew each node, by node name
+    rules: list[Rule]
+    tests: list[Test]
     created_at: str
 
 
 class PullEvent(BaseModel):
-    type: Literal["opened", "saved", "merged", "closed", "reopened", "updated"]
-    by: str  # "you" for now; Prosper's own changes will carry its name
+    type: Literal[
+        "opened", "saved", "merged", "closed", "reopened", "updated", "rule", "test", "checks"
+    ]
+    by: str  # "you" for now; Prosper AI's changes will carry its name; "checks" for checks
     at: str
     # "opened": the version it was copied from; "merged": the version it became;
     # "updated": its new base.
     version: int | None = None
     summary: str | None = None  # "saved", "updated": one line on what changed
+    # "rule": its step (None for every step) and text; "test": its name, as text.
+    step: str | None = None
+    text: str | None = None
+    removed: bool | None = None  # the rule or test was taken out
+    passed: int | None = None  # "checks": the tests that passed, of `total`
+    total: int | None = None
 
 
 class PullSummary(BaseModel):
@@ -61,11 +105,14 @@ class PullSummary(BaseModel):
     merged_version: int | None  # the version it became, once merged
     created_at: str
     updated_at: str
+    checks: Checks | None  # its latest run of the tests; None if none ran
 
 
 class Pull(PullSummary):
     config: dict[str, Any]  # its own copy of the agent
     layout: dict[str, Position]
+    rules: list[Rule]
+    tests: list[Test]
     events: list[PullEvent]
 
 
@@ -81,6 +128,11 @@ class PullSave(AgentSave):
         default=None,
         description="One line on what this save changes, for the pull request's log.",
         examples=["Edited Confirm · added Waitlist"],
+    )
+    renames: dict[str, str] | None = Field(
+        default=None,
+        description="Steps this save renames, old name to new: their rules follow them.",
+        examples=[{"confirm": "confirm_booking"}],
     )
 
 
@@ -160,9 +212,18 @@ def save_pull(agent_id: str, number: int, save: PullSave) -> Any:
     # partial update could leave edges pointing at nodes that are gone.
     if found := problem(save.config):
         return found
-    return _answer(
-        store.save_pull, agent_id, number, save.config, save.positions(), YOU, save.summary
+    _answer(
+        store.save_pull,
+        agent_id,
+        number,
+        save.config,
+        save.positions(),
+        YOU,
+        save.summary,
+        save.renames,
     )
+    checks.start(agent_id, pull=number)
+    return store.get_pull(agent_id, number)
 
 
 @router.patch("/pulls/{number}", response_model=Pull, responses=_MISSING | _REFUSED)
@@ -199,7 +260,7 @@ def update_pull(agent_id: str, number: int, update: PullUpdate) -> Any:
     # A copy always has a layout; one left out keeps no positions, and the
     # editor places those cards again.
     layout = update.positions() or {}
-    return _answer(
+    _answer(
         store.update_pull,
         agent_id,
         number,
@@ -209,3 +270,5 @@ def update_pull(agent_id: str, number: int, update: PullUpdate) -> Any:
         YOU,
         update.summary,
     )
+    checks.start(agent_id, pull=number)
+    return store.get_pull(agent_id, number)
