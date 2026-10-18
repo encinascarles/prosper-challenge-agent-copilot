@@ -73,10 +73,16 @@ export type AgentCopy = {
   layout: Layout
 }
 
-/** Where a rule or a test came from: written by hand, in the pull request `pull`. */
+/**
+ * Where a rule or a test came from: written by hand, or by Prosper AI from a
+ * line of the guidelines, from your answer to its question or from something
+ * you asked it for. `pull` is the pull request it was added in.
+ */
 export type Source = {
-  kind: 'manual'
-  pull?: number | null // the pull request it was added in; none for one older than them
+  kind: 'manual' | 'guidelines' | 'answer' | 'request'
+  pull?: number | null // none for one older than pull requests
+  file?: string | null // guidelines: the file it quotes, or "your notes"
+  quote?: string | null // the line it comes from, or your answer or request, word for word
 }
 
 /** A short instruction added to the agent's prompt, on every step (`step` null) or on one. */
@@ -166,9 +172,32 @@ export type Version = AgentCopy &
   created_at: string
 }
 
+/** A file Prosper AI read, as the conversation shows it. */
+export type FileRead = {
+  name: string
+  kind: string // PDF, DOCX, TXT, MD
+  pages: number | null
+}
+
 export type PullEvent = {
-  type: 'opened' | 'saved' | 'merged' | 'closed' | 'reopened' | 'updated' | 'rule' | 'test' | 'checks'
-  by: string // "you", or "checks" for a run of its tests
+  type:
+    | 'opened'
+    | 'saved'
+    | 'merged'
+    | 'closed'
+    | 'reopened'
+    | 'updated'
+    | 'rule'
+    | 'test'
+    | 'checks'
+    // Prosper AI's conversation: what it was asked, each step it finished,
+    // its questions and their answers, and messages either way.
+    | 'request'
+    | 'step'
+    | 'question'
+    | 'answer'
+    | 'message'
+  by: string // "you", "Prosper AI", or "checks" for a run of its tests
   at: string
   version?: number | null // "opened": copied from; "merged": became; "updated": its new base
   summary?: string | null // "saved", "updated": one line on what changed
@@ -177,6 +206,18 @@ export type PullEvent = {
   removed?: boolean | null // the rule or test was taken out
   passed?: number | null // "checks": tests that passed, of `total`
   total?: number | null
+  notes?: string | null // "request": the notes pasted
+  files?: FileRead[] | null // "request": the files read
+  question?: string | null // "question", "answer": the question's id
+  options?: string[] | null // "question": what can be picked
+  changed?: boolean | null // "message": Prosper AI changed the agent with it
+}
+
+/** What Prosper AI is up to on a pull request it works on. */
+export type Prosper = {
+  state: 'working' | 'waiting' | 'done' | 'failed' // waiting: for your answer
+  doing: string | null // while working: the step under way
+  usage: Record<string, number> | null // requests, tokens and USD so far
 }
 
 /** A proposed change to an agent, as lists show it. */
@@ -190,6 +231,7 @@ export type PullSummary = {
   created_at: string
   updated_at: string
   checks: Checks | null // its latest run on the copy as it is now; null if none ran on it
+  prosper: Prosper | null // Prosper AI's work on it; null if it has no part in it
 }
 
 /** A pull request with its own copy of the agent, which is what the editor saves to. */

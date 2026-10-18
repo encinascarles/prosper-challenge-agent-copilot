@@ -27,6 +27,7 @@ const pull = (fields: Partial<PullSummary> = {}): PullSummary => ({
   created_at: '',
   updated_at: '',
   checks: { state: 'passed', passed: 1, failing: 0, total: 1 },
+  prosper: null,
   ...fields,
 })
 const setup = pull({ number: 1, title: 'Set up Anna', kind: 'setup', base_version: 0 })
