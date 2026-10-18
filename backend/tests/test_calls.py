@@ -62,6 +62,54 @@ def test_an_agent_that_is_not_live_is_refused(client, agent):
         api.agent_for_call({"agent_id": agent_id})
 
 
+def _with_pull(client, agent_id: str, agent: dict, name="Edited") -> int:
+    """Open a pull request on the agent and save a copy named `name` on it. Returns its number."""
+    number = client.post(f"/api/agents/{agent_id}/pulls", json={"title": "Edits"}).json()["number"]
+    client.put(f"/api/agents/{agent_id}/pulls/{number}", json={"config": {**agent, "name": name}})
+    return number
+
+
+def test_a_test_call_runs_the_saved_copy_of_the_pull_request_it_names(client, agent):
+    agent_id = _saved(client, agent)
+    number = _with_pull(client, agent_id, agent)
+
+    builder = api.agent_for_call({"agent_id": agent_id, "pull": number})
+
+    assert builder.config.name == "Edited"
+
+
+def test_pull_request_1_can_be_called_before_the_agent_is_live(client, agent):
+    agent["name"] = "Draft agent"
+    agent_id = client.post("/api/agents", json={"config": agent}).json()["agent"]["id"]
+
+    assert api.agent_for_call({"agent_id": agent_id, "pull": 1}).config.name == "Draft agent"
+
+
+@pytest.mark.parametrize("ended, state", [("merge", "merged"), ("close", "closed")])
+def test_a_pull_request_that_is_not_open_is_not_called(client, agent, ended, state):
+    agent_id = _saved(client, agent)
+    number = _with_pull(client, agent_id, agent)
+    client.post(f"/api/agents/{agent_id}/pulls/{number}/{ended}")
+
+    with pytest.raises(api.CallError, match=f"PR #2 is {state}.") as refused:
+        api.agent_for_call({"agent_id": agent_id, "pull": number})
+
+    assert refused.value.status == 409
+
+
+def test_an_unknown_pull_request_is_refused(client, agent):
+    with pytest.raises(api.CallError, match="The agent has no PR #9.") as refused:
+        api.agent_for_call({"agent_id": _saved(client, agent), "pull": 9})
+
+    assert refused.value.status == 404
+
+
+@pytest.mark.parametrize("pull", [None, "2", True], ids=["null", "text", "bool"])
+def test_a_pull_that_is_not_a_number_is_refused(client, agent, pull):
+    with pytest.raises(api.CallError, match="'pull' must be the number of a pull request."):
+        api.agent_for_call({"agent_id": _saved(client, agent), "pull": pull})
+
+
 def test_an_unknown_agent_is_refused(client):
     with pytest.raises(api.CallError, match="No agent with id 'nope'.") as refused:
         api.agent_for_call({"agent_id": "nope"})
@@ -97,6 +145,16 @@ def test_start_with_a_saved_agent_reaches_the_runner_with_its_body(client, agent
     response = start(json=request)
 
     assert (response.status_code, response.json()) == (200, {"reached": request})
+
+
+def test_start_with_a_closed_pull_request_fails_before_the_runner(client, agent, start):
+    agent_id = _saved(client, agent)
+    number = _with_pull(client, agent_id, agent)
+    client.post(f"/api/agents/{agent_id}/pulls/{number}/close")
+
+    response = start(json={"body": {"agent_id": agent_id, "pull": number}})
+
+    assert (response.status_code, response.json()) == (409, {"detail": "PR #2 is closed."})
 
 
 def test_start_with_an_unknown_agent_fails_before_the_runner(start):
@@ -147,6 +205,15 @@ def test_the_bot_runs_the_agent_in_the_start_body(client, agent, ran):
     asyncio.run(bot.bot(SimpleNamespace(body={"agent_id": agent_id})))
 
     assert [builder.config.name for builder in ran] == ["Saved agent"]
+
+
+def test_the_bot_runs_the_pull_request_in_the_start_body(client, agent, ran):
+    agent_id = _saved(client, agent)
+    number = _with_pull(client, agent_id, agent)
+
+    asyncio.run(bot.bot(SimpleNamespace(body={"agent_id": agent_id, "pull": number})))
+
+    assert [builder.config.name for builder in ran] == ["Edited"]
 
 
 def test_the_bot_runs_the_sample_without_a_body(client, ran):

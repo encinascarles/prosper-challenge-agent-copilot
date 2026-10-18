@@ -6,6 +6,11 @@
 # version, what its callers get: what is tested is what was saved, never a
 # draft that only exists in a browser.
 #
+# A test call can try a pull request before it is merged instead:
+# `{ "agent_id": "<id>", "pull": 5 }` runs that pull request's saved copy. Only
+# an open one: a merged pull request is a version now, and a closed one is not
+# going anywhere. Production calls never name a pull request.
+#
 # A start that names no agent runs the sample flow. That is what Pipecat's
 # prebuilt client at /client sends, and it keeps that page working with no
 # agent to pick.
@@ -53,15 +58,40 @@ def agent_for_call(body: Any) -> AgentBuilder:
     record = store.get_agent(agent_id)
     if record is None:
         raise CallError(f"No agent with id '{agent_id}'.", status=404)
-    if record["live_version"] == 0:
+    if "pull" in body:
+        config = _pull_config(agent_id, body["pull"])
+    elif record["live_version"] == 0:
         raise CallError(f"{record['name']} is not live yet: merge PR #1 first.", status=409)
-    config = store.get_version(agent_id, record["live_version"])["config"]
+    else:
+        config = store.get_version(agent_id, record["live_version"])["config"]
     try:
         return AgentBuilder.from_dict(config)
     except ValueError as error:
         # Every stored agent passed this check when it was saved, so this is an
         # agent saved before a rule existed. Say which rule.
         raise CallError(f"Agent '{agent_id}' cannot run: {error}", status=422) from error
+
+
+def _pull_config(agent_id: str, number: Any) -> dict:
+    """The saved copy of the agent's open pull request `number`."""
+    # bool is an int to Python, and `true` is not a pull request number.
+    if not isinstance(number, int) or isinstance(number, bool):
+        raise CallError("'pull' must be the number of a pull request.", status=422)
+    pull = store.get_pull(agent_id, number)
+    if pull is None:
+        raise CallError(f"The agent has no {store.label(number)}.", status=404)
+    if pull["state"] != "open":
+        raise CallError(f"{store.label(number)} is {pull['state']}.", status=409)
+    return pull["config"]
+
+
+def describe(body: Any) -> str:
+    """What a call started with `body` runs, for the log."""
+    if not isinstance(body, dict) or "agent_id" not in body:
+        return "the sample flow"
+    if "pull" in body:
+        return f"agent {body['agent_id']}, PR #{body['pull']}"
+    return f"agent {body['agent_id']}, live"
 
 
 async def check_start(request: Request, call_next):
