@@ -20,6 +20,7 @@ from openai.types.chat.chat_completion_chunk import (
 from openai.types.completion_usage import CompletionUsage
 from pipecat.services.openai.llm import OpenAILLMService
 
+from copilot.llm import LLM
 from simulate import Services
 
 
@@ -126,3 +127,26 @@ class FakeServices(Services):
         self.judged.append(check)
         reason = f"Judged on {len(transcript)} lines."
         return {"pass": self.verdict, "detail": reason, "tokens": {"prompt": 7, "completion": 3}}
+
+
+
+class ScriptedModel(LLM):
+    """Prosper AI's model, answering each prompt from a script: { prompt: [answers] }.
+
+    Only the request is replaced, so what `ask` does with an answer (parse it,
+    check it, send the error back) is the real code. `asked` keeps every
+    request's messages, by prompt.
+    """
+
+    def __init__(self, script: dict):
+        super().__init__(client=None, model="fake")
+        self.script = {name: list(answers) for name, answers in script.items()}
+        self.asked: dict[str, list[list[dict]]] = {}
+
+    def _complete(self, messages, name, schema):
+        self.asked.setdefault(name, []).append(list(messages))
+        self.usage["requests"] += 1
+        answers = self.script.get(name) or []
+        if not answers:
+            raise AssertionError(f"Nothing scripted for '{name}'.")
+        return json.dumps(answers.pop(0))
