@@ -22,6 +22,10 @@ Draw what the guidelines describe, and nothing they do not:
   what they want, collect details, offer times, confirm, goodbye). Usually 4 to
   7 steps. Use the clinic's real details (times, addresses) in the tasks.
 - A task is at most 3 short sentences: what to do in this step, nothing else.
+- The agent moves on only by taking an edge, so say so where it matters: the
+  persona tells it to take an edge as soon as its condition holds, never to
+  answer a later step's question in the current one, and to end a call only
+  by taking the edge to the step that ends it, never by saying goodbye itself.
 - Keep edges few: the way on from each step, and a way out only where callers
   often take one. A side request that can come at any time (symptoms, say)
   gets one step reached from where it usually comes up, not an edge from

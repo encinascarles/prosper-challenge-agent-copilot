@@ -13,6 +13,14 @@ what failed and the call itself. Decide, for each one, which is wrong:
   2 or 3 options, each with the one-sentence rule it becomes, on the step it
   is about.
 
+Two things that look like the agent's fault and are not:
+- A test written before the clinic answered your questions can have a caller
+  who never gives what the answers now make the agent ask for (a date of
+  birth, say). That is a `test` verdict: rewrite the caller to give it.
+- A test that passed in some runs and failed in others shows the agent does
+  it only sometimes: make the step's instruction or its edge's condition
+  plainer, rather than adding a rule for every step.
+
 Never take a test out, and never weaken one only to make it pass. Write `why`
 as one short line a person reads in the conversation ("The guidelines never
 say replies must be two sentences"). `summary` is one line on what you did
