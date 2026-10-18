@@ -5,14 +5,15 @@
 
 from fastapi import FastAPI
 
-from .agents import router
-from .calls import CallError, agent_for_call, check_start
+from . import agents, pulls
+from .calls import CallError, agent_for_call, check_start, describe
 
 
 def mount(app: FastAPI) -> None:
     """Add the builder's routes, and the check on the runner's /start, to `app`."""
-    app.include_router(router)
+    app.include_router(agents.router)
+    app.include_router(pulls.router)
     app.middleware("http")(check_start)
 
 
-__all__ = ["CallError", "agent_for_call", "mount", "router"]
+__all__ = ["CallError", "agent_for_call", "describe", "mount"]

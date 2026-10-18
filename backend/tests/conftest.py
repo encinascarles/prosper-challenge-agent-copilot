@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 import api
 import store
-from store.agents import DB_PATH_ENV
+from store.db import DB_PATH_ENV
 
 EXAMPLE_FLOW = json.loads((Path(__file__).parent.parent / "example_flow.json").read_text())
 
@@ -33,3 +33,29 @@ def client(tmp_path, monkeypatch) -> TestClient:
     app = FastAPI()
     api.mount(app)
     return TestClient(app)
+
+
+@pytest.fixture
+def new_agent(client, agent):
+    """Create an agent through the API, named `name`: its id and its pull request #1."""
+
+    def create(name: str = "Dental Recall", layout: dict | None = None) -> tuple[str, dict]:
+        body = {"config": {**agent, "name": name}}
+        if layout is not None:
+            body["layout"] = layout
+        created = client.post("/api/agents", json=body).json()
+        return created["agent"]["id"], created["pull"]
+
+    return create
+
+
+@pytest.fixture
+def live_agent(client, new_agent):
+    """Create an agent and merge its pull request #1, so it is live as v1. Returns its id."""
+
+    def create(name: str = "Dental Recall") -> str:
+        agent_id, _ = new_agent(name)
+        assert client.post(f"/api/agents/{agent_id}/pulls/1/merge").status_code == 200
+        return agent_id
+
+    return create

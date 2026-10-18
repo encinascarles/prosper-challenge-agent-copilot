@@ -2,9 +2,9 @@
 //
 // Pipecat's own client over the small WebRTC transport: the same protocol as
 // its prebuilt test client at /client. The call is started through the
-// runner's /start with the id of the saved agent, so the bot runs what was
-// saved (backend/api/calls.py); the runner answers with a session and the
-// transport sends its offer there.
+// runner's /start with the id of the saved agent and, on a pull request, its
+// number, so the bot runs what was saved there (backend/api/calls.py); the
+// runner answers with a session and the transport sends its offer there.
 //
 // Everything that can go wrong before or during the call becomes a `failed`
 // event with a sentence a person can act on. Nothing fails silently: a call
@@ -37,8 +37,11 @@ function micProblem(error: DeviceError): string {
   return MIC_FAILED
 }
 
-/** Starts a call to the saved agent `agentId`, reporting what happens to `emit`. */
-export function startCall(agentId: string, emit: (event: CallEvent) => void): LiveCall {
+/**
+ * Starts a call to the saved agent `agentId`, reporting what happens to `emit`:
+ * to its live version, or to the saved copy of its open pull request `pull`.
+ */
+export function startCall(agentId: string, pull: number | null, emit: (event: CallEvent) => void): LiveCall {
   // Once over, a call says nothing more: the client keeps firing callbacks
   // while it tears down, and a failure is followed by its own disconnect.
   let over = false
@@ -111,7 +114,7 @@ export function startCall(agentId: string, emit: (event: CallEvent) => void): Li
           transport: 'webrtc',
           // A STUN server, so the call also connects from another device.
           enableDefaultIceServers: true,
-          body: { agent_id: agentId },
+          body: pull === null ? { agent_id: agentId } : { agent_id: agentId, pull },
         },
       })
     } catch (error) {

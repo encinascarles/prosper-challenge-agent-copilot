@@ -131,6 +131,7 @@ async def bot(runner_args: RunnerArguments):
     """Entry point invoked by the Pipecat dev runner (and Pipecat Cloud)."""
     try:
         builder = api.agent_for_call(runner_args.body)
+        logger.info(f"Call runs {api.describe(runner_args.body)}: {builder.config.name}")
     except api.CallError as error:
         # /start refuses these before any call. This is an offer sent straight
         # to /api/offer: hang up rather than leave the caller on a silent line.

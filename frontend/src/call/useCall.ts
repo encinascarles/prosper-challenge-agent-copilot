@@ -45,8 +45,8 @@ function reducer(state: State, action: Action): State {
   }
 }
 
-/** The test call of the saved agent `agentId`. */
-export function useTestCall(agentId: string): TestCall {
+/** The test call of the saved agent `agentId`: of its live version, or of its open pull request `pull`. */
+export function useTestCall(agentId: string, pull: number | null): TestCall {
   const [state, dispatch] = useReducer(reducer, { call: null, session: 0 })
   const live = useRef<LiveCall | null>(null)
   const session = useRef(0)
@@ -66,11 +66,11 @@ export function useTestCall(agentId: string): TestCall {
     // it: it is loaded when the first one is placed.
     import('./client').then(
       ({ startCall }) => {
-        if (session.current === mine) live.current = startCall(agentId, emit)
+        if (session.current === mine) live.current = startCall(agentId, pull, emit)
       },
       () => emit({ type: 'failed', problem: "The call couldn't start. Reload the page and try again.", now: Date.now() }),
     )
-  }, [agentId, drop])
+  }, [agentId, pull, drop])
   const end = useCallback(() => live.current?.end(), [])
   const close = useCallback(() => {
     drop()

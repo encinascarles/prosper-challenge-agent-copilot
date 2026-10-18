@@ -69,8 +69,8 @@ with the example agent on first start. No ORM and no migrations tool, which is
 fine for one table and will need revisiting if the schema grows. The agent is
 stored whole in one TEXT column, as `AgentConfig` reads it: nothing queries inside
 the graph, so tables for nodes and edges would only be a mapping to keep in sync.
-Deleting an agent removes its row for good: there are no versions yet to bring
-it back from, so the editor asks first. Only a database that is being created is
+Deleting an agent removes it for good, versions and pull requests included,
+so the editor asks first. Only a database that is being created is
 seeded. One whose last agent was deleted stays empty, or the example would come
 back on its own at the next start.
 
@@ -88,9 +88,9 @@ reads and rewrites.
   another device, and it is part of how the team reads a flow.
 - *A `layout` column next to `config`: `{ "<node name>": { "x", "y" } }`.* Chosen.
 
-**Trade-offs.** Creating and saving an agent take the same body,
-`{ config, layout? }`, and both are written in one statement, so they cannot be
-saved apart. The store drops positions of
+**Trade-offs.** Creating an agent and saving a pull request's copy take the same
+body, `{ config, layout? }`, and both are written in one statement, so they
+cannot be saved apart; a version keeps the layout it was merged with. The store drops positions of
 names that are not nodes of the agent on every save, with or without a layout in
 the request, so the layout never refers to a node that is gone. A client that
 leaves the layout out (the Copilot applying a fix) keeps the stored one; a node
@@ -140,16 +140,66 @@ hand-written checker instead of a library, and the request body is an untyped
 object in the OpenAPI docs (the example agent is shown instead). The tests pin
 each sentence, because they are a contract.
 
-### No agent versioning yet
+### Versions and pull requests: nothing reaches callers except by merging
 
-**Context.** Saving replaces the stored agent. The Copilot will need versions:
-a fix is applied as a new version, and a call has to know which one it ran on.
+**Context.** Everything the Copilot will do (set up an agent from guidelines,
+fix an issue found in calls, refine a fix after a comment) produces a proposed
+change that someone reviews, tries and then puts in front of callers. A person
+editing by hand does the same. Until now saving overwrote the agent, so every
+save went straight to the next call.
 
-**Choice.** Left out of this API on purpose. Nothing in Phase 1 reads an old
-version, and the right shape (what a version records, how calls and fixes refer
-to it) depends on the Copilot's loop. It arrives with it.
+**Options.**
+- *Keep overwriting, and record each save as a version to roll back to.*
+  Rejected: a change still reaches callers before anyone has tried it, and the
+  Copilot's edits would too.
+- *One draft per agent, then "publish".* Rejected: one draft cannot hold two
+  proposals at once (Prosper fixing one issue while someone edits by hand), and
+  a published version would not say why it exists.
+- *Live versions, and pull requests that each hold their own copy.* Chosen.
 
-**Trade-offs.** No undo history for manual edits until then.
+**Trade-offs.** An agent has versions v1, v2…, immutable snapshots of its config
+and layout; the latest is live and calls run on it. A pull request is based on
+the version that was live when it was opened and holds a whole copy of the
+agent, which is what the editor saves to. Merging checks that copy with the
+same `AgentBuilder` validation (422 naming the node and edge), adds the next
+version from it and records which PR it came from, so the history answers "why
+is this live". Whole copies rather than patches: an agent is a few kilobytes,
+and a diff is computed when there is a screen to show it on.
+
+A new agent starts with PR #1, "Set up <name>", based on nothing: it is not live
+until that is merged, so even the first version goes through the same door.
+Before that, the agent is what PR #1 holds, name included. The name is part of
+the agent JSON, so renaming a live agent is a change like any other. A database
+from before versions is migrated at startup: each agent becomes v1 from its
+stored graph, with no PR, and its row keeps only what is not versioned (id,
+name, the PR counter). Still no migrations tool: `CREATE TABLE IF NOT EXISTS`
+and a one-off backfill, in one transaction.
+
+A merge is refused (409) once live has moved past what the PR was based on: its
+copy is of an older agent, and merging it would quietly undo whatever went live
+in between. Combining two edited graphs is its own problem, so for now the PR
+says "Needs update · based on v1" and waits. Every store operation takes the
+write lock up front (`BEGIN IMMEDIATE`), so two merges cannot both read "live is
+v1" and both become v2.
+
+In the editor, live is never saved to. The first edit on live that changes the
+agent opens a PR, "Your edits", and the edit lands there with its undo intact;
+a toast says so and the pill switches to it. Moving cards or Tidy up is not a
+change to the agent, so on live it opens nothing and is not kept. A test call
+runs what the editor is on: the start body carries the agent id and, on a PR,
+its number. Production calls will only ever name the agent, so they run live.
+
+PRs are numbered per agent from one counter that issues will share, so "PR #5"
+and "Issue #3" never collide; the UI always writes the prefix. Each PR keeps a
+small log (opened, saved, merged, closed: by whom, when) as JSON in its row,
+since it is only read with its PR. There are no accounts: the person using the
+builder is "you" in that log, and Prosper will sign its own changes.
+
+API: `GET /api/agents[/{id}]` add `live_version` (0 until PR #1 merges) and the
+open PR count; `POST /api/agents` returns the agent and its PR #1;
+`GET …/versions[/{n}]`; `GET …/pulls?state=`, `POST …/pulls` (`{title}`, a copy
+of live), `GET`/`PUT …/pulls/{n}`, `POST …/pulls/{n}/merge` and `…/close`. There
+is no route that writes over an agent or a version.
 
 ### A test call runs the saved agent, and says where it is
 
@@ -164,7 +214,8 @@ a browser tab.
 - *Start the call with the id of a saved agent.* Chosen.
 
 **Trade-offs.** What you test is what goes live: the call reads the agent from
-the store when it starts, so a passing test call is about the agent everyone
+the store when it starts (the live version, or the saved copy of the pull
+request the editor is on), so a passing test call is about the agent everyone
 else sees. Cost: an edit has to be saved before it can be heard, so the editor
 blocks the call while there are unsaved changes instead of quietly running the
 older agent. A start that names no agent runs the sample flow, which keeps

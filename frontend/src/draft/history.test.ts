@@ -105,6 +105,20 @@ describe('historyReducer', () => {
     expect(again.present.positions).toEqual({ [greeting]: { x: 1, y: 2 }, [goodbye]: { x: 3, y: 4 } })
   })
 
+  it('changes nothing when placing cards that all have a position, even mid-save', () => {
+    const history = start()
+    const [greeting, goodbye] = history.present.ids
+    const all = { [greeting]: { x: 1, y: 2 }, [goodbye]: { x: 3, y: 4 } }
+    const placed = run(history, { type: 'place', positions: all })
+    const edited = run(placed, apply((d) => renameNode(d, greeting, 'welcome')))
+    const sent = edited.present
+    // The layout of a slow first render lands while the edit is being saved.
+    const late = run(edited, { type: 'place', positions: all })
+    expect(late).toBe(edited)
+    const saved = run(late, { type: 'saved', draft: sent })
+    expect(saved.present).toBe(saved.saved)
+  })
+
   it('has something to save after an edit, and nothing after saving or undoing it', () => {
     const history = start()
     const [greeting] = history.present.ids

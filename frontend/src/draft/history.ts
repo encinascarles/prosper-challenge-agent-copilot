@@ -53,7 +53,11 @@ export function historyReducer(history: History, action: Action): History {
       return { ...history, past: [...past, present].slice(-LIMIT), present: next, future: [], merging }
     }
     case 'place': {
-      // A position the agent was saved with wins over the layout's.
+      // A position the agent was saved with wins over the layout's. When every
+      // card has one already, the draft stays the very same object: the layout
+      // can land after the first edit and while it is being saved, and a new
+      // object would no longer be the draft the save marks as saved.
+      if (Object.keys(action.positions).every((id) => id in present.positions)) return history
       const placed = { ...present, positions: { ...action.positions, ...present.positions } }
       return { ...history, present: placed, saved: history.saved === present ? placed : history.saved }
     }
