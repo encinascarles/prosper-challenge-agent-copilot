@@ -97,11 +97,13 @@ def write(
     tests: tuple = (),
     state: Optional[str] = None,
     doing: Optional[str] = None,
+    built: Optional[str] = None,
 ) -> dict:
     """Prosper AI changes the pull request's copy and logs `event`, in one write. Returns it.
 
     `config` replaces the agent when given (positions and rules of steps it no
     longer has go with them); `rules` and `tests` are added, each given an id.
+    `built` names the step of a setup this finishes, so a retry skips it.
     """
     with connect() as conn:
         pull = _require(conn, agent_id, number, by=PROSPER)
@@ -120,11 +122,34 @@ def write(
         _record_event(conn, agent_id, pull, event, **fields)
         if config is not None and pull["kind"] == "setup":
             conn.execute("UPDATE agents SET name = ? WHERE id = ?", (config["name"], agent_id))
-        if state is not None:
+        if state is not None or built is not None:
             work = _work(conn, agent_id, number)
-            work.update(state=state, doing=doing)
+            if state is not None:
+                work.update(state=state, doing=doing)
+            if built is not None:
+                work["built"] = [*work.get("built", []), built]
             _put(conn, agent_id, number, work)
         return _select(conn, agent_id, number)
+
+
+def mark_built(agent_id: str, number: int, step: str) -> None:
+    """Record that the setup finished `step`, so a retry skips it."""
+    with connect() as conn:
+        work = _work(conn, agent_id, number)
+        work["built"] = [*work.get("built", []), step]
+        _put(conn, agent_id, number, work)
+
+
+def set_job(agent_id: str, number: int, job: Optional[dict]) -> None:
+    """Remember what Prosper AI is doing ({ kind, … }), or forget it once done.
+
+    A job that fails or is interrupted stays remembered: it is what the next
+    message to Prosper AI retries.
+    """
+    with connect() as conn:
+        work = _work(conn, agent_id, number)
+        work["job"] = job
+        _put(conn, agent_id, number, work)
 
 
 def log(agent_id: str, number: int, event: dict) -> dict:
@@ -208,17 +233,22 @@ def pick(agent_id: str, number: int, question: str, option: int) -> tuple[dict, 
         return _select(conn, agent_id, number), done
 
 
-def take_message(agent_id: str, number: int, text: str) -> tuple[dict, Optional[dict]]:
-    """Log the person's message to Prosper AI, which starts working on it. Returns the PR.
+def take_message(
+    agent_id: str, number: int, text: str
+) -> tuple[dict, Optional[dict], Optional[dict]]:
+    """Log the person's message to Prosper AI, which starts working on it.
 
-    While Prosper AI waits for an answer, the message is the answer to its
-    first open question: returned with it, so the job knows what it answers.
-    Refused while Prosper AI is still working on something else.
+    Returns the pull request, the question the message answers and the job it
+    retries. While Prosper AI waits for an answer, the message is the answer
+    to its first open question. After it failed or was interrupted, the
+    message retries what failed (the setup from the step it stopped at, or
+    the change with the answer it was for). Refused while Prosper AI works.
     """
     with connect() as conn:
         pull = _require(conn, agent_id, number, by="you")
         work = _work(conn, agent_id, number)
         answers = None
+        retry = work.get("job") if work.get("state") == "failed" else None
         if work.get("state") == "waiting":
             answers = _open_question(work, None)
             answers["answer"] = text
@@ -228,7 +258,7 @@ def take_message(agent_id: str, number: int, text: str) -> tuple[dict, Optional[
         work.update(state="working", doing="Working on it")
         _put(conn, agent_id, number, work)
         _record_event(conn, agent_id, pull, event)
-        return _select(conn, agent_id, number), answers
+        return _select(conn, agent_id, number), answers, retry
 
 
 def waiting_for(agent_id: str, number: int) -> list[dict]:

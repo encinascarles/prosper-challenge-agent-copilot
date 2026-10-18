@@ -356,3 +356,42 @@ def test_work_a_restart_interrupted_can_be_retried(client, scripted):
         client.put(f"/api/agents/{agent_id}/pulls/1", json={"config": pull["config"]}).status_code
         == 200
     )
+
+
+def test_a_retry_finishes_the_setup_from_the_step_that_failed(client, scripted):
+    # The agent is drawn, then every request for its tests is refused.
+    bad = {"tests": [{"name": "X", "caller": "Y", "checks": ["Reaches Waitlist"]}]}
+    model = scripted(tests=[bad] * 3)
+    model.script["tests"] = [bad] * 3 + [TESTS]
+    agent_id, pull = _create(client)
+    assert pull["prosper"]["state"] == "failed"
+    assert len(pull["config"]["nodes"]) == 3 and pull["tests"] == []
+
+    client.post(f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "Try again"})
+    setup.wait()
+
+    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
+    assert [t["name"] for t in pull["tests"]] == ["Books", "Asks for advice"]
+    assert len(model.asked["agent"]) == 1  # not drawn again
+    assert len(model.asked["rules"]) == 1 and len(model.asked["questions"]) == 1
+    assert pull["prosper"]["state"] == "waiting"
+
+
+def test_a_retried_answer_stays_the_answer_to_its_question(client, scripted):
+    reply = {"reply": "Added a rule.", "agent": DRAFT, "tests": [], "remove": []}
+    reply["rules"] = [{"step": "Collect details", "text": "Offer the waitlist."}]
+    broken = {**reply, "agent": {**DRAFT, "initial_node": "start"}}
+    model = scripted(change=[broken, broken, broken, reply])
+    agent_id, _ = _create(client)
+
+    client.post(f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "The waitlist"})
+    setup.wait()
+    assert client.get(f"/api/agents/{agent_id}/pulls/1").json()["prosper"]["state"] == "failed"
+    client.post(f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "Try again"})
+    setup.wait()
+
+    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
+    assert pull["rules"][-1]["source"]["kind"] == "answer"
+    assert pull["rules"][-1]["source"]["quote"] == "The waitlist"
+    retried = model.asked["change"][-1][1]["content"]
+    assert 'Their answer: "The waitlist"' in retried and 'They then wrote: "Try again"' in retried

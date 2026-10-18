@@ -103,6 +103,9 @@ def message(agent_id: str, number: int, body: Message) -> dict:
             status_code=409,
             detail="Prosper AI only works on the pull request it set up, for now.",
         )
-    pull, answers = _answer(store.prosper.take_message, agent_id, number, body.text)
-    setup.change(agent_id, number, body.text, answers)
+    pull, answers, retry = _answer(store.prosper.take_message, agent_id, number, body.text)
+    if retry is not None:
+        setup.retry(agent_id, number, retry, body.text)
+    else:
+        setup.change(agent_id, number, body.text, answers)
     return pull

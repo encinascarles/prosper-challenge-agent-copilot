@@ -23,8 +23,10 @@
 #
 # Jobs run in a small thread pool: the OpenAI SDK's sync client is enough for
 # a few requests in a row, and the server's event loop (voice calls) never
-# waits on them. A job that fails says so in the conversation, and the next
-# message to Prosper AI tries again.
+# waits on them. A job that fails (or is cut by a restart) says so in the
+# conversation and stays remembered: the next message to Prosper AI retries
+# it, the setup from the step it stopped at, a change with the answer it was
+# for.
 #
 
 import json
@@ -56,12 +58,18 @@ def _event(kind: str, **more) -> dict:
 
 def build(agent_id: str, number: int) -> Future:
     """Build the agent in pull request `number` from the guidelines it was opened with."""
-    return _submit(_build, agent_id, number)
+    return _submit({"kind": "build"}, agent_id, number)
 
 
 def change(agent_id: str, number: int, text: str, answers: Optional[dict] = None) -> Future:
     """Make the change the person asked for in `text`; with `answers`, it answers that question."""
-    return _submit(_change, agent_id, number, text, answers)
+    job = {"kind": "change", "text": text, "question": answers["id"] if answers else None}
+    return _submit(job, agent_id, number)
+
+
+def retry(agent_id: str, number: int, job: dict, said: str) -> Future:
+    """Run again the job that failed; `said` is what the person wrote to ask for it."""
+    return _submit({**job, "said": said}, agent_id, number)
 
 
 def wait(timeout: float = 30) -> None:
@@ -72,17 +80,19 @@ def wait(timeout: float = 30) -> None:
         job.result(timeout)
 
 
-def _submit(job, agent_id: str, number: int, *args) -> Future:
-    future = _pool.submit(_guarded, job, agent_id, number, *args)
+def _submit(job: dict, agent_id: str, number: int) -> Future:
+    future = _pool.submit(_guarded, job, agent_id, number)
     with _lock:
         _jobs[:] = [j for j in _jobs if not j.done()] + [future]
     return future
 
 
-def _guarded(job, agent_id: str, number: int, *args) -> None:
+def _guarded(job: dict, agent_id: str, number: int) -> None:
     llm = new_llm()
     try:
-        job(llm, agent_id, number, *args)
+        store.prosper.set_job(agent_id, number, {k: v for k, v in job.items() if k != "said"})
+        _run(llm, agent_id, number, job)
+        store.prosper.set_job(agent_id, number, None)
     except Exception as error:  # noqa: BLE001 - said in the conversation, never lost in a thread
         logger.exception(f"Prosper AI could not finish on agent {agent_id}")
         reason = str(error) or type(error).__name__
@@ -108,6 +118,19 @@ def _guarded(job, agent_id: str, number: int, *args) -> None:
             pass
 
 
+def _run(llm: LLM, agent_id: str, number: int, job: dict) -> None:
+    # A change asked for before the agent was ever drawn is a setup to finish first.
+    if job["kind"] == "build" or not store.get_pull(agent_id, number)["config"]["nodes"]:
+        return _build(llm, agent_id, number)
+    answers = None
+    if job.get("question"):
+        asked = store.prosper.work_of(agent_id, number).get("questions", [])
+        answers = next((q for q in asked if q["id"] == job["question"]), None)
+    said = job.get("said")
+    extra = said if said and said.strip() != job["text"].strip() else None
+    return _change(llm, agent_id, number, job["text"], answers, extra)
+
+
 def _sources(work: dict) -> str:
     names = ", ".join(f'"{source["name"]}"' for source in work["sources"])
     texts = "\n\n".join(f"=== {s['name']} ===\n{s['text']}" for s in work["sources"])
@@ -123,80 +146,89 @@ def _count(n: int, one: str) -> str:
 
 
 def _build(llm: LLM, agent_id: str, number: int) -> None:
+    # Resumable: a retry after a failure skips the steps already done.
     work = store.prosper.work_of(agent_id, number)
-    name = store.get_pull(agent_id, number)["config"]["name"]
+    built = set(work.get("built", []))
+    config = store.get_pull(agent_id, number)["config"]
     guidelines = _sources(work)
-    store.prosper.set_state(agent_id, number, "working", "Drawing the steps")
 
-    drawn: dict = {}
+    if "agent" not in built:
+        store.prosper.set_state(agent_id, number, "working", "Drawing the steps")
+        drawn: dict = {}
 
-    def agent_ok(answer: dict) -> None:
-        drawn["config"] = artifacts.to_config(name, answer)
-        artifacts.check_agent(drawn["config"])
+        def agent_ok(answer: dict) -> None:
+            drawn["config"] = artifacts.to_config(config["name"], answer)
+            artifacts.check_agent(drawn["config"])
 
-    llm.ask("agent", f"The agent is called {name}.\n\n{guidelines}", artifacts.AGENT, agent_ok)
-    config = drawn["config"]
-    drew = _event("step", text=f"Drew {_count(len(config['nodes']), 'step')}")
-    store.prosper.write(
-        agent_id, number, drew, config=config, state="working", doing="Writing rules and tests"
-    )
+        name = config["name"]
+        llm.ask("agent", f"The agent is called {name}.\n\n{guidelines}", artifacts.AGENT, agent_ok)
+        config = drawn["config"]
+        drew = _event("step", text=f"Drew {_count(len(config['nodes']), 'step')}")
+        store.prosper.write(agent_id, number, drew, config=config, built="agent")
+    store.prosper.set_state(agent_id, number, "working", "Writing rules and tests")
 
     about = f"{guidelines}\n\n{_agent(config)}"
+    asks = {
+        "rules": (artifacts.RULES, lambda a: artifacts.check_rules(a, config, work["sources"])),
+        "tests": (artifacts.TESTS, lambda a: artifacts.check_tests(a["tests"], config)),
+        "questions": (artifacts.QUESTIONS, lambda a: artifacts.check_questions(a, config)),
+    }
     with ThreadPoolExecutor(max_workers=3) as pool:
-        rules = pool.submit(
-            llm.ask,
-            "rules",
-            about,
-            artifacts.RULES,
-            lambda answer: artifacts.check_rules(answer, config, work["sources"]),
-        )
-        tests = pool.submit(
-            llm.ask,
-            "tests",
-            about,
-            artifacts.TESTS,
-            lambda answer: artifacts.check_tests(answer["tests"], config),
-        )
-        gaps = pool.submit(
-            llm.ask,
-            "questions",
-            about,
-            artifacts.QUESTIONS,
-            lambda answer: artifacts.check_questions(answer, config),
-        )
-        written = artifacts.rules_from(rules.result(), number)
-        said = (
-            f"Wrote {_count(len(written), 'rule')}, each linked to its line"
-            if written
-            else "Wrote no rules: the steps already say everything the guidelines ask"
-        )
-        store.prosper.write(
-            agent_id, number, _event("step", text=said), rules=written, doing="Writing tests"
-        )
-        source = {"kind": "guidelines", "pull": number}
-        suite = [{**test, "source": source} for test in tests.result()["tests"]]
-        store.prosper.write(
-            agent_id,
-            number,
-            _event("step", text=f"Wrote {_count(len(suite), 'test')}"),
-            tests=suite,
-            doing="Looking for gaps in the guidelines",
-        )
-        questions = gaps.result()["questions"]
-    for question in questions:
-        for option in question["options"]:
-            option["rule"]["step"] = artifacts.step_of(option["rule"]["step"])
-    if questions:
-        store.prosper.ask(agent_id, number, questions)
+        asked = {
+            what: pool.submit(llm.ask, what, about, schema, check)
+            for what, (schema, check) in asks.items()
+            if what not in built
+        }
+    # Each one kept as it is: one that failed does not lose the others, and the
+    # retry asks only for what is missing.
+    failure = None
+    questions: list = []
+    for what, future in asked.items():
+        try:
+            answer = future.result()
+        except Exception as error:  # noqa: BLE001 - raised below, after the others are kept
+            failure = failure or error
+            continue
+        if what == "rules":
+            written = artifacts.rules_from(answer, number)
+            said = (
+                f"Wrote {_count(len(written), 'rule')}, each linked to its line"
+                if written
+                else "Wrote no rules: the steps already say everything the guidelines ask"
+            )
+            store.prosper.write(
+                agent_id, number, _event("step", text=said), rules=written, built="rules"
+            )
+        elif what == "tests":
+            source = {"kind": "guidelines", "pull": number}
+            suite = [{**test, "source": source} for test in answer["tests"]]
+            done = _event("step", text=f"Wrote {_count(len(suite), 'test')}")
+            store.prosper.write(agent_id, number, done, tests=suite, built="tests")
+        else:
+            questions = answer["questions"]
+            for question in questions:
+                for option in question["options"]:
+                    option["rule"]["step"] = artifacts.step_of(option["rule"]["step"])
+            if questions:
+                store.prosper.ask(agent_id, number, questions)
+            store.prosper.mark_built(agent_id, number, "questions")
+    if failure is not None:
+        raise failure
+    if store.prosper.waiting_for(agent_id, number):
+        store.prosper.set_state(agent_id, number, "waiting")
     else:
         _ready(agent_id, number)
 
 
-def _change(llm: LLM, agent_id: str, number: int, text: str, answers: Optional[dict]) -> None:
+def _change(
+    llm: LLM,
+    agent_id: str,
+    number: int,
+    text: str,
+    answers: Optional[dict],
+    extra: Optional[str] = None,
+) -> None:
     pull = store.get_pull(agent_id, number)
-    if not pull["config"]["nodes"]:
-        # The setup failed before the agent was drawn: this is the "try again".
-        return _build(llm, agent_id, number)
     work = store.prosper.work_of(agent_id, number)
     # With their ids, so a change can take out one this pull request added.
     rules = "\n".join(
@@ -217,6 +249,8 @@ def _change(llm: LLM, agent_id: str, number: int, text: str, answers: Optional[d
         )
     else:
         request = text
+    if extra:
+        request += f'\nThey then wrote: "{extra}"'
     content = (
         f"{_sources(work)}\n\n{_agent(pull['config'])}\n\nIts rules:\n{rules or '(none)'}"
         f"\n\nIts tests:\n{tests or '(none)'}{_failing(agent_id, number)}"
