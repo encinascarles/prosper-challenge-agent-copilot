@@ -5,7 +5,18 @@
 
 from .agents import create_agent, delete_agent, get_agent, init_db, list_agents
 from .db import Conflict, NotFound
-from .pulls import close_pull, get_pull, label, list_pulls, merge_pull, open_pull, save_pull
+from .pulls import (
+    close_pull,
+    get_pull,
+    label,
+    list_pulls,
+    merge_pull,
+    open_pull,
+    rename_pull,
+    reopen_pull,
+    save_pull,
+    update_pull,
+)
 from .versions import get_version, list_versions
 
 __all__ = [
@@ -24,5 +35,8 @@ __all__ = [
     "list_versions",
     "merge_pull",
     "open_pull",
+    "rename_pull",
+    "reopen_pull",
     "save_pull",
+    "update_pull",
 ]

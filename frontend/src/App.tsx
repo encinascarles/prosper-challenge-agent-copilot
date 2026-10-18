@@ -1,9 +1,11 @@
-// App shell: the top bar with the agent picker, and the editor of the open agent.
+// App shell: the top bar with the agent picker, and the open agent's sections:
+// Build, its editor, and Pull requests, the list of them and their pages.
 //
 // Which agent is open lives in the URL (?agent=<id>), so a reload or a shared
 // link opens the same one. Without it, the first agent of the list opens. So
 // does what the editor is on (&pr=<n>): the live version, or one open pull
-// request. An agent that is not live yet opens on its PR #1.
+// request. An agent that is not live yet opens on its PR #1. The section is in
+// it too: &view=pulls for the list, and &pull=<n> for a pull request's page.
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AgentEditor } from '@/AgentEditor'
@@ -23,14 +25,20 @@ import { NEW_AGENT } from '@/agents/template'
 import type { Agent, AgentCopy, Pull, PullSummary, VersionSummary } from '@/agents/types'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { NewAgentDialog } from '@/components/NewAgentDialog'
+import { Sections, type Section } from '@/components/Sections'
 import { Toast } from '@/components/Toast'
 import { TopBar } from '@/components/TopBar'
 import { useToast } from '@/components/useToast'
+import { VersionPill } from '@/components/VersionPill'
 import { Button } from '@/components/ui/button'
 import { EDITS_TITLE, openedForEdits, pullLabel, versionLabel, type On } from '@/pulls/model'
+import { PullsView } from '@/pulls/PullsView'
 
 const AGENT_PARAM = 'agent'
 const PULL_PARAM = 'pr'
+const VIEW_PARAM = 'view'
+const PAGE_PARAM = 'pull'
+const PULLS_VIEW = 'pulls'
 
 /** The open agent and the copy of it the editor is on. */
 type Opened = {
@@ -62,13 +70,30 @@ async function load(id: string, wanted: On): Promise<Omit<Opened, 'session'>> {
   return { agent, pulls, versions, on, copy: { config, layout } }
 }
 
+function setParam(url: URL, name: string, value: string | null) {
+  if (value === null) url.searchParams.delete(name)
+  else url.searchParams.set(name, value)
+}
+
 function writeUrl(id: string | null, on: On) {
   const url = new URL(location.href)
-  if (id === null) url.searchParams.delete(AGENT_PARAM)
-  else url.searchParams.set(AGENT_PARAM, id)
-  if (on === null) url.searchParams.delete(PULL_PARAM)
-  else url.searchParams.set(PULL_PARAM, String(on))
+  setParam(url, AGENT_PARAM, id)
+  setParam(url, PULL_PARAM, on === null ? null : String(on))
   history.replaceState(null, '', url)
+}
+
+/** The section and, in Pull requests, the page shown. */
+function writeView(section: Section, page: number | null) {
+  const url = new URL(location.href)
+  setParam(url, VIEW_PARAM, section === 'pulls' ? PULLS_VIEW : null)
+  setParam(url, PAGE_PARAM, section === 'pulls' && page !== null ? String(page) : null)
+  history.replaceState(null, '', url)
+}
+
+function readView(): { section: Section; page: number | null } {
+  const params = new URLSearchParams(location.search)
+  const section = params.get(VIEW_PARAM) === PULLS_VIEW ? 'pulls' : 'build'
+  return { section, page: section === 'pulls' ? Number(params.get(PAGE_PARAM)) || null : null }
 }
 
 export default function App() {
@@ -79,6 +104,10 @@ export default function App() {
   const [opened, setOpened] = useState<Opened | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [withSettings, setWithSettings] = useState<string | null>(null)
+  const [view, setView] = useState(readView)
+  // The session of the editor that starts a test call as it opens: "Try it"
+  // on a pull request's page.
+  const [callIn, setCallIn] = useState<number | null>(null)
   const toast = useToast()
 
   const loadAgents = useCallback(() => {
@@ -88,7 +117,7 @@ export default function App() {
 
   // Only the answer to the latest request is shown: its number is the session.
   const request = useRef(0)
-  const open = useCallback((id: string, wanted: On) => {
+  const open = useCallback((id: string, wanted: On): number => {
     const mine = ++request.current
     load(id, wanted).then(
       (loaded) => {
@@ -109,6 +138,7 @@ export default function App() {
         setError(failure.message)
       },
     )
+    return mine
   }, [])
 
   const agentId = picked ?? agents?.[0]?.id ?? null
@@ -132,6 +162,12 @@ export default function App() {
     setPicked(id)
     setWithSettings(settings ? id : null)
     writeUrl(id, null)
+    showView(settings ? 'build' : view.section, null)
+  }
+
+  const showView = (section: Section, page: number | null) => {
+    setView({ section, page })
+    writeView(section, page)
   }
   const pick = (id: string, settings = false) => {
     if (id !== agentId && leave()) go(id, settings)
@@ -163,10 +199,37 @@ export default function App() {
 
   const shown = opened?.agent.id === agentId ? opened : null
 
-  // Another copy of the same agent: live, or one of its open PRs.
+  // Build on another copy of the same agent: live, or one of its open PRs.
+  // From Pull requests it is loaded again, whatever it was on: pull requests
+  // may have changed there.
   const switchTo = (on: On) => {
-    if (!shown || on === shown.on || !leave()) return
+    if (!shown) return
+    if (view.section === 'build') {
+      if (on === shown.on || !leave()) return
+    }
+    showView('build', null)
     open(shown.agent.id, on)
+  }
+
+  // The Pull requests section: the list, or one pull request's page.
+  const showPulls = (page: number | null) => {
+    if (view.section === 'build' && !leave()) return
+    showView('pulls', page)
+  }
+
+  // "Try it" on a pull request's page: Build on it, with its test call started.
+  const tryIt = (number: number) => {
+    if (!shown) return
+    showView('build', null)
+    setCallIn(open(shown.agent.id, number))
+  }
+
+  // Something in Pull requests changed the agent's pull requests or versions:
+  // what the top bar shows is loaded again.
+  const reload = () => {
+    if (!shown) return
+    loadAgents()
+    open(shown.agent.id, shown.on)
   }
 
   // The first edit of live goes to a new PR. The editor stays as it is, edit
@@ -192,6 +255,7 @@ export default function App() {
       const pull = await openPull(agent.id, 'Your changes')
       toast.show(`Opened ${pullLabel(pull.number)} · live stays on ${versionLabel(agent.live_version)}`)
       loadAgents()
+      showView('build', null)
       open(agent.id, pull.number)
     } catch (failure) {
       toast.show((failure as Error).message)
@@ -215,9 +279,57 @@ export default function App() {
     open(shown.agent.id, null)
   }
 
+  const sections = shown && (
+    <Sections
+      section={view.section}
+      open={shown.pulls.length}
+      onSection={(section) => (section === 'build' ? switchTo(shown.on) : showPulls(null))}
+    />
+  )
+
   return (
     <>
-      {shown && !error ? (
+      {shown && !error && view.section === 'pulls' ? (
+        <div key={shown.agent.id} className="flex h-dvh flex-col">
+          <TopBar
+            agents={agents ?? []}
+            agentId={shown.agent.id}
+            onPick={pick}
+            onSettings={(id) => {
+              if (id !== shown.agent.id) return pick(id, true)
+              setWithSettings(id)
+              switchTo(shown.on)
+            }}
+            onNew={() => setNaming(true)}
+            pill={
+              <VersionPill
+                agent={shown.agent}
+                pulls={shown.pulls}
+                versions={shown.versions}
+                on={shown.on}
+                onSwitch={switchTo}
+                onOpenPage={showPulls}
+                onNewPull={() => void newPull()}
+              />
+            }
+            sections={sections}
+          />
+          <main className="flex min-h-0 flex-1">
+            <ErrorBoundary>
+              <PullsView
+                agent={shown.agent}
+                page={view.page}
+                onPage={showPulls}
+                onOpenInBuild={switchTo}
+                onTry={tryIt}
+                onNew={() => void newPull()}
+                onChanged={reload}
+                onToast={toast.show}
+              />
+            </ErrorBoundary>
+          </main>
+        </div>
+      ) : shown && !error ? (
         // An open agent is the editor's page: it has the top bar too, with saving
         // in it. Keyed like the editor: another agent or copy is a fresh start.
         <div key={`${shown.agent.id}:${shown.session}`} className="flex h-dvh flex-col">
@@ -241,6 +353,9 @@ export default function App() {
               onNewPull={() => void newPull()}
               onMerged={merged}
               onProblem={toast.show}
+              onOpenPage={showPulls}
+              sections={sections}
+              autoCall={callIn === shown.session}
             />
           </ErrorBoundary>
         </div>

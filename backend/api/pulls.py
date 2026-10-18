@@ -8,11 +8,17 @@
 # 409 when the state forbids it (a merged pull request, a stale base), 422 with
 # the located problem when the copy is not an agent the bot could run.
 #
+# A pull request left behind by a merge is updated by sending its changes
+# replayed on the new live version. The replay is worked out by the client
+# (frontend/src/pulls/diff.ts), which already compares versions to show what a
+# pull request changes; this side checks the result is an agent and that live
+# is still the version it was replayed on.
+#
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 import store
 
@@ -37,10 +43,13 @@ class Version(BaseModel):
 
 
 class PullEvent(BaseModel):
-    type: Literal["opened", "saved", "merged", "closed"]
+    type: Literal["opened", "saved", "merged", "closed", "reopened", "updated"]
     by: str  # "you" for now; Prosper's own changes will carry its name
     at: str
-    version: int | None = None  # for "merged": the version it became
+    # "opened": the version it was copied from; "merged": the version it became;
+    # "updated": its new base.
+    version: int | None = None
+    summary: str | None = None  # "saved", "updated": one line on what changed
 
 
 class PullSummary(BaseModel):
@@ -65,6 +74,24 @@ class PullOpen(BaseModel):
     # Only edits are opened this way: a setup comes with a new agent, and the
     # kinds Prosper will open (fixes) come with it.
     kind: Literal["edit"] = "edit"
+
+
+class PullSave(AgentSave):
+    summary: str | None = Field(
+        default=None,
+        description="One line on what this save changes, for the pull request's log.",
+        examples=["Edited Confirm · added Waitlist"],
+    )
+
+
+class PullRename(BaseModel):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = Field(
+        examples=["Ask for the date of birth first"]
+    )
+
+
+class PullUpdate(PullSave):
+    onto: int = Field(description="The live version `config` was replayed on.", examples=[2])
 
 
 _MISSING = {404: {"model": Problem, "description": "No such agent, version or pull request."}}
@@ -128,12 +155,19 @@ def get_pull(agent_id: str, number: int) -> dict:
 
 
 @router.put("/pulls/{number}", response_model=Pull, responses=_MISSING | _REFUSED | INVALID)
-def save_pull(agent_id: str, number: int, save: AgentSave) -> Any:
+def save_pull(agent_id: str, number: int, save: PullSave) -> Any:
     # Replaces the whole copy: the editor always holds the full graph, and a
     # partial update could leave edges pointing at nodes that are gone.
     if found := problem(save.config):
         return found
-    return _answer(store.save_pull, agent_id, number, save.config, save.positions(), YOU)
+    return _answer(
+        store.save_pull, agent_id, number, save.config, save.positions(), YOU, save.summary
+    )
+
+
+@router.patch("/pulls/{number}", response_model=Pull, responses=_MISSING | _REFUSED)
+def rename_pull(agent_id: str, number: int, body: PullRename) -> dict:
+    return _answer(store.rename_pull, agent_id, number, body.title)
 
 
 @router.post("/pulls/{number}/merge", response_model=Pull, responses=_MISSING | _REFUSED | INVALID)
@@ -149,3 +183,29 @@ def merge_pull(agent_id: str, number: int) -> Any:
 @router.post("/pulls/{number}/close", response_model=Pull, responses=_MISSING | _REFUSED)
 def close_pull(agent_id: str, number: int) -> dict:
     return _answer(store.close_pull, agent_id, number, YOU)
+
+
+@router.post("/pulls/{number}/reopen", response_model=Pull, responses=_MISSING | _REFUSED)
+def reopen_pull(agent_id: str, number: int) -> dict:
+    return _answer(store.reopen_pull, agent_id, number, YOU)
+
+
+@router.post(
+    "/pulls/{number}/update", response_model=Pull, responses=_MISSING | _REFUSED | INVALID
+)
+def update_pull(agent_id: str, number: int, update: PullUpdate) -> Any:
+    if found := problem(update.config):
+        return found
+    # A copy always has a layout; one left out keeps no positions, and the
+    # editor places those cards again.
+    layout = update.positions() or {}
+    return _answer(
+        store.update_pull,
+        agent_id,
+        number,
+        update.config,
+        layout,
+        update.onto,
+        YOU,
+        update.summary,
+    )

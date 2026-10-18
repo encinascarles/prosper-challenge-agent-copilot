@@ -114,6 +114,7 @@ def test_a_pull_request_is_a_copy_of_live_numbered_from_the_agents_counter(
         "open",
     )
     assert pull["base_version"] == 1
+    assert pull["events"][0]["version"] == 1
     v1 = client.get(f"/api/agents/{agent_id}/versions/1").json()
     assert (pull["config"], pull["layout"]) == (v1["config"], v1["layout"])
     assert client.get(f"/api/agents/{agent_id}").json()["open_pulls"] == 1
@@ -237,6 +238,140 @@ def test_pull_requests_are_listed_newest_first_and_filtered_by_state(client, liv
     assert [p["number"] for p in open_] == [3]
 
 
+def test_a_save_logs_what_it_changed_when_told(client, live_agent, agent):
+    agent_id = live_agent()
+    client.post(_pulls(agent_id), json={"title": "Your edits"})
+
+    body = {"config": _renamed(agent, "Renamed"), "summary": "Changed the agent's settings"}
+    pull = client.put(f"{_pulls(agent_id)}/2", json=body).json()
+
+    assert pull["events"][-1]["type"] == "saved"
+    assert pull["events"][-1]["summary"] == "Changed the agent's settings"
+
+
+# ---- closing, reopening, renaming ------------------------------------------------
+
+
+def test_a_closed_pull_request_reopens_as_it_was(client, live_agent, agent):
+    agent_id = live_agent()
+    client.post(_pulls(agent_id), json={"title": "Your edits"})
+    saved = client.put(f"{_pulls(agent_id)}/2", json={"config": _renamed(agent, "Renamed")}).json()
+    client.post(f"{_pulls(agent_id)}/2/close")
+
+    response = client.post(f"{_pulls(agent_id)}/2/reopen")
+
+    assert response.status_code == 200
+    pull = response.json()
+    assert (pull["state"], pull["config"], pull["base_version"]) == ("open", saved["config"], 1)
+    assert [e["type"] for e in pull["events"]] == ["opened", "saved", "closed", "reopened"]
+    assert client.get(f"/api/agents/{agent_id}").json()["open_pulls"] == 1
+
+
+@pytest.mark.parametrize("state", ["open", "merged"])
+def test_only_a_closed_pull_request_can_be_reopened(client, live_agent, state):
+    agent_id = live_agent()
+    client.post(_pulls(agent_id), json={"title": "Your edits"})
+    if state == "merged":
+        client.post(f"{_pulls(agent_id)}/2/merge")
+
+    response = client.post(f"{_pulls(agent_id)}/2/reopen")
+
+    assert (response.status_code, response.json()) == (409, {"detail": f"PR #2 is {state}."})
+
+
+def test_an_open_pull_request_can_be_renamed(client, live_agent):
+    agent_id = live_agent()
+    client.post(_pulls(agent_id), json={"title": "Your edits"})
+
+    response = client.patch(f"{_pulls(agent_id)}/2", json={"title": "  Shorter greeting "})
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Shorter greeting"
+    assert [e["type"] for e in response.json()["events"]] == ["opened"]
+    assert client.patch(f"{_pulls(agent_id)}/2", json={"title": "  "}).status_code == 422
+
+
+# ---- updating a pull request left behind ------------------------------------------
+
+
+@pytest.fixture
+def left_behind(client, live_agent, agent):
+    """An agent live as v2 from PR #2, and PR #3 still based on v1. Returns its id."""
+
+    def create() -> str:
+        agent_id = live_agent()
+        client.post(_pulls(agent_id), json={"title": "First"})
+        client.post(_pulls(agent_id), json={"title": "Second"})
+        client.put(f"{_pulls(agent_id)}/2", json={"config": _renamed(agent, "Renamed")})
+        assert client.post(f"{_pulls(agent_id)}/2/merge").status_code == 200
+        return agent_id
+
+    return create
+
+
+def test_updating_bases_the_pull_request_on_live_and_lets_it_merge(client, left_behind, agent):
+    agent_id = left_behind()
+    replayed = _renamed(agent, "Renamed again")
+    body = {
+        "config": replayed,
+        "layout": {"greeting": {"x": 5, "y": 6}, "ghost": {"x": 0, "y": 0}},
+        "onto": 2,
+        "summary": "kept your text in Greeting",
+    }
+
+    response = client.post(f"{_pulls(agent_id)}/3/update", json=body)
+
+    assert response.status_code == 200
+    pull = response.json()
+    assert (pull["base_version"], pull["config"]) == (2, replayed)
+    assert pull["layout"] == {"greeting": {"x": 5, "y": 6}}
+    event = pull["events"][-1]
+    assert (event["type"], event["version"], event["summary"]) == (
+        "updated",
+        2,
+        "kept your text in Greeting",
+    )
+    assert client.post(f"{_pulls(agent_id)}/3/merge").json()["merged_version"] == 3
+
+
+def test_an_update_replayed_on_a_version_that_is_no_longer_live_is_refused(
+    client, left_behind, agent
+):
+    agent_id = left_behind()
+
+    response = client.post(f"{_pulls(agent_id)}/3/update", json={"config": agent, "onto": 1})
+
+    assert (response.status_code, response.json()) == (
+        409,
+        {"detail": "Live is v2 now, not v1. Update it again."},
+    )
+    assert client.get(f"{_pulls(agent_id)}/3").json()["base_version"] == 1
+
+
+def test_a_pull_request_on_live_has_nothing_to_update(client, live_agent, agent):
+    agent_id = live_agent()
+    client.post(_pulls(agent_id), json={"title": "Your edits"})
+
+    response = client.post(f"{_pulls(agent_id)}/2/update", json={"config": agent, "onto": 1})
+
+    assert (response.status_code, response.json()) == (
+        409,
+        {"detail": "PR #2 is already based on v1."},
+    )
+
+
+def test_an_update_that_is_not_an_agent_is_422_and_changes_nothing(client, left_behind, agent):
+    agent_id = left_behind()
+    before = client.get(f"{_pulls(agent_id)}/3").json()
+    agent["nodes"][0]["edges"][0]["target"] = "gone"
+
+    response = client.post(f"{_pulls(agent_id)}/3/update", json={"config": agent, "onto": 2})
+
+    assert response.status_code == 422
+    assert response.json()["node"] == "greeting"
+    assert client.get(f"{_pulls(agent_id)}/3").json() == before
+
+
 # ---- what the API refuses -------------------------------------------------------
 
 
@@ -293,7 +428,7 @@ def test_what_does_not_exist_is_404(client, live_agent, path, detail):
     assert (response.status_code, response.json()) == (404, {"detail": detail})
 
 
-@pytest.mark.parametrize("action", ["merge", "close"])
+@pytest.mark.parametrize("action", ["merge", "close", "reopen"])
 def test_changing_a_pull_request_that_does_not_exist_is_404(client, live_agent, action):
     agent_id = live_agent()
 

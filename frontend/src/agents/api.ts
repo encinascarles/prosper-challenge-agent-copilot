@@ -6,7 +6,7 @@
 // Saving is one request with the agent and its layout, to a pull request's
 // copy: nothing here writes to a live version.
 
-import type { Agent, AgentConfig, Layout, Pull, PullSummary, Version, VersionSummary } from './types'
+import type { Agent, AgentConfig, AgentCopy, Layout, Pull, PullSummary, Version, VersionSummary } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -104,6 +104,11 @@ export function listOpenPulls(id: string): Promise<PullSummary[]> {
   return request(`${agentPath(id)}/pulls?state=open`)
 }
 
+/** All the agent's pull requests, open, merged and closed, newest first. */
+export function listPulls(id: string): Promise<PullSummary[]> {
+  return request(`${agentPath(id)}/pulls`)
+}
+
 export function getPull(id: string, number: number): Promise<Pull> {
   return request(pullPath(id, number))
 }
@@ -113,12 +118,48 @@ export function openPull(id: string, title: string): Promise<Pull> {
   return request(`${agentPath(id)}/pulls`, 'POST', { title, kind: 'edit' })
 }
 
-/** Replaces the pull request's copy and its layout: both or neither, the backend validates the agent first. */
-export function savePull(id: string, number: number, config: AgentConfig, layout: Layout): Promise<Pull> {
-  return request(pullPath(id, number), 'PUT', { config, layout })
+/**
+ * Replaces the pull request's copy and its layout: both or neither, the
+ * backend validates the agent first. `summary`, one line on what changed, goes
+ * in the pull request's log.
+ */
+export function savePull(
+  id: string,
+  number: number,
+  config: AgentConfig,
+  layout: Layout,
+  summary: string | null = null,
+): Promise<Pull> {
+  return request(pullPath(id, number), 'PUT', { config, layout, summary })
 }
 
 /** Makes the pull request's copy the next version, which goes live. */
 export function mergePull(id: string, number: number): Promise<Pull> {
   return request(`${pullPath(id, number)}/merge`, 'POST')
+}
+
+export function renamePull(id: string, number: number, title: string): Promise<Pull> {
+  return request(pullPath(id, number), 'PATCH', { title })
+}
+
+export function closePull(id: string, number: number): Promise<Pull> {
+  return request(`${pullPath(id, number)}/close`, 'POST')
+}
+
+export function reopenPull(id: string, number: number): Promise<Pull> {
+  return request(`${pullPath(id, number)}/reopen`, 'POST')
+}
+
+/**
+ * Bases the pull request on live version `onto`, with `copy` (its changes
+ * replayed on that version) as its copy. Refused if live is no longer `onto`.
+ */
+export function updatePull(
+  id: string,
+  number: number,
+  copy: AgentCopy,
+  onto: number,
+  summary: string | null,
+): Promise<Pull> {
+  return request(`${pullPath(id, number)}/update`, 'POST', { ...copy, onto, summary })
 }

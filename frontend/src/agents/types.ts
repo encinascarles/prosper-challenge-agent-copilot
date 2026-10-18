@@ -89,10 +89,11 @@ export type Version = AgentCopy & {
 }
 
 export type PullEvent = {
-  type: 'opened' | 'saved' | 'merged' | 'closed'
+  type: 'opened' | 'saved' | 'merged' | 'closed' | 'reopened' | 'updated'
   by: string
   at: string
-  version?: number | null // for "merged": the version it became
+  version?: number | null // "opened": copied from; "merged": became; "updated": its new base
+  summary?: string | null // "saved", "updated": one line on what changed
 }
 
 /** A proposed change to an agent, as lists show it. */

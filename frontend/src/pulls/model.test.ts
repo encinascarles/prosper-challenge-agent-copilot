@@ -4,7 +4,18 @@ import type { PullSummary } from '@/agents/types'
 import { NEW_AGENT } from '@/agents/template'
 import { moveNode, openDraft, renameNode } from '@/draft/draft'
 
-import { basedOn, changesAgent, isStale, mergeBlocker, mergeLabel, openedForEdits, testCallLabel } from './model'
+import {
+  basedOn,
+  callsNote,
+  changesAgent,
+  isStale,
+  mergeBlocker,
+  mergeLabel,
+  openedForEdits,
+  pullMeta,
+  testCallLabel,
+  when,
+} from './model'
 
 const pull = (fields: Partial<PullSummary> = {}): PullSummary => ({
   number: 2,
@@ -77,5 +88,28 @@ describe('the test call', () => {
   it('says whether it calls live or the pull request', () => {
     expect(testCallLabel(null)).toBe('Test call')
     expect(testCallLabel(5)).toBe('Test call · PR #5')
+  })
+})
+
+describe('pull request lists', () => {
+  it('say what each one is based on, or what became of it', () => {
+    expect(pullMeta(pull(), 1)).toBe('based on v1')
+    expect(pullMeta(pull(), 2)).toBe('Needs update · based on v1')
+    expect(pullMeta(pull({ state: 'merged', merged_version: 2 }), 2)).toBe('merged as v2')
+    expect(pullMeta(pull({ state: 'closed' }), 3)).toBe('closed · based on v1')
+    expect(pullMeta(setup, 0)).toBe('not live yet')
+  })
+
+  it('say what an open one means for calls', () => {
+    expect(callsNote(pull(), 1)).toBe('Calls keep using v1 until you merge')
+    expect(callsNote(setup, 0)).toBe('Nobody can call it until you merge')
+    expect(callsNote(pull({ state: 'merged' }), 2)).toBeNull()
+  })
+
+  it('give the time today and the day before', () => {
+    const now = new Date(2026, 9, 18, 15, 0)
+    expect(when(new Date(2026, 9, 18, 9, 5).toISOString(), now)).toBe('9:05 AM')
+    expect(when(new Date(2026, 9, 2, 9, 5).toISOString(), now)).toBe('Oct 2')
+    expect(when(new Date(2025, 11, 30).toISOString(), now)).toBe('Dec 30, 2025')
   })
 })

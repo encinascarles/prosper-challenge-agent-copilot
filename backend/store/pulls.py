@@ -7,13 +7,15 @@
 # copy into the next version. A new agent starts with pull request #1, "Set up
 # <name>", based on nothing: the agent goes live when it is merged.
 #
-# A pull request is open, merged or closed. Its small event log (opened, saved,
-# merged, closed: by whom and when) is kept in the row as JSON: it is only ever
-# read with the pull request it belongs to.
+# A pull request is open, merged or closed; a closed one can be reopened. Its
+# small event log (opened, saved, merged, closed, reopened, updated: by whom and
+# when) is kept in the row as JSON: it is only ever read with the pull request
+# it belongs to.
 #
 # Merging is refused once live has moved past the version the pull request was
 # based on: its copy was made from an older agent, and merging it would quietly
-# undo whatever was merged in between.
+# undo whatever was merged in between. Updating it replaces its copy with its
+# changes replayed on the live version, which becomes its new base.
 #
 
 import json
@@ -60,14 +62,14 @@ def _select(conn: sqlite3.Connection, agent_id: str, number: int) -> Optional[di
     return _to_record(row, full=True) if row else None
 
 
-def _require(conn: sqlite3.Connection, agent_id: str, number: int) -> dict:
-    """The pull request, open. Raises NotFound or Conflict otherwise."""
+def _require(conn: sqlite3.Connection, agent_id: str, number: int, state: str = "open") -> dict:
+    """The pull request, in `state`. Raises NotFound or Conflict otherwise."""
     if not conn.execute("SELECT 1 FROM agents WHERE id = ?", (agent_id,)).fetchone():
         raise NotFound(f"No agent with id '{agent_id}'.")
     pull = _select(conn, agent_id, number)
     if pull is None:
         raise NotFound(f"The agent has no {label(number)}.")
-    if pull["state"] != "open":
+    if pull["state"] != state:
         raise Conflict(f"{label(number)} is {pull['state']}.")
     return pull
 
@@ -99,7 +101,8 @@ def insert_pull(
         "UPDATE agents SET next_number = next_number + 1 WHERE id = ? RETURNING next_number - 1",
         (agent_id,),
     ).fetchone()
-    opened = _event("opened", by)
+    # The version it was opened on: its base may move later, with an update.
+    opened = _event("opened", by, **({"version": base_version} if base_version else {}))
     conn.execute(
         "INSERT INTO pulls (agent_id, number, title, kind, state, base_version, merged_version,"
         " config, layout, events, created_at, updated_at)"
@@ -158,11 +161,19 @@ def open_pull(agent_id: str, title: str, kind: str, by: str) -> dict:
         return insert_pull(conn, agent_id, title, kind, live, config, layout, by)
 
 
-def save_pull(agent_id: str, number: int, config: dict, layout: Optional[dict], by: str) -> dict:
+def save_pull(
+    agent_id: str,
+    number: int,
+    config: dict,
+    layout: Optional[dict],
+    by: str,
+    summary: Optional[str] = None,
+) -> dict:
     """Replace the pull request's copy with `config` and, if given, `layout`. Returns it.
 
     Without a layout the stored one is kept; either way, positions of nodes the
     new config does not have are dropped. Only an open pull request can be saved.
+    `summary`, one line on what the save changed, goes in its event.
     """
     with connect() as conn:
         pull = _require(conn, agent_id, number)
@@ -172,7 +183,7 @@ def save_pull(agent_id: str, number: int, config: dict, layout: Optional[dict], 
             conn,
             agent_id,
             pull,
-            _event("saved", by),
+            _event("saved", by, **({"summary": summary} if summary else {})),
             config=json.dumps(config),
             layout=json.dumps(prune(layout, config)),
         )
@@ -230,4 +241,67 @@ def close_pull(agent_id: str, number: int, by: str) -> dict:
                 "Delete the agent instead."
             )
         _record_event(conn, agent_id, pull, _event("closed", by), state="closed")
+        return _select(conn, agent_id, number)
+
+
+def reopen_pull(agent_id: str, number: int, by: str) -> dict:
+    """Open a closed pull request again, as it was. Returns it.
+
+    Its base stays what it was: if live moved on meanwhile, it needs an update
+    before it can merge, like any other pull request left behind.
+    """
+    with connect() as conn:
+        pull = _require(conn, agent_id, number, state="closed")
+        _record_event(conn, agent_id, pull, _event("reopened", by), state="open")
+        return _select(conn, agent_id, number)
+
+
+def rename_pull(agent_id: str, number: int, title: str) -> dict:
+    """Give an open pull request another title. Returns it.
+
+    Not an event: the title is how people find it, not a change to the agent.
+    """
+    with connect() as conn:
+        _require(conn, agent_id, number)
+        conn.execute(
+            "UPDATE pulls SET title = ? WHERE agent_id = ? AND number = ?",
+            (title, agent_id, number),
+        )
+        return _select(conn, agent_id, number)
+
+
+def update_pull(
+    agent_id: str,
+    number: int,
+    config: dict,
+    layout: dict,
+    onto: int,
+    by: str,
+    summary: Optional[str] = None,
+) -> dict:
+    """Base the pull request on live `onto`, with `config` as its copy. Returns it.
+
+    `config` is the pull request's changes replayed on version `onto`, which the
+    caller worked out (and checked is a valid agent). It is taken only if `onto`
+    is still live: a merge in between would make it a replay on the wrong
+    version. Raises NotFound, or Conflict when not open, already on live, or
+    live is no longer `onto`.
+    """
+    with connect() as conn:
+        pull = _require(conn, agent_id, number)
+        live = live_version(conn, agent_id)
+        if pull["base_version"] == live:
+            raise Conflict(f"{label(number)} is already based on v{live}.")
+        if onto != live:
+            raise Conflict(f"Live is v{live} now, not v{onto}. Update it again.")
+        updated = _event("updated", by, version=live, **({"summary": summary} if summary else {}))
+        _record_event(
+            conn,
+            agent_id,
+            pull,
+            updated,
+            base_version=live,
+            config=json.dumps(config),
+            layout=json.dumps(prune(layout, config)),
+        )
         return _select(conn, agent_id, number)

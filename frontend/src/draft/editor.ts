@@ -25,6 +25,8 @@ export type EditorCore = {
   redo: () => void
   /** Whether the draft differs from what was loaded or last saved. */
   dirty: boolean
+  /** The draft as it was loaded or last saved. */
+  saved: Draft
   /** Records that `draft` reached the backend. */
   markSaved: (draft: Draft) => void
 }
@@ -75,7 +77,7 @@ export function useNewEditor(config: AgentConfig, layout: Layout): EditorCore {
   )
   const dirty = history.present !== history.saved
   return useMemo(
-    () => ({ draft: history.present, dirty, ...actions }),
-    [history.present, dirty, actions],
+    () => ({ draft: history.present, dirty, saved: history.saved, ...actions }),
+    [history.present, dirty, history.saved, actions],
   )
 }
