@@ -177,8 +177,8 @@ and a one-off backfill, in one transaction.
 
 A merge is refused (409) once live has moved past what the PR was based on: its
 copy is of an older agent, and merging it would quietly undo whatever went live
-in between. Combining two edited graphs is its own problem, so for now the PR
-says "Needs update · based on v1" and waits. Every store operation takes the
+in between. The PR says "Needs update · based on v1" until it is updated (see
+the next decision). Every store operation takes the
 write lock up front (`BEGIN IMMEDIATE`), so two merges cannot both read "live is
 v1" and both become v2.
 
@@ -191,15 +191,70 @@ its number. Production calls will only ever name the agent, so they run live.
 
 PRs are numbered per agent from one counter that issues will share, so "PR #5"
 and "Issue #3" never collide; the UI always writes the prefix. Each PR keeps a
-small log (opened, saved, merged, closed: by whom, when) as JSON in its row,
+small log (opened, saved, merged, closed, reopened, updated: by whom, when) as JSON in its row,
 since it is only read with its PR. There are no accounts: the person using the
 builder is "you" in that log, and Prosper will sign its own changes.
 
 API: `GET /api/agents[/{id}]` add `live_version` (0 until PR #1 merges) and the
 open PR count; `POST /api/agents` returns the agent and its PR #1;
 `GET …/versions[/{n}]`; `GET …/pulls?state=`, `POST …/pulls` (`{title}`, a copy
-of live), `GET`/`PUT …/pulls/{n}`, `POST …/pulls/{n}/merge` and `…/close`. There
-is no route that writes over an agent or a version.
+of live), `GET`/`PUT`/`PATCH` (title) `…/pulls/{n}`, `POST …/pulls/{n}/merge`,
+`…/close`, `…/reopen` and `…/update`. There is no route that writes over an
+agent or a version.
+
+### A pull request is read on its own page, and updated by replaying it
+
+**Context.** A pull request could only be seen through the pill and the bar in
+Build, which say which one you are on but not what it changes or what happened
+to it. Reviewing a change, and soon reading what Prosper did, needs a place of
+its own. And a PR left behind by a merge could only wait: there was no way to
+bring it onto the new live version.
+
+**What.** Pull requests are a section next to Build: a list (Open · Merged ·
+Closed) and a page per PR with its actions, its Conversation (the log, newest at
+the bottom, where Prosper's turns will go) and its Changes. The section and the
+page are in the URL, so a link lands on the same place. A closed PR keeps its
+conversation and can be reopened as it was; if live moved on meanwhile, it needs
+an update like any other.
+
+**Changes are computed where they are shown.** Copies are stored whole, so the
+diff is a pure function in the browser (`frontend/src/pulls/diff.ts`) over the
+PR's copy and the version it is based on, worded for a non-engineer: steps
+added, removed and renamed, instructions word by word, ways out added, removed
+or moved, fields and the agent's settings. Stored copies carry no node ids (the
+JSON mirrors Flows' `NodeConfig`, and ids would be one more thing every writer
+has to keep stable), so a step is followed by its name and, when the name is
+gone, by what it says: a renamed step keeps its instructions and edges.
+
+**Update replays the PR's changes on live.** Options:
+- *Rebuild the PR by hand on live.* Rejected: it is the manual work the product
+  is meant to remove.
+- *A three-way merge on the server.* Rejected for now: the same step matching
+  would live twice, in Python for the merge and in TypeScript for the Changes
+  tab, and drift.
+- *Replay in the browser, checked by the server.* Chosen. The browser replays
+  with the same matching the diff uses and sends the result with the version it
+  replayed on (`onto`). The server takes it only if that version is still live
+  (409 otherwise, so a merge in between cannot slip under it) and if it is a
+  valid agent (422 naming where, as on save).
+
+What only one side changed is taken from it. Where both changed the same thing
+(the same instructions, say), the PR wins: it is the change under review, and
+live is still there to compare with. The event says so ("Updated to v2 · kept
+your text in Confirm"). A step the PR edited and live removed is kept with the
+edit; edges left pointing at a removed step are dropped, and the Changes tab
+shows the result before anyone merges it.
+
+**Summaries travel with the events.** Each save and update carries one line on
+what it changed, written by whoever made the change: the editor diffs what it
+saves against the last save (following steps by id, so even a rename and a
+rewrite in one save is one step), and Prosper will write its own. The server
+stores the line, it does not derive it.
+
+**Trade-offs.** A merge through the API alone cannot update a stale PR without
+a client that replays; when Prosper needs to, the replay moves to the server as
+one implementation. A step renamed *and* mostly rewritten on one side between
+two versions shows as removed and added.
 
 ### A test call runs the saved agent, and says where it is
 
