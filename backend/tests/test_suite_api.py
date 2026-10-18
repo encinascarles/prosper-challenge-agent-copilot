@@ -268,3 +268,13 @@ def test_running_again_by_hand_always_runs(client, on_pull):
 
     assert again["id"] != before["id"]
     assert again["fingerprint"] == before["fingerprint"]
+
+
+def test_a_run_is_marked_done_even_if_its_log_entry_fails(client, on_pull, monkeypatch):
+    def broken(*args):
+        raise RuntimeError("log unavailable")
+
+    monkeypatch.setattr(store, "record_checks", broken)
+    _add_test(client, on_pull, ["Ends the call"])
+
+    assert store.get_run(on_pull, pull=2)["state"] == "done"

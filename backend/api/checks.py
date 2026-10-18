@@ -99,12 +99,16 @@ async def _run(agent_id: str, run: dict, copy: dict) -> None:
         store.finish_run(run["id"], "stopped")
         return
     # Logged before the run is marked done, so whoever reads the pull request
-    # as soon as its checks are done finds how they went in its log too.
-    if run["pull"] is not None:
-        latest = store.get_run(agent_id, pull=run["pull"])
-        if latest is not None and latest["id"] == run["id"]:
-            store.record_checks(agent_id, run["pull"], latest)
-    store.finish_run(run["id"])
+    # as soon as its checks are done finds how they went in its log too. The
+    # run is marked done whatever happens to the log: left "running", it would
+    # keep the merge waiting until the next restart.
+    try:
+        if run["pull"] is not None:
+            latest = store.get_run(agent_id, pull=run["pull"])
+            if latest is not None and latest["id"] == run["id"]:
+                store.record_checks(agent_id, run["pull"], latest)
+    finally:
+        store.finish_run(run["id"])
 
 
 def wait(timeout: float = 30) -> None:
