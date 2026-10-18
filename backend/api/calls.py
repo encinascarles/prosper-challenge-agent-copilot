@@ -2,9 +2,9 @@
 # Calls — which agent a call runs.
 #
 # A call is started with the id of a saved agent, `{ "agent_id": "<id>" }`, in
-# the body the Pipecat runner hands to the bot. The call runs that agent as it
-# is in the store: what is tested is what was saved, never a draft that only
-# exists in a browser.
+# the body the Pipecat runner hands to the bot. The call runs that agent's live
+# version, what its callers get: what is tested is what was saved, never a
+# draft that only exists in a browser.
 #
 # A start that names no agent runs the sample flow. That is what Pipecat's
 # prebuilt client at /client sends, and it keeps that page working with no
@@ -53,8 +53,11 @@ def agent_for_call(body: Any) -> AgentBuilder:
     record = store.get_agent(agent_id)
     if record is None:
         raise CallError(f"No agent with id '{agent_id}'.", status=404)
+    if record["live_version"] == 0:
+        raise CallError(f"{record['name']} is not live yet: merge PR #1 first.", status=409)
+    config = store.get_version(agent_id, record["live_version"])["config"]
     try:
-        return AgentBuilder.from_dict(record["config"])
+        return AgentBuilder.from_dict(config)
     except ValueError as error:
         # Every stored agent passed this check when it was saved, so this is an
         # agent saved before a rule existed. Say which rule.
