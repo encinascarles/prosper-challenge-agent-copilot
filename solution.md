@@ -256,6 +256,82 @@ a client that replays; when Prosper needs to, the replay moves to the server as
 one implementation. A step renamed *and* mostly rewritten on one side between
 two versions shows as removed and added.
 
+### Rules sit next to the agent JSON, and the builder puts them in the prompt
+
+**Context.** Most fixes to an agent are not a new step: they are one sentence
+it must follow ("read the date back before saying goodbye", "never give
+medical advice"), everywhere or in one step. Prosper AI will add them for
+each issue it fixes, and each has to say where it came from.
+
+**Options.**
+- *Edit the step's instructions.* Rejected: the sentence melts into text the
+  person wrote, nothing says where it came from, and taking it out again
+  means finding it.
+- *A `rules` field inside the agent JSON.* Rejected: the JSON mirrors Flows'
+  `NodeConfig`, and the cards edit it; rules would be one more thing every
+  writer of the graph has to carry along.
+- *A list next to the config, like the layout, compiled in by `AgentBuilder`.*
+  Chosen.
+
+**Trade-offs.** A rule is `{ id, step | null, text, source }`, stored with each
+copy (a version, a pull request) so it is versioned with the agent: a pull
+request carries its own and the merge puts them live. `AgentBuilder(config,
+rules)` appends the rules for every step to each node's role message and a
+step's own as one more task message of that node. Every runner goes through
+the builder, so a voice call, a test call and a test all get the same prompt.
+A rule names its step, so it follows a rename (the save sends the steps it
+renamed) and goes with a removed step, like a position in the layout. A pull
+request can only add rules and take out the ones it added; that keeps
+replaying it on a newer live version a simple union. Cost: what the model is
+told is now in two places, the cards and the rail.
+
+### Tests are text calls on the voice call's pipeline, run on every change
+
+**Context.** The Copilot's loop needs proof: reproduce an issue with a test,
+change the agent, and show the whole suite still passes before anything goes
+live. That needs tests a person can write in a sentence, and a way to run
+them that is cheap enough to do on every save.
+
+**Options.**
+- *A simulator of our own (a loop over the graph calling the LLM).* Rejected:
+  it would test our reimplementation of Flows, not what calls run.
+- *Voice calls with a synthetic caller.* Rejected: slow, paid per second of
+  speech, and STT noise would make every result flaky.
+- *The real pipeline without audio.* Chosen: the same `AgentBuilder`,
+  `FlowManager` (through `start_flow`, now shared with `bot.py`) and LLM
+  service, with caller lines going in as messages and a small processor where
+  TTS would be, collecting what the agent says and the node messages it
+  reports. The path comes from the same reporter as a voice call's.
+
+**Trade-offs.** A test is `{ name, caller, checks }`: who calls (a model plays
+them) and one check per line. "Reaches <step>", "Ends the call" and "<field>
+is recorded" are decided from the path, exactly and for free; anything else
+is judged by a model on the transcript, yes or no with one line why. The agent
+runs on its own model, since that is what is tested; the caller and the judge
+on ours (`PROSPER_MODEL`). The agent's turn ends at the end of a response that
+called no function, a rule pinned by tests that run Pipecat's OpenAI service
+on a scripted stream. Those tests found that the function-call frame, being a
+system frame, can overtake the response's start, so calls are counted between
+response ends.
+
+A simulated call does not always go the same way, so each test runs 3 times
+and shows as 3/3, 2/3, 0/3; it passes only at 3/3. Every change to a pull
+request's copy (save, update, rule or test added or taken out) runs the whole
+suite again, replacing the run in progress, and a merge is refused until it
+passes (409 on the server, a disabled button in the UI), PR #1 included. All
+calls of a suite run at once, 12 at a time: 5 tests × 3 took 26 s and about
+USD 0.25 on the sample agent. They run on an event loop in a thread of their
+own, so voice calls on the server's loop never wait behind them. Results are
+written as each call finishes and the editor polls them every 1.5 s while a
+run is going; a stream would be more moving parts for a run that lasts under a
+minute. Only the latest run of each copy is kept, which is all the screens
+show, and a merged pull request's run becomes its version's.
+
+Cost: text is not voice. No STT errors, interruptions or latency are tested;
+the tests check the graph and the prompts. A judged check can be wrong, which
+is why its reason is always shown. And every save spends money, so the suite
+stays small and the caller and judge use one configurable model.
+
 ### A test call runs the saved agent, and says where it is
 
 **Context.** The editor holds a draft with unsaved changes, and a call has to run
