@@ -125,37 +125,47 @@ class LLM:
         raise Failed(problem)
 
     def _complete(self, messages: list, name: str, schema: dict) -> str:
-        """One request; the answer's text. The tests replace this, and never reach OpenAI."""
-        response = self.client.chat.completions.create(
+        """One request; the answer's text. The tests replace this, and never reach OpenAI.
+
+        Through the Responses API: on Chat Completions, at the same low effort,
+        about one request in two thought to its token limit and wrote nothing;
+        the same request here thinks a few hundred tokens and answers.
+        """
+        response = self.client.responses.create(
             model=self.model,
-            messages=messages,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {"name": name, "schema": schema, "strict": True},
+            instructions=messages[0]["content"],
+            input=messages[1:],
+            text={
+                "format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}
             },
-            reasoning_effort=EFFORT,
-            max_completion_tokens=MAX_TOKENS,
+            reasoning={"effort": EFFORT},
+            max_output_tokens=MAX_TOKENS,
         )
         self.count(response.usage)
-        choice = response.choices[0]
-        if getattr(choice.message, "refusal", None):
-            raise Failed(f"The model refused: {choice.message.refusal}")
-        if choice.finish_reason == "length":
-            details = getattr(response.usage, "completion_tokens_details", None)
+        for item in response.output:
+            for part in getattr(item, "content", None) or []:
+                if getattr(part, "type", "") == "refusal":
+                    raise Failed(f"The model refused: {part.refusal}")
+        if response.status == "incomplete":
+            details = getattr(response.usage, "output_tokens_details", None)
             thought = getattr(details, "reasoning_tokens", 0) or 0
             logger.warning(
                 f"Prosper AI · {name} · cut off: {thought} tokens thinking, "
-                f"wrote {(choice.message.content or '')[:120]!r}…"
+                f"wrote {(response.output_text or '')[:120]!r}…"
             )
             raise CutOff("The model ran out of room before it finished its answer.")
-        return choice.message.content or ""
+        return response.output_text or ""
 
     def count(self, usage) -> None:
         if usage is None:
             return
-        details = getattr(usage, "prompt_tokens_details", None)
+        # Responses names them input and output; Chat Completions, prompt and completion.
+        details = getattr(usage, "input_tokens_details", None) or getattr(
+            usage, "prompt_tokens_details", None
+        )
         cached = getattr(details, "cached_tokens", 0) or 0
-        prompt_tokens, completion = usage.prompt_tokens, usage.completion_tokens
+        prompt_tokens = getattr(usage, "input_tokens", None) or usage.prompt_tokens
+        completion = getattr(usage, "output_tokens", None) or usage.completion_tokens
         fresh_in, cached_in, out = PRICES.get(self.model, (0, 0, 0))
         usd = ((prompt_tokens - cached) * fresh_in + cached * cached_in + completion * out) / 1e6
         with self._lock:
