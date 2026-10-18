@@ -16,6 +16,9 @@ Answer with:
 - `tests`: tests to add for what changed, if a test would show it works. Same
   format as its tests: checks like "Reaches <step>", "Ends the call", "<field>
   is recorded", or one observable fact.
+- `remove`: the ids of rules or tests to take out, when the change makes them
+  wrong (a rule moved to one step is taken out and added again; a test whose
+  caller no longer fits is replaced). Only ids shown in brackets.
 - `reply`: one or two sentences to the person on what you changed, starting
   with a verb ("Shortened the greeting in Greeting."). If the request is a
   question, answer it here and change nothing.

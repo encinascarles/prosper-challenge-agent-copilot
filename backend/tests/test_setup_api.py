@@ -174,6 +174,7 @@ def test_an_answer_in_its_own_words_goes_through_prosper_ai(client, scripted):
         "agent": DRAFT,
         "rules": [{"step": "Collect details", "text": "Offer the waitlist if no time works."}],
         "tests": [],
+        "remove": [],
     }
     model = scripted(change=[reply])
     agent_id, _ = _create(client)
@@ -200,6 +201,7 @@ def test_a_request_in_the_conversation_changes_pr_1(client, scripted):
         "agent": shorter,
         "rules": [],
         "tests": [{"name": "Short hello", "caller": "Ana.", "checks": ["Reaches Greeting"]}],
+        "remove": [],
     }
     scripted(questions=(), change=[reply])
     agent_id, pull = _create(client)
@@ -227,6 +229,25 @@ def test_a_request_in_the_conversation_changes_pr_1(client, scripted):
         "quote": "Make the greeting shorter",
     }
     assert pull["checks"]["total"] == 3
+
+
+def test_a_change_can_take_out_what_this_pull_request_added(client, scripted):
+    reply = {"reply": "Moved the rule.", "agent": DRAFT, "rules": [], "tests": [], "remove": []}
+    model = scripted(questions=(), change=[{**reply, "remove": ["nope"]}, reply])
+    agent_id, pull = _create(client)
+    checks.wait()
+    rule = pull["rules"][0]
+    model.script["change"][1]["remove"] = [rule["id"]]
+
+    client.post(f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "Drop that rule"})
+    setup.wait()
+
+    pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
+    assert rule["id"] not in [r["id"] for r in pull["rules"]]
+    taken = next(e for e in pull["events"] if e["type"] == "rule" and e.get("removed"))
+    assert (taken["by"], taken["text"]) == ("Prosper AI", rule["text"])
+    refused = model.asked["change"][1][-1]["content"]
+    assert "'nope' is not the id of a rule or test that can be taken out" in refused
 
 
 def test_a_drafted_agent_the_builder_refuses_is_drawn_again_with_the_error(client, scripted):

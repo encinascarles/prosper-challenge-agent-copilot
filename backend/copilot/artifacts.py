@@ -70,12 +70,14 @@ _OPTION = _object(label=_TEXT, rule=_object(step=_STEP, text=_TEXT))
 QUESTIONS = _object(questions=_list(_object(text=_TEXT, options=_list(_OPTION))))
 
 # A change asked for in the pull request's conversation: the agent whole, as it
-# should be after it, and what to add to its rules and tests.
+# should be after it, what to add to its rules and tests, and which of them to
+# take out (by id: only those this pull request added can go).
 CHANGE = _object(
     reply=_TEXT,
     agent=AGENT,
     rules=_list(_object(step=_STEP, text=_TEXT)),
     tests=_list(_TEST),
+    remove=_list(_TEXT),
 )
 
 
@@ -319,8 +321,17 @@ def check_questions(answer: dict, config: dict) -> None:
 # ---- a change ----------------------------------------------------------------
 
 
-def check_change(answer: dict, name: str, before: dict) -> dict:
-    """The agent JSON the change makes. Raises ValueError like the checks above."""
+def check_change(answer: dict, name: str, before: dict, removable: set = frozenset()) -> dict:
+    """The agent JSON the change makes. Raises ValueError like the checks above.
+
+    `removable` are the ids of the rules and tests the change may take out.
+    """
+    for item in answer.get("remove", []):
+        if item not in removable:
+            raise ValueError(
+                f"'{item}' is not the id of a rule or test that can be taken out. "
+                f"Those that can: {', '.join(sorted(removable)) or 'none'}."
+            )
     config = keep_extras(to_config(name, answer["agent"]), before)
     check_agent(config)
     steps = {node["name"] for node in config["nodes"]}

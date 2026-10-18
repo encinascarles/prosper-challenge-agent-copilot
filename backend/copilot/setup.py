@@ -37,6 +37,7 @@ from loguru import logger
 import store
 from store.db import now
 from store.prosper import PROSPER
+from store.suite import added_in
 
 from . import artifacts
 from .llm import LLM
@@ -197,10 +198,18 @@ def _change(llm: LLM, agent_id: str, number: int, text: str, answers: Optional[d
         # The setup failed before the agent was drawn: this is the "try again".
         return _build(llm, agent_id, number)
     work = store.prosper.work_of(agent_id, number)
+    # With their ids, so a change can take out one this pull request added.
     rules = "\n".join(
-        f"- {rule['step'] or 'every step'}: {rule['text']}" for rule in pull["rules"]
+        f"- [{rule['id']}] {rule['step'] or 'every step'}: {rule['text']}" for rule in pull["rules"]
     )
-    tests = "\n".join(f"- {test['name']}: {'; '.join(test['checks'])}" for test in pull["tests"])
+    tests = "\n".join(
+        f"- [{test['id']}] {test['name']} · caller: {test['caller']} · checks: "
+        f"{'; '.join(test['checks'])}"
+        for test in pull["tests"]
+    )
+    removable = {
+        item["id"] for kind in ("rules", "tests") for item in pull[kind] if added_in(item, number)
+    }
     if answers is not None:
         request = (
             f'You asked: "{answers["text"]}" Their answer: "{text}". '
@@ -215,7 +224,9 @@ def _change(llm: LLM, agent_id: str, number: int, text: str, answers: Optional[d
     changed: dict = {}
 
     def change_ok(answer: dict) -> None:
-        changed["config"] = artifacts.check_change(answer, pull["config"]["name"], pull["config"])
+        changed["config"] = artifacts.check_change(
+            answer, pull["config"]["name"], pull["config"], removable
+        )
 
     answer = llm.ask("change", content, artifacts.CHANGE, change_ok)
     config = changed["config"]
@@ -227,6 +238,9 @@ def _change(llm: LLM, agent_id: str, number: int, text: str, answers: Optional[d
         _event("message", text=answer["reply"], **({"changed": True} if moved else {})),
         config=config if moved else None,
     )
+    for item in answer["remove"]:
+        kind = "rules" if any(rule["id"] == item for rule in pull["rules"]) else "tests"
+        store.take_out(agent_id, number, kind, item, PROSPER)
     for rule in answer["rules"]:
         step = artifacts.step_of(rule["step"])
         store.prosper.write(
