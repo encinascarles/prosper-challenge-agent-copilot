@@ -185,11 +185,24 @@ const KIND_WORDS: Record<string, string> = {
   choice: 'a choice',
 }
 
+// Below this share of words kept, a text was rewritten rather than edited:
+// shown whole, before and after, it reads better than a patchwork.
+const REWRITTEN = 0.5
+
 function textLines(label: string, before: string, after: string): DiffLine[] {
   if (before === after) return []
   if (!before) return [{ op: 'add', label, text: after }]
   if (!after) return [{ op: 'remove', label, text: before }]
-  return [{ op: 'words', label, parts: wordDiff(before, after) }]
+  const parts = wordDiff(before, after)
+  const count = (text: string) => text.split(/\s+/).filter(Boolean).length
+  const kept = parts.filter((part) => part.op === 'same').reduce((sum, part) => sum + count(part.text), 0)
+  if (kept < REWRITTEN * Math.max(count(before), count(after))) {
+    return [
+      { op: 'remove', label, text: before },
+      { op: 'add', label, text: after },
+    ]
+  }
+  return [{ op: 'words', label, parts }]
 }
 
 // What changed in one field an edge collects, in a few words.

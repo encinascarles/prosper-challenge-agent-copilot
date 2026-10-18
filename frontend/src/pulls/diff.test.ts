@@ -120,6 +120,14 @@ describe('diffAgents', () => {
     expect(editedWhat(changes)).toBe('Confirm')
   })
 
+  it('shows a rewritten text whole, before and after', () => {
+    const next = edit(CLINIC, (d, id) => setInstructions(d, id('confirm'), 'Thank them warmly.'))
+    expect(diffAgents(CLINIC, next)[0].lines).toEqual([
+      { op: 'remove', label: 'Instructions', text: 'Read the booking back and say goodbye.' },
+      { op: 'add', label: 'Instructions', text: 'Thank them warmly.' },
+    ])
+  })
+
   it('lists an added step and a field an edge now collects', () => {
     const next = edit(
       CLINIC,
