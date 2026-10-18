@@ -51,7 +51,7 @@ import { GraphCanvas } from '@/graph/GraphCanvas'
 import { looseEdges, toGraph } from '@/graph/model'
 import { diffAgents, summarize as summarizeChanges } from '@/pulls/diff'
 import { changesAgent, pullLabel, testCallLabel, versionLabel, type On } from '@/pulls/model'
-import { addedIn, asCall, summarize } from '@/suite/model'
+import { addedIn, asCall, namesOf, summarize } from '@/suite/model'
 import { SuiteRail } from '@/suite/SuiteRail'
 import { NewTestCard, TestCard } from '@/suite/TestCard'
 import { useChecks } from '@/suite/useChecks'
@@ -451,6 +451,7 @@ export function AgentEditor(props: Props) {
               )}
               {testOpen === 'new' && (
                 <NewTestCard
+                  names={namesOf(draft.config)}
                   into={on === null ? 'a new pull request' : pullLabel(on)}
                   onAdd={addSuiteTest}
                   onClose={() => setTestOpen(null)}
@@ -460,6 +461,7 @@ export function AgentEditor(props: Props) {
                 <TestCard
                   key={shownTest.id}
                   test={shownTest}
+                  names={namesOf(draft.config)}
                   result={shownResult}
                   repeats={checks.run?.repeats ?? 3}
                   on={on === null ? versionLabel(agent.live_version) : pullLabel(on)}

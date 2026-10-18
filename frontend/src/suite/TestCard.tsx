@@ -12,8 +12,8 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 import { TestIcon } from './bits'
-import { score, verdict } from './model'
-import { label, TestResults } from './TestResults'
+import { checkKind, score, verdict, type Names } from './model'
+import { CheckKind, label, TestResults } from './TestResults'
 
 const card =
   'absolute top-4 right-4 bottom-4 z-20 flex w-[380px] flex-col overflow-hidden rounded-2xl border bg-card shadow-[0_18px_50px_-18px_rgba(0,0,0,0.35)]'
@@ -37,6 +37,7 @@ function Header({ icon, title, sub, onClose }: { icon: React.ReactNode; title: s
 
 type Props = {
   test: Test
+  names: Names
   result: TestRun | undefined
   repeats: number
   /** Where it ran: "PR #2" or "v3". */
@@ -50,7 +51,7 @@ type Props = {
   onClose: () => void
 }
 
-export function TestCard({ test, result, repeats, on, removable, selected, onSelect, onShowNode, onRemove, onClose }: Props) {
+export function TestCard({ test, names, result, repeats, on, removable, selected, onSelect, onShowNode, onRemove, onClose }: Props) {
   const s = result ? score(result, repeats) : null
   const shown = s ? verdict(s) : null
   const sub =
@@ -65,6 +66,7 @@ export function TestCard({ test, result, repeats, on, removable, selected, onSel
       <div className="min-h-0 flex-1 overflow-auto">
         <TestResults
           test={test}
+          names={names}
           result={result}
           repeats={repeats}
           selected={selected}
@@ -84,6 +86,7 @@ export function TestCard({ test, result, repeats, on, removable, selected, onSel
 }
 
 type NewProps = {
+  names: Names
   /** Where it goes: "PR #2", or "a new pull request" on live. */
   into: string
   onAdd: (test: { name: string; caller: string; checks: string[] }) => Promise<void>
@@ -91,7 +94,7 @@ type NewProps = {
 }
 
 /** A test written by hand: who calls, and what must happen. It runs like the others, 3 times. */
-export function NewTestCard({ into, onAdd, onClose }: NewProps) {
+export function NewTestCard({ names, into, onAdd, onClose }: NewProps) {
   const [name, setName] = useState('')
   const [caller, setCaller] = useState('')
   const [checks, setChecks] = useState('')
@@ -146,10 +149,20 @@ export function NewTestCard({ into, onAdd, onClose }: NewProps) {
             className={cn(field, 'field-sizing-content min-h-16 resize-none')}
           />
           <span className="block text-[11.5px] leading-snug text-muted-foreground">
-            “Reaches …”, “Ends the call” and “… is recorded” are checked on the steps the call goes through; anything
-            else is judged on what was said.
+            “Reaches …” a step, “Ends the call” and “… is recorded” for a field an edge collects are checked on the
+            steps the call goes through; anything else is judged on what was said.
           </span>
         </label>
+        {lines.length > 0 && (
+          <ul aria-label="How each check is decided" className="space-y-1">
+            {lines.map((line, i) => (
+              <li key={i} className="flex items-start gap-2 text-[12.5px] leading-snug">
+                <span className="min-w-0 flex-1">{line}</span>
+                <CheckKind kind={checkKind(line, names)} />
+              </li>
+            ))}
+          </ul>
+        )}
         {problem && (
           <p role="alert" className="text-[12.5px] text-bad">
             {problem}

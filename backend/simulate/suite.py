@@ -78,7 +78,8 @@ async def call_and_check(builder: AgentBuilder, test: dict, services: Services) 
     Returns { path, transcript, ended, seconds, tokens, checks, passed }; a
     call that could not run has `ended` "error" and fails every check.
     """
-    wanted = [checks.parse(line) for line in test["checks"]]
+    steps, fields = checks.names(builder.config)
+    wanted = [checks.parse(line, steps, fields) for line in test["checks"]]
     judge_tokens = {"prompt": 0, "completion": 0}
     caller = services.caller(test["caller"])
     try:

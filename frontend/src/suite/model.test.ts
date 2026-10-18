@@ -5,7 +5,9 @@ import { nodeView } from '@/call/path'
 
 import {
   asCall,
+  checkKind,
   checksText,
+  namesOf,
   orderTests,
   rulesByStep,
   score,
@@ -128,5 +130,31 @@ describe('rules and tests', () => {
       testsAdded: [copy.tests[1]],
       testsRemoved: [],
     })
+  })
+})
+
+describe('how a check line will be decided', () => {
+  const names = { steps: ['greeting', 'offer_times', 'confirm'], fields: ['full_name', 'slot'] }
+
+  it('is on the path only when it names a step or a field the agent has', () => {
+    expect(checkKind('Reaches Confirm', names)).toBe('reaches')
+    expect(checkKind('reaches the offer times step.', names)).toBe('reaches')
+    expect(checkKind('Ends the call', names)).toBe('ends')
+    expect(checkKind('Full name is recorded', names)).toBe('recorded')
+    expect(checkKind('Reaches a decision about the doctor before confirming', names)).toBe('judged')
+    expect(checkKind('Date of birth is recorded', names)).toBe('judged')
+    expect(checkKind('Never gives medical advice', names)).toBe('judged')
+  })
+
+  it('takes the names from the copy', () => {
+    const config = {
+      name: 'A',
+      initial_node: 'a',
+      nodes: [
+        { name: 'a', edges: [{ function: 'go', description: '', target: 'b', properties: { slot: {} } }] },
+        { name: 'b' },
+      ],
+    }
+    expect(namesOf(config)).toEqual({ steps: ['a', 'b'], fields: ['slot'] })
   })
 })

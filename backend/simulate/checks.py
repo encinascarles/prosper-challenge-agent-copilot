@@ -12,14 +12,19 @@
 # cover what a path cannot see (what was said, and how).
 #
 # Steps and fields are written as people read them ("Offer times", "Full
-# name") and match the names in the agent ("offer_times", "full_name").
+# name") and match the names in the agent ("offer_times", "full_name"). A line
+# is a path check only when it names something the agent has: "Reaches a
+# decision about the doctor" names no step, so it is judged like any other
+# sentence instead of failing every run with "never got there".
 #
 
 import json
 import re
-from typing import Optional
+from typing import Iterable, Optional
 
 from openai import AsyncOpenAI
+
+from agent_builder import AgentConfig
 
 _REACHES = re.compile(r"reaches (?:the )?(?P<name>.+?)(?: step)?", re.IGNORECASE)
 _ENDS = re.compile(r"(?:the agent )?ends the call", re.IGNORECASE)
@@ -45,20 +50,30 @@ def key(name: str) -> str:
     return re.sub(r"[\s_-]+", "_", name.strip().lower())
 
 
-def parse(line: str) -> dict:
-    """The check a line states: { text, kind, name? }.
+def parse(line: str, steps: Iterable[str], fields: Iterable[str]) -> dict:
+    """The check a line states for an agent with these steps and fields: { text, kind, name? }.
 
     `kind` is "reaches", "ends", "recorded" or "judged".
     """
     text = line.strip()
     bare = text.rstrip(".").strip()
-    if match := _REACHES.fullmatch(bare):
+    steps, fields = {key(step) for step in steps}, {key(field) for field in fields}
+    match = _REACHES.fullmatch(bare)
+    if match and key(match["name"]) in steps:
         return {"text": text, "kind": "reaches", "name": match["name"]}
     if _ENDS.fullmatch(bare):
         return {"text": text, "kind": "ends"}
-    if match := _RECORDED.fullmatch(bare):
+    match = _RECORDED.fullmatch(bare)
+    if match and key(match["name"]) in fields:
         return {"text": text, "kind": "recorded", "name": match["name"]}
     return {"text": text, "kind": "judged"}
+
+
+def names(config: AgentConfig) -> tuple[list[str], list[str]]:
+    """The agent's steps, and the fields its edges collect: what a path check can name."""
+    steps = [node.name for node in config.nodes]
+    fields = [field for node in config.nodes for edge in node.edges for field in edge.properties]
+    return steps, fields
 
 
 def decide(check: dict, call: dict) -> Optional[dict]:

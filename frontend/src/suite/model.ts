@@ -10,7 +10,7 @@
 // A run's calls report their path the way a test call does, so one of them is
 // drawn on the graph by turning it into a finished `Call` (call/path.ts).
 
-import type { Checks, PullSummary, Rule, Suite, SuiteRun, Test, TestCall, TestRun } from '@/agents/types'
+import type { AgentConfig, CheckResult, Checks, PullSummary, Rule, Suite, SuiteRun, Test, TestCall, TestRun } from '@/agents/types'
 import type { Call } from '@/call/path'
 
 /** How many runs of a test passed, of how many it gets, and how many are done. */
@@ -153,4 +153,37 @@ export function tokensOf(run: TestCall): number {
 /** A pull request's checks as lists show them, or null when there is nothing to say. */
 export function pullChecks(pull: PullSummary): Checks | null {
   return pull.state === 'open' ? pull.checks : null
+}
+
+/** What a path check can name in an agent: its steps, and the fields its edges collect. */
+export type Names = { steps: string[]; fields: string[] }
+
+export function namesOf(config: AgentConfig): Names {
+  return {
+    steps: config.nodes.map((node) => node.name),
+    fields: config.nodes.flatMap((node) => (node.edges ?? []).flatMap((edge) => Object.keys(edge.properties ?? {}))),
+  }
+}
+
+// The same reading as backend/simulate/checks.py `parse`, so the form says
+// how a line will be decided before it runs. Keep the two in step.
+const REACHES = /^reaches (?:the )?(.+?)(?: step)?$/i
+const ENDS = /^(?:the agent )?ends the call$/i
+const RECORDED = /^(?:the )?(.+?) is recorded$/i
+const key = (name: string) => name.trim().toLowerCase().replace(/[\s_-]+/g, '_')
+
+/**
+ * How a check line will be decided for an agent with these names: on the call's
+ * path, or judged by a model. "Reaches X" and "X is recorded" are path checks
+ * only when X is a step or a field the agent has; otherwise they are sentences.
+ */
+export function checkKind(line: string, names: Names): CheckResult['kind'] {
+  const bare = line.trim().replace(/\.+$/, '').trim()
+  const has = (list: string[], name: string) => list.some((item) => key(item) === key(name))
+  const reaches = REACHES.exec(bare)
+  if (reaches && has(names.steps, reaches[1])) return 'reaches'
+  if (ENDS.test(bare)) return 'ends'
+  const recorded = RECORDED.exec(bare)
+  if (recorded && has(names.fields, recorded[1])) return 'recorded'
+  return 'judged'
 }

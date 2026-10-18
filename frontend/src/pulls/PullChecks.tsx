@@ -9,7 +9,7 @@ import type { Pull, SuiteRun } from '@/agents/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ScoreText, TestIcon } from '@/suite/bits'
-import { addedIn, orderTests, progress, score, summarize } from '@/suite/model'
+import { addedIn, namesOf, orderTests, progress, score, summarize } from '@/suite/model'
 import { TestResults } from '@/suite/TestResults'
 
 import { pullLabel } from './model'
@@ -101,7 +101,7 @@ export function PullChecks({ pull, run, onRerun }: Props) {
             </button>
             {expanded && (
               <div className="border-t bg-muted/20 pl-[26px]">
-                <TestResults test={test} result={result} repeats={repeats} selected={selected} onSelect={setSelected} />
+                <TestResults test={test} names={namesOf(pull.config)} result={result} repeats={repeats} selected={selected} onSelect={setSelected} />
               </div>
             )}
           </div>

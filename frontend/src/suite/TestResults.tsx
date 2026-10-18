@@ -3,23 +3,39 @@
 // through, what was said). Shared by the test card over the graph and the
 // Checks tab of a pull request.
 //
-// A check is marked by its kind: "path" ones are decided exactly from the
+// A check is marked by how it is decided: "on the path" ones exactly from the
 // steps the call went through, "judged" ones by a model reading the
 // transcript, whose one-line reason is shown when it fails.
 
 import { Route, Scale } from 'lucide-react'
 
-import type { Test, TestRun } from '@/agents/types'
+import type { CheckResult, Test, TestRun } from '@/agents/types'
 import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
 
 import { ScoreText, TestIcon } from './bits'
-import { endedText, tokensOf } from './model'
+import { checkKind, endedText, tokensOf, type Names } from './model'
 
 export const label = 'text-[11px] font-medium tracking-wide text-muted-foreground uppercase'
 
+/** How a check line is decided, in a muted word: on the call's path, or judged on what was said. */
+export function CheckKind({ kind }: { kind: CheckResult['kind'] }) {
+  const judged = kind === 'judged'
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1 text-[11px] whitespace-nowrap text-muted-foreground"
+      title={judged ? 'Judged by a model on what was said' : 'Decided from the steps the call went through'}
+    >
+      {judged ? <Scale className="size-3" /> : <Route className="size-3" />}
+      {judged ? 'judged' : 'on the path'}
+    </span>
+  )
+}
+
 type Props = {
   test: Test
+  /** The copy's steps and fields: what tells a path check from a judged one before it runs. */
+  names: Names
   result: TestRun | undefined
   repeats: number
   /** The run shown, by index. */
@@ -29,7 +45,7 @@ type Props = {
   onShowNode?: (node: string) => void
 }
 
-export function TestResults({ test, result, repeats, selected, onSelect, onShowNode }: Props) {
+export function TestResults({ test, names, result, repeats, selected, onSelect, onShowNode }: Props) {
   const runs = result?.runs ?? []
   const run = runs[selected] ?? null
   return (
@@ -44,7 +60,7 @@ export function TestResults({ test, result, repeats, selected, onSelect, onShowN
           const done = runs.map((r) => r.checks[i]).filter(Boolean)
           const passed = done.filter((check) => check.pass).length
           const failed = done.find((check) => !check.pass)
-          const kind = done[0]?.kind
+          const kind = done[0]?.kind ?? checkKind(text, names)
           return (
             <div key={i} className="mb-1.5 flex items-start gap-2 text-[13px]">
               <TestIcon
@@ -62,22 +78,7 @@ export function TestResults({ test, result, repeats, selected, onSelect, onShowN
               {done.length > 0 && passed < done.length && (
                 <ScoreText className="text-[11.5px]" score={{ passed, done: done.length, of: done.length }} />
               )}
-              {kind && (
-                <span
-                  className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
-                  title={kind === 'judged' ? 'Judged by a model on what was said' : 'Decided from the steps the call went through'}
-                >
-                  {kind === 'judged' ? (
-                    <>
-                      <Scale className="size-3" /> judged
-                    </>
-                  ) : (
-                    <>
-                      <Route className="size-3" /> path
-                    </>
-                  )}
-                </span>
-              )}
+              <CheckKind kind={kind} />
             </div>
           )
         })}

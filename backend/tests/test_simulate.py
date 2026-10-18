@@ -10,7 +10,7 @@ import pytest
 
 from agent_builder import AgentBuilder
 from simulate import parse, run_suite
-from simulate.checks import decide
+from simulate.checks import decide, names
 from simulate.text_call import TextCall
 from tests.fakes import (
     BOOKING,
@@ -91,6 +91,11 @@ def test_a_call_that_goes_on_is_cut_at_the_turn_cap(agent):
     assert len(caller.heard) == 3
 
 
+# What the sample agent has for a path check to name.
+STEPS = ["greeting", "collect_details", "offer_times", "confirm"]
+FIELDS = ["intent", "full_name", "reason", "slot"]
+
+
 @pytest.mark.parametrize(
     "line, check",
     [
@@ -101,33 +106,47 @@ def test_a_call_that_goes_on_is_cut_at_the_turn_cap(agent):
         ("Full name is recorded", {"kind": "recorded", "name": "Full name"}),
         ("Never gives medical advice", {"kind": "judged"}),
         ("Confirms the time before ending the call", {"kind": "judged"}),
+        # Naming nothing the agent has, they read as sentences: judged, not failed.
+        ("Reaches a decision about the doctor before confirming", {"kind": "judged"}),
+        ("Date of birth is recorded", {"kind": "judged"}),
     ],
 )
 def test_a_check_line_is_read_into_its_kind(line, check):
-    assert parse(line) == {"text": line, **check}
+    assert parse(line, STEPS, FIELDS) == {"text": line, **check}
+
+
+def test_what_a_path_check_can_name_comes_from_the_copy(agent):
+    agent["nodes"][3]["name"] = "wrap_up"
+    agent["nodes"][2]["edges"][0]["target"] = "wrap_up"
+    steps, fields = names(AgentBuilder.from_dict(agent).config)
+
+    assert steps == ["greeting", "collect_details", "offer_times", "wrap_up"]
+    assert fields == FIELDS
+    assert parse("Reaches Wrap up", steps, fields)["kind"] == "reaches"
+    assert parse("Reaches Confirm", steps, fields)["kind"] == "judged"
 
 
 def test_path_checks_are_decided_from_the_path(agent):
     result, _ = _run(agent, BOOKING, BOOKING_CALLER)
 
     def check(line):
-        return decide(parse(line), result)
+        return decide(parse(line, STEPS, FIELDS), result)
 
     assert check("Reaches offer times") == {"pass": True, "detail": None}
     assert check("Ends the call") == {"pass": True, "detail": None}
     assert check("Full name is recorded") == {"pass": True, "detail": "full_name: Maria Lopez"}
-    assert check("Date of birth is recorded") == {"pass": False, "detail": "Never recorded."}
+    assert check("Reason is recorded") == {"pass": True, "detail": "reason: check-up"}
     assert check("Never gives medical advice") is None
 
 
 def test_a_call_that_did_not_reach_a_step_says_where_it_went(agent):
     result, _ = _run(agent, BOOKING[:3], ["I want to cancel."])
 
-    assert decide(parse("Reaches Confirm"), result) == {
+    assert decide(parse("Reaches Confirm", STEPS, FIELDS), result) == {
         "pass": False,
         "detail": "Never got there: greeting → collect_details.",
     }
-    assert decide(parse("Ends the call"), result) == {
+    assert decide(parse("Ends the call", STEPS, FIELDS), result) == {
         "pass": False,
         "detail": "The caller hung up; the agent never ended the call.",
     }
