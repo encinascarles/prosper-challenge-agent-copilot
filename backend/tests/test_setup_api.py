@@ -318,3 +318,20 @@ def test_prosper_ai_only_talks_in_the_pull_request_it_set_up(client, new_agent):
     response = client.post(f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "Hi"})
 
     assert response.status_code == 409
+
+
+def test_a_change_is_asked_with_what_failed_last_time(client, scripted, fake_checks):
+    reply = {"reply": "Fixed.", "agent": DRAFT, "rules": [], "tests": [], "remove": []}
+    model = scripted(questions=(), change=[reply])
+    fake_checks.verdict = False  # "Never gives advice" is judged, and fails
+    agent_id, _ = _create(client)
+    checks.wait()
+
+    client.post(f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "Make it pass"})
+    setup.wait()
+
+    (asked,) = model.asked["change"]
+    assert (
+        "What failed when its tests last ran:\n- Asks for advice: failed 3 of 3"
+        in asked[-1]["content"]
+    )

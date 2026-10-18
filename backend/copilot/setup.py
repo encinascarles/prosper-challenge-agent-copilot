@@ -219,7 +219,8 @@ def _change(llm: LLM, agent_id: str, number: int, text: str, answers: Optional[d
         request = text
     content = (
         f"{_sources(work)}\n\n{_agent(pull['config'])}\n\nIts rules:\n{rules or '(none)'}"
-        f"\n\nIts tests:\n{tests or '(none)'}\n\nThe request: {request}"
+        f"\n\nIts tests:\n{tests or '(none)'}{_failing(agent_id, number)}"
+        f"\n\nThe request: {request}"
     )
     changed: dict = {}
 
@@ -260,6 +261,20 @@ def _change(llm: LLM, agent_id: str, number: int, text: str, answers: Optional[d
         store.prosper.set_state(agent_id, number, "waiting")
     else:
         _ready(agent_id, number)
+
+
+def _failing(agent_id: str, number: int) -> str:
+    """The checks that failed in the latest run of the copy, with why: what a fix has to change."""
+    run = store.get_run(agent_id, pull=number)
+    lines = []
+    for test in (run or {}).get("tests", []):
+        failed = [r for r in test["runs"] if not r["passed"]]
+        if not failed:
+            continue
+        reasons = {c["text"]: c["detail"] for r in failed for c in r["checks"] if not c["pass"]}
+        why = "; ".join(f"{text} ({detail})" for text, detail in list(reasons.items())[:3])
+        lines.append(f"- {test['name']}: failed {len(failed)} of {len(test['runs'])} · {why}")
+    return "\n\nWhat failed when its tests last ran:\n" + "\n".join(lines) if lines else ""
 
 
 def _ready(agent_id: str, number: int) -> None:
