@@ -20,8 +20,9 @@
 // the first. Anything else the backend refuses comes back as its sentence and,
 // when it is about one node, that node's name, which is where the card shows it.
 //
-// A test call runs the saved agent, so it is offered once there is nothing left
-// to save. While its card is on screen, running or ended, the editor is
+// A test call runs what the editor is on as it was saved: live, or the pull
+// request's copy. So on a pull request it is offered once there is nothing
+// left to save. While its card is on screen, running or ended, the editor is
 // read-only: the path it draws is over this very graph, by node and edge name,
 // and an edit would leave it pointing at things that changed.
 import { useEffect, useEffectEvent, useMemo, useState } from 'react'
@@ -41,7 +42,7 @@ import { toLayout, type Draft } from '@/draft/draft'
 import { EditorContext, useNewEditor, type EditorCore, type Refusal } from '@/draft/editor'
 import { GraphCanvas } from '@/graph/GraphCanvas'
 import { looseEdges, toGraph } from '@/graph/model'
-import { changesAgent, type On } from '@/pulls/model'
+import { changesAgent, testCallLabel, type On } from '@/pulls/model'
 
 type Props = {
   agent: Agent
@@ -90,7 +91,7 @@ export function AgentEditor(props: Props) {
   const { onDirty, onSaved, onSwitch, onOpenForEdits, onNewPull, onMerged, onProblem } = props
   const pull = on === null ? null : (pulls.find((p) => p.number === on) ?? null)
   const open = useNewEditor(copy.config, copy.layout)
-  const testCall = useTestCall(agent.id)
+  const testCall = useTestCall(agent.id, on)
   const locked = testCall.call !== null
 
   // On live, the first edit that changes the agent opens a pull request and
@@ -276,7 +277,7 @@ export function AgentEditor(props: Props) {
               onShowWarnings={() => setFramed({ ids: [...new Set(warnings.map((w) => w.node))] })}
               onShowProblem={() => refusal?.node && setFramed({ ids: [refusal.node] })}
             />
-            <TestCallButton label="Test call" dirty={unsaved} warnings={warnings} open={locked} onStart={testCall.start} />
+            <TestCallButton label={testCallLabel(on)} dirty={unsaved} warnings={warnings} open={locked} onStart={testCall.start} />
           </TopBar>
           {pull && (
             <PullBar
@@ -284,6 +285,7 @@ export function AgentEditor(props: Props) {
               live={agent.live_version}
               dirty={dirty}
               merging={merging}
+              callOpen={locked}
               problem={mergeProblem}
               callBlocker={locked ? 'The test call is on screen' : callBlocker(unsaved, warnings)}
               onTry={testCall.start}

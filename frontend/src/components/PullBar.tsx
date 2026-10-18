@@ -18,6 +18,8 @@ type Props = {
   live: number
   dirty: boolean
   merging: boolean
+  /** A test call is on screen: merging would end it and change the graph under it. */
+  callOpen: boolean
   /** Why the last merge was refused, when it was not about a card. */
   problem: string | null
   /** Why a test call cannot be placed now, or null. */
@@ -29,9 +31,9 @@ type Props = {
 
 const dot = <span className="text-muted-foreground/60">·</span>
 
-export function PullBar({ pull, live, dirty, merging, problem, callBlocker, onTry, onMerge, onBack }: Props) {
+export function PullBar({ pull, live, dirty, merging, callOpen, problem, callBlocker, onTry, onMerge, onBack }: Props) {
   const stale = isStale(pull, live)
-  const blocker = mergeBlocker(pull, live, dirty)
+  const blocker = mergeBlocker(pull, live, dirty) ?? (callOpen ? 'Close the test call first.' : null)
   return (
     <div className="flex h-10 shrink-0 items-center gap-2 border-b bg-brand-tint/40 px-4 text-[12.5px]">
       <GitPullRequestArrow className="size-3.5 shrink-0 text-brand" />
