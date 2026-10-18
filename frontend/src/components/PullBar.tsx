@@ -1,6 +1,6 @@
 // The slim bar under the top bar while the editor is on a pull request: which
-// one, what it is based on, and what to do with it (try it, merge it, or go
-// back to live).
+// one (its title opens its page), what it is based on, and what to do with it
+// (try it, merge it, or go back to live).
 //
 // Merging takes the saved copy, so it waits for the save. A pull request based
 // on a version that is no longer live cannot merge: its copy is of an older
@@ -27,19 +27,27 @@ type Props = {
   onTry: () => void
   onMerge: () => void
   onBack: () => void
+  /** The pull request's page. */
+  onOpenPage: () => void
 }
 
 const dot = <span className="text-muted-foreground/60">·</span>
 
-export function PullBar({ pull, live, dirty, merging, callOpen, problem, callBlocker, onTry, onMerge, onBack }: Props) {
+export function PullBar({ pull, live, dirty, merging, callOpen, problem, callBlocker, onTry, onMerge, onBack, onOpenPage }: Props) {
   const stale = isStale(pull, live)
   const blocker = mergeBlocker(pull, live, dirty) ?? (callOpen ? 'Close the test call first.' : null)
   return (
     <div className="flex h-10 shrink-0 items-center gap-2 border-b bg-brand-tint/40 px-4 text-[12.5px]">
       <GitPullRequestArrow className="size-3.5 shrink-0 text-brand" />
-      <span className="shrink-0 font-semibold tabular-nums">{pullLabel(pull.number)}</span>
-      {dot}
-      <span className="max-w-[320px] truncate">{pull.title}</span>
+      <button
+        onClick={onOpenPage}
+        title="Open its page"
+        className="flex min-w-0 items-center gap-2 rounded outline-none hover:underline focus-visible:underline"
+      >
+        <span className="shrink-0 font-semibold tabular-nums">{pullLabel(pull.number)}</span>
+        {dot}
+        <span className="max-w-[320px] truncate">{pull.title}</span>
+      </button>
       {dot}
       <span className="shrink-0 text-muted-foreground tabular-nums">
         {stale && <span className="font-medium text-warn">Needs update · </span>}

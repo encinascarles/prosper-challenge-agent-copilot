@@ -4,9 +4,11 @@
 // It reads `v2 · live` on the live version and `PR #5 · <title>`, with the
 // orange pull request icon, on a pull request: the orange says this is a
 // proposed change, not what callers get. Its popover lists live, the open pull
-// requests and "New pull request", which needs a live version to copy.
+// requests and "New pull request", which needs a live version to copy. A pull
+// request's row opens its page, where it is read; the pencil at its end opens
+// it in Build.
 
-import { Check, ChevronsUpDown, GitPullRequestArrow, Plus } from 'lucide-react'
+import { Check, ChevronsUpDown, GitPullRequestArrow, Pencil, Plus } from 'lucide-react'
 import { useState } from 'react'
 
 import type { Agent, PullSummary, VersionSummary } from '@/agents/types'
@@ -19,14 +21,17 @@ type Props = {
   pulls: PullSummary[] // the open ones, newest first
   versions: VersionSummary[] // live first
   on: On
+  /** Build on live or on an open pull request. */
   onSwitch: (on: On) => void
+  /** A pull request's page. */
+  onOpenPage: (number: number) => void
   onNewPull: () => void
 }
 
 const head = 'px-2 pt-2 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase'
 const row = 'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left outline-none hover:bg-muted focus-visible:bg-muted'
 
-export function VersionPill({ agent, pulls, versions, on, onSwitch, onNewPull }: Props) {
+export function VersionPill({ agent, pulls, versions, on, onSwitch, onOpenPage, onNewPull }: Props) {
   const [open, setOpen] = useState(false)
   const pull = on === null ? undefined : pulls.find((p) => p.number === on)
   const live = agent.live_version
@@ -84,19 +89,29 @@ export function VersionPill({ agent, pulls, versions, on, onSwitch, onNewPull }:
         </div>
         {pulls.length === 0 && <p className="px-2 pb-1 text-[12.5px] text-muted-foreground">None.</p>}
         {pulls.map((p) => (
-          <button key={p.number} className={row} onClick={() => go(() => onSwitch(p.number))}>
-            <GitPullRequestArrow className="size-4 shrink-0 text-brand" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px]">
-                <span className="font-medium tabular-nums">{pullLabel(p.number)}</span> · {p.title}
+          <div key={p.number} className="group/pull flex items-center rounded-md hover:bg-muted">
+            <button className={cn(row, 'min-w-0 flex-1 hover:bg-transparent')} onClick={() => go(() => onOpenPage(p.number))}>
+              <GitPullRequestArrow className="size-4 shrink-0 text-brand" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px]">
+                  <span className="font-medium tabular-nums">{pullLabel(p.number)}</span> · {p.title}
+                </span>
+                <span className="block truncate text-[11.5px] text-muted-foreground tabular-nums">
+                  {isStale(p, live) ? <span className="font-medium text-warn">Needs update · </span> : null}
+                  {basedOn(p)}
+                </span>
               </span>
-              <span className="block truncate text-[11.5px] text-muted-foreground tabular-nums">
-                {isStale(p, live) ? <span className="font-medium text-warn">Needs update · </span> : null}
-                {basedOn(p)}
-              </span>
-            </span>
-            {on === p.number && <Check className="size-3.5 text-muted-foreground" />}
-          </button>
+              {on === p.number && <Check className="size-3.5 text-muted-foreground" />}
+            </button>
+            <button
+              aria-label={`Open ${pullLabel(p.number)} in Build`}
+              title="Open in Build"
+              onClick={() => go(() => onSwitch(p.number))}
+              className="mr-1 rounded p-1.5 text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:bg-background"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+          </div>
         ))}
         <button
           className={cn(row, 'mt-1 text-[13px] text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50')}

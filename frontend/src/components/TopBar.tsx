@@ -1,6 +1,6 @@
 // The bar at the top of every screen: where you are (Prosper, the agent, and
-// what of it: live or a pull request) and, at the right, the open agent's
-// actions.
+// what of it: live or a pull request), the agent's sections in the middle and,
+// at the right, the open agent's actions.
 //
 // The agent's name is the one control for agents. It opens the list of them,
 // with the open one checked and "New agent" at the end; picking a row opens
@@ -34,11 +34,13 @@ type Props = {
   name?: string
   /** What of the open agent is shown (live or a pull request), next to its name. */
   pill?: React.ReactNode
+  /** The open agent's sections, in the middle. */
+  sections?: React.ReactNode
   /** The open agent's actions, at the right. */
   children?: React.ReactNode
 }
 
-export function TopBar({ agents, agentId, onPick, onSettings, onNew, name, pill, children }: Props) {
+export function TopBar({ agents, agentId, onPick, onSettings, onNew, name, pill, sections, children }: Props) {
   const [listOpen, setListOpen] = useState(false)
   // What was asked for from the list that opens a dialog, until the list has
   // closed. The dialog opens only then: the closing list would otherwise take
@@ -48,7 +50,7 @@ export function TopBar({ agents, agentId, onPick, onSettings, onNew, name, pill,
   const open = agents.find((agent) => agent.id === agentId)
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-1.5 border-b px-4">
+    <header className="relative flex h-12 shrink-0 items-center gap-1.5 border-b px-4">
       <Mark />
       <span className="ml-0.5 text-sm font-semibold tracking-[-0.01em]">Prosper</span>
       <span className="ml-1 text-sm text-muted-foreground">/</span>
@@ -107,6 +109,7 @@ export function TopBar({ agents, agentId, onPick, onSettings, onNew, name, pill,
         </DropdownMenuContent>
       </DropdownMenu>
       {pill}
+      {sections}
       {children}
     </header>
   )
