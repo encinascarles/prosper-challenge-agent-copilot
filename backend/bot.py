@@ -10,6 +10,7 @@
 #
 # While the call runs, the browser is told each node the call enters, over the
 # RTVI channel its client already has, so the editor can draw the call's path.
+# That part is shared with the text calls the tests run (agent_builder/runtime.py).
 #
 # Run:  python bot.py   then open http://localhost:7860/client (runs example_flow.json)
 #
@@ -27,7 +28,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.elevenlabs.stt import ElevenLabsRealtimeSTTService
@@ -35,11 +35,11 @@ from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.workers.runner import WorkerRunner
-from pipecat_flows import FlowManager
 
 import api
 import store
-from agent_builder import NODE_ACTION, AgentBuilder
+from agent_builder import AgentBuilder
+from agent_builder.runtime import start_flow
 
 # Load .env next to this file, so the bot runs the same from the repo root or backend/.
 load_dotenv(Path(__file__).parent / ".env", override=True)
@@ -48,23 +48,6 @@ load_dotenv(Path(__file__).parent / ".env", override=True)
 transport_params = {
     "webrtc": lambda: TransportParams(audio_in_enabled=True, audio_out_enabled=True),
 }
-
-
-def report_nodes(flow_manager: FlowManager, worker: PipelineWorker) -> None:
-    """Tell the browser each node the call enters, the start node included.
-
-    The message is { type: "node", node, from, edge, collected }.
-    """
-
-    async def report(action: dict, flow_manager: FlowManager):
-        # The builder's action minus what is Flows' business: its type and handler.
-        message = {"type": "node"}
-        message.update({key: action[key] for key in ("node", "from", "edge", "collected")})
-        # A server message on the RTVI channel: the client hands it to the page
-        # as it is, and no second connection is needed for it.
-        await worker.queue_frame(RTVIServerMessageFrame(data=message))
-
-    flow_manager.register_action(NODE_ACTION, report)
 
 
 async def run_bot(
@@ -104,18 +87,12 @@ async def run_bot(
         idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
     )
 
-    flow_manager = FlowManager(
-        llm=llm,
-        context_aggregator=context_aggregator,
-        worker=worker,
-        transport=transport,
-    )
-    report_nodes(flow_manager, worker)
+    start_agent = start_flow(builder, llm, context_aggregator, worker, transport)
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Client connected — starting flow at initial node")
-        await flow_manager.initialize(builder.build_initial_node())
+        await start_agent()
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
