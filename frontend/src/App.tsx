@@ -22,7 +22,7 @@ import {
   openPull,
 } from '@/agents/api'
 import { NEW_AGENT } from '@/agents/template'
-import type { Agent, AgentCopy, Pull, PullSummary, VersionSummary } from '@/agents/types'
+import type { Agent, AgentCopy, Pull, PullSummary, Suite, VersionSummary } from '@/agents/types'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { NewAgentDialog } from '@/components/NewAgentDialog'
 import { Sections, type Section } from '@/components/Sections'
@@ -47,6 +47,7 @@ type Opened = {
   versions: VersionSummary[] // live first
   on: On
   copy: AgentCopy // what the editor starts from: the live version or the PR's copy
+  suite: Suite // that copy's rules and tests
   // A new number is a new editor: another copy was loaded. Opening a PR for
   // the first edit of live keeps the number, so the edit and its undo stay.
   session: number
@@ -66,8 +67,9 @@ async function load(id: string, wanted: On): Promise<Omit<Opened, 'session'>> {
     on = (pulls.find((pull) => pull.kind === 'setup') ?? pulls.at(-1))?.number ?? null
     if (on === null) throw new Error(`${agent.name} is not live and has no open pull request.`)
   }
-  const { config, layout } = on === null ? await getVersion(id, agent.live_version) : await getPull(id, on)
-  return { agent, pulls, versions, on, copy: { config, layout } }
+  const { config, layout, rules, tests } =
+    on === null ? await getVersion(id, agent.live_version) : await getPull(id, on)
+  return { agent, pulls, versions, on, copy: { config, layout }, suite: { rules, tests } }
 }
 
 function setParam(url: URL, name: string, value: string | null) {
@@ -233,9 +235,10 @@ export default function App() {
   }
 
   // The first edit of live goes to a new PR. The editor stays as it is, edit
-  // and undo included, and from now on saves to that PR.
-  const openForEdits = async () => {
-    if (!shown) return
+  // and undo included, and from now on saves to that PR. So does the first
+  // rule or test added on live. Resolves with the PR's number.
+  const openForEdits = async (): Promise<number> => {
+    if (!shown) throw new Error('No agent is open.')
     const { agent } = shown
     const pull = await openPull(agent.id, EDITS_TITLE)
     setOpened((now) =>
@@ -246,6 +249,7 @@ export default function App() {
     writeUrl(agent.id, pull.number)
     toast.show(openedForEdits(pull.number, agent.live_version))
     loadAgents()
+    return pull.number
   }
 
   const newPull = async () => {
@@ -340,6 +344,7 @@ export default function App() {
               versions={shown.versions}
               on={shown.on}
               copy={shown.copy}
+              suite={shown.suite}
               agents={agents ?? []}
               onPick={pick}
               onSettings={(id) => pick(id, true)}
