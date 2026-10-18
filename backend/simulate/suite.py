@@ -65,6 +65,13 @@ class Services:
         return await checks.judge(self.client, prosper_model(), check, transcript)
 
 
+def _short(error: Exception) -> str:
+    """An error in a line a card can show: OpenAI's run to a JSON dump of the response."""
+    body = getattr(error, "body", None)
+    text = body.get("message") if isinstance(body, dict) and body.get("message") else str(error)
+    return text if len(text) <= 120 else text[:119] + "…"
+
+
 async def call_and_check(builder: AgentBuilder, test: dict, services: Services) -> dict:
     """One call of `test` against the agent, with every check decided. Never raises.
 
@@ -79,7 +86,7 @@ async def call_and_check(builder: AgentBuilder, test: dict, services: Services) 
     except Exception as error:  # noqa: BLE001 - a broken call is a failed run, not a crash
         logger.exception(f"Test '{test['name']}' did not run")
         call = {"path": [], "transcript": [], "ended": "error", "tokens": {}, "seconds": 0}
-        failed = {"pass": False, "detail": f"The call did not run: {error}"}
+        failed = {"pass": False, "detail": f"The call did not run: {_short(error)}"}
         results = [{"text": c["text"], "kind": c["kind"], **failed} for c in wanted]
     else:
         results = []
