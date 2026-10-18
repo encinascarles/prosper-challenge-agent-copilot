@@ -73,6 +73,82 @@ export type AgentCopy = {
   layout: Layout
 }
 
+/** Where a rule or a test came from: written by hand, in the pull request `pull`. */
+export type Source = {
+  kind: 'manual'
+  pull?: number | null // the pull request it was added in; none for one older than them
+}
+
+/** A short instruction added to the agent's prompt, on every step (`step` null) or on one. */
+export type Rule = {
+  id: string
+  step: string | null // the node's name
+  text: string
+  source: Source
+}
+
+/** A simulated call: who calls, and what must happen in it, one check per line. */
+export type Test = {
+  id: string
+  name: string
+  caller: string // who calls and what they want, as the simulated caller plays it
+  checks: string[]
+  source: Source
+}
+
+/** What a copy carries next to the agent JSON: its rules and tests. Versioned with it. */
+export type Suite = {
+  rules: Rule[]
+  tests: Test[]
+}
+
+/** How the latest run of a copy's tests is going (backend/store/runs.py `summary`). */
+export type Checks = {
+  state: 'running' | 'passed' | 'failed' | 'stopped'
+  passed: number // tests that passed every one of their runs
+  failing: number // tests that failed at least one
+  total: number
+}
+
+/** One check of one simulated call: decided from the path, or judged on the transcript. */
+export type CheckResult = {
+  text: string
+  kind: 'reaches' | 'ends' | 'recorded' | 'judged'
+  pass: boolean
+  detail: string | null // why it failed, the value recorded, or the judge's reason
+}
+
+/** One of a test's simulated calls, checked. */
+export type TestCall = {
+  passed: boolean
+  ended: string // agent_ended, caller_hung_up, turn_cap, stuck, end_not_reached or error
+  seconds: number
+  tokens: Record<string, { prompt: number; completion: number }>
+  /** The nodes it entered, as a voice call reports them. */
+  path: { node: string; from: string | null; edge: string | null; collected: Record<string, unknown> }[]
+  transcript: { role: 'agent' | 'caller'; text: string; node: string | null }[]
+  checks: CheckResult[]
+}
+
+/** A test's calls in a run, as they finish. */
+export type TestRun = {
+  id: string
+  name: string
+  runs: TestCall[]
+}
+
+/** A run of a copy's whole suite: each test `repeats` times. */
+export type SuiteRun = {
+  id: number
+  pull: number | null
+  version: number | null
+  state: 'running' | 'done' | 'stopped'
+  repeats: number
+  tests: TestRun[]
+  started_at: string
+  finished_at: string | null
+}
+
 /** A row of an agent's history: the version and the pull request it came from. */
 export type VersionSummary = {
   number: number
@@ -82,18 +158,24 @@ export type VersionSummary = {
 }
 
 /** What callers get: an immutable snapshot of the agent. The latest version is live. */
-export type Version = AgentCopy & {
+export type Version = AgentCopy &
+  Suite & {
   number: number
   pull: number | null
   created_at: string
 }
 
 export type PullEvent = {
-  type: 'opened' | 'saved' | 'merged' | 'closed' | 'reopened' | 'updated'
-  by: string
+  type: 'opened' | 'saved' | 'merged' | 'closed' | 'reopened' | 'updated' | 'rule' | 'test' | 'checks'
+  by: string // "you", or "checks" for a run of its tests
   at: string
   version?: number | null // "opened": copied from; "merged": became; "updated": its new base
   summary?: string | null // "saved", "updated": one line on what changed
+  step?: string | null // "rule": the step it is for; null for every step
+  text?: string | null // "rule": its text; "test": its name
+  removed?: boolean | null // the rule or test was taken out
+  passed?: number | null // "checks": tests that passed, of `total`
+  total?: number | null
 }
 
 /** A proposed change to an agent, as lists show it. */
@@ -106,10 +188,12 @@ export type PullSummary = {
   merged_version: number | null
   created_at: string
   updated_at: string
+  checks: Checks | null // its latest run of the tests; null if none ran
 }
 
 /** A pull request with its own copy of the agent, which is what the editor saves to. */
 export type Pull = PullSummary &
-  AgentCopy & {
+  AgentCopy &
+  Suite & {
     events: PullEvent[]
   }
