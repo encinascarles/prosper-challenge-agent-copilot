@@ -35,7 +35,19 @@ RULES = {
 TESTS = {
     "tests": [
         {"name": "Books", "caller": "Maria books.", "checks": ["Reaches Confirm", "Ends the call"]},
-        {"name": "Asks for advice", "caller": "Peter asks.", "checks": ["Never gives advice"]},
+        {
+            "name": "Asks for advice",
+            "caller": "Peter.",
+            "checks": ["Never gives advice", "Ends the call"],
+        },
+        *(
+            {
+                "name": f"Books {n}",
+                "caller": "Ana books.",
+                "checks": ["Reaches Confirm", "Ends the call"],
+            }
+            for n in (2, 3, 4)
+        ),
     ]
 }
 QUESTION = {
@@ -113,7 +125,7 @@ def test_prosper_ai_builds_pr_1_and_asks_what_the_guidelines_leave_open(client, 
         "Read 1 file and your notes",
         "Drew 3 steps",
         "Wrote 2 rules, each linked to its line",
-        "Wrote 2 tests",
+        "Wrote 5 tests",
     ]
     assert (question["text"], question["options"]) == (
         QUESTION["text"],
@@ -131,7 +143,7 @@ def test_prosper_ai_builds_pr_1_and_asks_what_the_guidelines_leave_open(client, 
         "file": "hours.txt",
         "quote": "Tuesday 10 AM and Thursday 2 PM",
     }
-    assert [test["name"] for test in pull["tests"]] == ["Books", "Asks for advice"]
+    assert [test["name"] for test in pull["tests"]][:2] == ["Books", "Asks for advice"]
     # The suite waits for the answer, which changes the agent.
     assert pull["checks"] is None
 
@@ -200,7 +212,13 @@ def test_a_request_in_the_conversation_changes_pr_1(client, scripted):
         "reply": "Shortened the greeting.",
         "agent": shorter,
         "rules": [],
-        "tests": [{"name": "Short hello", "caller": "Ana.", "checks": ["Reaches Greeting"]}],
+        "tests": [
+            {
+                "name": "Short hello",
+                "caller": "Ana.",
+                "checks": ["Reaches Greeting", "Ends the call"],
+            }
+        ],
         "remove": [],
     }
     scripted(questions=(), change=[reply])
@@ -228,7 +246,7 @@ def test_a_request_in_the_conversation_changes_pr_1(client, scripted):
         "file": None,
         "quote": "Make the greeting shorter",
     }
-    assert pull["checks"]["total"] == 3
+    assert pull["checks"]["total"] == 6
 
 
 def test_a_change_can_take_out_what_this_pull_request_added(client, scripted):
@@ -371,7 +389,7 @@ def test_a_retry_finishes_the_setup_from_the_step_that_failed(client, scripted):
     setup.wait()
 
     pull = client.get(f"/api/agents/{agent_id}/pulls/1").json()
-    assert [t["name"] for t in pull["tests"]] == ["Books", "Asks for advice"]
+    assert [t["name"] for t in pull["tests"]][:2] == ["Books", "Asks for advice"]
     assert len(model.asked["agent"]) == 1  # not drawn again
     assert len(model.asked["rules"]) == 1 and len(model.asked["questions"]) == 1
     assert pull["prosper"]["state"] == "waiting"

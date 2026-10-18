@@ -139,9 +139,7 @@ def test_saving_a_pull_request_leaves_live_as_it_was(client, live_agent, agent):
     assert (record["live_version"], record["name"]) == (1, "Dental Recall")
 
 
-def test_merging_a_pull_request_adds_the_next_version_and_makes_it_live(
-    client, live_agent, agent
-):
+def test_merging_a_pull_request_adds_the_next_version_and_makes_it_live(client, live_agent, agent):
     agent_id = live_agent()
     client.post(_pulls(agent_id), json={"title": "Your edits"})
     client.put(f"{_pulls(agent_id)}/2", json={"config": _renamed(agent, "Renamed")})
@@ -470,9 +468,7 @@ def test_a_save_keeps_the_layout_pruned_to_the_agents_nodes(client, new_agent, a
     assert response.json()["config"] == agent  # positions never leak into the agent JSON
 
 
-def test_a_save_without_a_layout_keeps_the_stored_one_minus_removed_nodes(
-    client, new_agent, agent
-):
+def test_a_save_without_a_layout_keeps_the_stored_one_minus_removed_nodes(client, new_agent, agent):
     end = agent["nodes"][-1]["name"]
     agent_id, _ = new_agent(layout={"greeting": {"x": 1, "y": 2}, end: {"x": 3, "y": 4}})
     agent["nodes"] = agent["nodes"][-1:]  # the terminal node alone is a valid graph

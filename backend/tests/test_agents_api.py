@@ -209,9 +209,7 @@ def _old_database(path, agent, with_layout: bool) -> None:
     values.append("2026-01-02T00:00:00.000+00:00")
     if with_layout:
         values.append(json.dumps({"greeting": {"x": 5, "y": 6}}))
-    conn.execute(
-        f"INSERT INTO agents ({columns}) VALUES ({', '.join('?' * len(values))})", values
-    )
+    conn.execute(f"INSERT INTO agents ({columns}) VALUES ({', '.join('?' * len(values))})", values)
     conn.commit()
     conn.close()
 

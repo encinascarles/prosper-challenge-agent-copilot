@@ -192,12 +192,54 @@ def test_a_rule_that_cannot_be_traced_is_refused(changes, problem):
 
 def test_a_path_check_must_name_a_step_or_a_field():
     good = {"name": "Books", "caller": "Maria.", "checks": ["Reaches Confirm", "Says hello"]}
-    artifacts.check_tests([good, {**good, "checks": ["Full name is recorded"]}], _config())
+    recorded = {**good, "checks": ["Full name is recorded", "Ends the call"]}
+    artifacts.check_tests([good, recorded], _config())
 
     with pytest.raises(ValueError, match="'Reaches Waitlist' names no step"):
-        artifacts.check_tests([{**good, "checks": ["Reaches Waitlist"]}], _config())
+        artifacts.check_tests(
+            [{**good, "checks": ["Reaches Waitlist", "Ends the call"]}], _config()
+        )
     with pytest.raises(ValueError, match="'Date is recorded' names no field"):
-        artifacts.check_tests([{**good, "checks": ["Date is recorded"]}], _config())
+        artifacts.check_tests(
+            [{**good, "checks": ["Date is recorded", "Ends the call"]}], _config()
+        )
+
+
+@pytest.mark.parametrize(
+    "checks, problem",
+    [
+        (["Ends the call"], "has 1 checks: give it 2 to 4"),
+        (["Says hello", "Reads back the time"], "has 2 judged checks"),
+        (["Ends the call", "Keeps every reply to one or two sentences"], "checks style or wording"),
+        (["Ends the call", "Speaks in a warm tone"], "checks style or wording"),
+    ],
+)
+def test_a_test_checks_what_happens_not_how_it_is_said(checks, problem):
+    test = {"name": "Books", "caller": "Maria.", "checks": checks}
+
+    with pytest.raises(ValueError, match=problem):
+        artifacts.check_tests([test], _config())
+
+
+def test_a_setup_writes_five_to_seven_tests():
+    test = {"name": "Books", "caller": "Maria.", "checks": ["Reaches Confirm", "Ends the call"]}
+
+    artifacts.check_tests([test] * 5, _config(), artifacts.SETUP_TESTS)
+    with pytest.raises(ValueError, match="Write 5 to 7 tests, not 9"):
+        artifacts.check_tests([test] * 9, _config(), artifacts.SETUP_TESTS)
+
+
+def test_a_task_is_three_short_sentences_and_a_rule_one():
+    config = _config()
+    long = "Greet them. Ask their name. Ask why they call. Offer to help."
+    config["nodes"][0]["task_messages"][0]["content"] = long
+
+    with pytest.raises(ValueError, match="task of step 'greeting' is 4 sentences"):
+        artifacts.check_concise(config)
+    # A change is held to it only where it changes something.
+    artifacts.check_concise(config, before=config)
+    with pytest.raises(ValueError, match="must be one short sentence"):
+        artifacts.check_rule_text("Be kind. Be quick.")
 
 
 def test_at_most_two_questions_each_with_two_or_three_options():

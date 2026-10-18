@@ -129,7 +129,6 @@ class FakeServices(Services):
         return {"pass": self.verdict, "detail": reason, "tokens": {"prompt": 7, "completion": 3}}
 
 
-
 class ScriptedModel(LLM):
     """Prosper AI's model, answering each prompt from a script: { prompt: [answers] }.
 

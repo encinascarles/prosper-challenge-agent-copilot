@@ -19,6 +19,13 @@
 # person at a sentence nobody wrote. A test's path checks must name steps and
 # fields the agent has.
 #
+# What Prosper AI writes is kept short, and that is checked too, not only
+# asked for: a step's task is at most three short sentences, a rule is one,
+# and a change is held to that only where it changes something. Tests check
+# what the guidelines (or the person's answers) ask for: 2 to 4 checks, at
+# most one judged, and never style or wording, which no guideline states and
+# a judge reads differently each time.
+#
 # All pure functions: the tests run them without a model.
 #
 
@@ -28,9 +35,20 @@ from typing import Optional
 
 from agent_builder import AgentBuilder
 from agent_builder.schema import DEFAULT_MODEL, DEFAULT_VOICE_ID
-from simulate.checks import unknown_name
+from simulate.checks import parse, unknown_name
 
 MAX_QUESTIONS = 2
+MAX_TASK_SENTENCES = 3
+MAX_TASK_CHARS = 360
+MAX_RULE_CHARS = 200
+SETUP_TESTS = (5, 7)
+CHECKS_PER_TEST = (2, 4)
+# Words that make a judged check about style rather than about what happens.
+_STYLE = re.compile(
+    r"\b(sentences?|words?|concise(ly)?|brief(ly)?|tone|polite(ly)?|friendly|warm(ly)?|"
+    r"wording|phrasing|short (replies|answers|responses))\b",
+    re.IGNORECASE,
+)
 
 _TEXT = {"type": "string"}
 _STEP = {"type": ["string", "null"]}
@@ -203,6 +221,35 @@ def keep_extras(config: dict, before: dict) -> dict:
     return {**config, **kept, "nodes": nodes}
 
 
+def sentences(text: str) -> list[str]:
+    return [part for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part]
+
+
+def _task(node: dict) -> str:
+    return "\n\n".join(m["content"] for m in node.get("task_messages", []))
+
+
+def check_concise(config: dict, before: Optional[dict] = None) -> None:
+    """Raise ValueError if a step's task is long. With `before`, only for the tasks that changed."""
+    old = {node["name"]: _task(node) for node in before["nodes"]} if before else {}
+    for node in config["nodes"]:
+        task = _task(node)
+        if before is not None and old.get(node["name"]) == task:
+            continue
+        count = len(sentences(task))
+        if count > MAX_TASK_SENTENCES or len(task) > MAX_TASK_CHARS:
+            raise ValueError(
+                f"The task of step '{node['name']}' is {count} sentences ({len(task)} "
+                f"characters): keep it to {MAX_TASK_SENTENCES} short sentences at most. "
+                "What holds on every step belongs in a rule."
+            )
+
+
+def check_rule_text(text: str) -> None:
+    if len(sentences(text)) > 1 or len(text) > MAX_RULE_CHARS:
+        raise ValueError(f"Rule '{text}' must be one short sentence.")
+
+
 def check_agent(config: dict) -> None:
     """Raise ValueError with what is wrong with `config`, as a save would say it, or more."""
     builder = AgentBuilder.from_dict(config)
@@ -233,6 +280,7 @@ def _plain(text: str) -> str:
 
 
 def _check_step(rule: dict, steps: set) -> None:
+    check_rule_text(rule["text"])
     step = step_of(rule["step"])
     if step is not None and step not in steps:
         raise ValueError(
@@ -289,14 +337,33 @@ def _names(config: dict) -> tuple[list[str], list[str]]:
     return steps, fields
 
 
-def check_tests(tests: list[dict], config: dict) -> None:
+def check_tests(tests: list[dict], config: dict, count: Optional[tuple] = None) -> None:
+    """Raise ValueError for a test that cannot be read as meant. `count`: (min, max) tests."""
+    if count and not count[0] <= len(tests) <= count[1]:
+        raise ValueError(f"Write {count[0]} to {count[1]} tests, not {len(tests)}.")
     steps, fields = _names(config)
+    low, high = CHECKS_PER_TEST
     for test in tests:
-        if not test["checks"]:
-            raise ValueError(f"Test '{test['name']}' has no checks.")
+        name = test["name"]
+        if not low <= len(test["checks"]) <= high:
+            given = len(test["checks"])
+            raise ValueError(f"Test '{name}' has {given} checks: give it {low} to {high}.")
+        judged = []
         for line in test["checks"]:
             if problem := unknown_name(line, steps, fields):
-                raise ValueError(f"In test '{test['name']}': {problem}")
+                raise ValueError(f"In test '{name}': {problem}")
+            if parse(line, steps, fields)["kind"] == "judged":
+                judged.append(line)
+                if _STYLE.search(line):
+                    raise ValueError(
+                        f"In test '{name}', '{line}' checks style or wording, which the "
+                        "guidelines do not ask for: check what happens in the call instead."
+                    )
+        if len(judged) > 1:
+            raise ValueError(
+                f"Test '{name}' has {len(judged)} judged checks: keep the one it is about, "
+                "and make the rest path checks (Reaches, Ends the call, is recorded)."
+            )
 
 
 # ---- questions ---------------------------------------------------------------
@@ -310,6 +377,7 @@ def check_questions(answer: dict, config: dict) -> None:
         if not 2 <= len(question["options"]) <= 3:
             raise ValueError(f"Question '{question['text']}' needs 2 or 3 options.")
         for option in question["options"]:
+            check_rule_text(option["rule"]["text"])
             step = step_of(option["rule"]["step"])
             if step is not None and step not in steps:
                 raise ValueError(
@@ -334,6 +402,7 @@ def check_change(answer: dict, name: str, before: dict, removable: set = frozens
             )
     config = keep_extras(to_config(name, answer["agent"]), before)
     check_agent(config)
+    check_concise(config, before)
     steps = {node["name"] for node in config["nodes"]}
     for rule in answer["rules"]:
         _check_step(rule, steps)

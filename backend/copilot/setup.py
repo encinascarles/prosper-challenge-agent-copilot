@@ -159,6 +159,7 @@ def _build(llm: LLM, agent_id: str, number: int) -> None:
         def agent_ok(answer: dict) -> None:
             drawn["config"] = artifacts.to_config(config["name"], answer)
             artifacts.check_agent(drawn["config"])
+            artifacts.check_concise(drawn["config"])
 
         name = config["name"]
         llm.ask("agent", f"The agent is called {name}.\n\n{guidelines}", artifacts.AGENT, agent_ok)
@@ -170,7 +171,10 @@ def _build(llm: LLM, agent_id: str, number: int) -> None:
     about = f"{guidelines}\n\n{_agent(config)}"
     asks = {
         "rules": (artifacts.RULES, lambda a: artifacts.check_rules(a, config, work["sources"])),
-        "tests": (artifacts.TESTS, lambda a: artifacts.check_tests(a["tests"], config)),
+        "tests": (
+            artifacts.TESTS,
+            lambda a: artifacts.check_tests(a["tests"], config, artifacts.SETUP_TESTS),
+        ),
         "questions": (artifacts.QUESTIONS, lambda a: artifacts.check_questions(a, config)),
     }
     with ThreadPoolExecutor(max_workers=3) as pool:
