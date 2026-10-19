@@ -403,7 +403,7 @@ def run_tests_card(agent_id: str, args: dict) -> dict:
     _open(copy, name)
     if args["test"]:
         test = _test(copy, name, args["test"])
-        return _card(f'Run "{test["name"]}" again', "", f"On {name}", f"{REPEATS} calls")
+        return _card("Run a test again", test["name"], f"On {name}", f"{REPEATS} calls")
     count = len(copy["tests"])
     if not count:
         raise ToolError(f"{name} has no tests.")
@@ -474,7 +474,7 @@ def change_issues_card(agent_id: str, args: dict) -> dict:
     refused = [why for issue in issues if (why := store.issues.refusal(issue, change))]
     if refused:
         raise ToolError(" ".join(refused))
-    what = issues[0]["title"] if len(issues) == 1 else ""
+    what = " · ".join(issue["title"] for issue in issues)
     return _card(
         f"{_VERBS[change]} {_labels(numbers)}",
         what,
@@ -535,7 +535,7 @@ def merge_pull_card(agent_id: str, args: dict) -> dict:
     after = (_call(pulls._agent, agent_id)["live_version"] or 0) + 1
     checks = pull["checks"] or {}
     passing = (
-        f"{checks['passed'] + checks['flaky']} of {checks['total']} tests pass"
+        f"{checks['passed']} of {checks['total']} tests pass"
         + (f", {checks['flaky']} flaky" if checks["flaky"] else "")
         if checks
         else ""
