@@ -239,3 +239,13 @@ def test_a_reported_issue_keeps_its_title_and_description(client, live_agent):
         assert response.status_code == 422, response.text
         assert "leave it out" in response.text
     assert client.get(path).json()["title"] == COMPLAINT["title"]
+
+
+def test_a_linked_call_follows_the_step_of_its_reported_issue(client, live_agent, prosper_model):
+    agent_id = live_agent()
+    call_id = _calls(client, agent_id, prosper_model)[0]["id"]
+    number = _report(client, agent_id, calls=[call_id])["number"]
+
+    client.patch(f"/api/agents/{agent_id}/issues/{number}", json={"step": "offer_times"})
+    [found] = client.get(f"/api/agents/{agent_id}/calls/{call_id}").json()["findings"]
+    assert (found["issue"], found["step"]) == (number, "offer_times")

@@ -476,6 +476,12 @@ def edit(agent_id: str, number: int, changes: dict, calls: list[int], by: str) -
                 number,
             ),
         )
+        # A linked call shows the issue at its step, so it follows; a finding
+        # from a call's review keeps the step where it happened in that call.
+        conn.execute(
+            "UPDATE findings SET step = ? WHERE agent_id = ? AND issue = ? AND turn = ?",
+            (step, agent_id, number, LINKED),
+        )
         _link(conn, agent_id, number, step, calls)
         return _select(conn, agent_id, number)
 
