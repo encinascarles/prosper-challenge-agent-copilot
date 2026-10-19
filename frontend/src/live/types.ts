@@ -132,6 +132,7 @@ export type IssueEvent = {
     | 'reported' // by a person: `text` is who flagged it
     | 'edited'
     | 'tidied' // what Prosper AI tidied, kept
+    | 'titled' // Prosper AI wrote the title it was reported without
     | 'seen'
     | 'snoozed'
     | 'woke'
@@ -159,7 +160,7 @@ export type Issue = IssueSummary & { findings: IssueCall[]; events: IssueEvent[]
 
 /** What a person writes to report an issue. */
 export type IssueReport = {
-  title: string
+  title: string // '' on a new issue: Prosper AI writes it
   description: string
   step: string // '' for not sure
   severity: Severity | null

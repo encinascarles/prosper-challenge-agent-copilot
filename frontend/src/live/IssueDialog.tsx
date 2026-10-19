@@ -1,7 +1,8 @@
 // Reporting an issue by hand: what the clinic complained about, or what the
-// person noticed, as an issue like the ones Prosper AI finds in calls. A title
-// and what happened are enough; the step, the severity and the calls that show
-// it are optional ("Not sure" is an answer). The same form edits a reported
+// person noticed, as an issue like the ones Prosper AI finds in calls. What
+// happened is enough: left empty, the title is Prosper AI's, written from it;
+// the step, the severity and the calls that show it are optional ("Not sure"
+// is an answer). The same form edits a reported
 // issue later: its calls can be added to, never taken away.
 
 import { Check, ChevronDown, X } from 'lucide-react'
@@ -15,7 +16,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenu
 import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
 
-import { callMeta, SEVERITIES } from './model'
+import { callMeta, reportReady, SEVERITIES } from './model'
 import type { CallSummary, Issue, IssueReport, Reporter, Severity } from './types'
 
 const CALLS_SHOWN = 8 // the latest: older ones are a Calls page away
@@ -53,7 +54,7 @@ function IssueForm({ agent, issue, onSave, onCancel }: Omit<Props, 'open' | 'onO
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const linked = new Set(issue?.findings.map((found) => found.call))
-  const ready = title.trim() !== '' && description.trim() !== '' && !saving
+  const ready = reportReady(Boolean(issue), title, description) && !saving
 
   useEffect(() => {
     // The steps a call can go wrong in are the live version's.
@@ -124,19 +125,22 @@ function IssueForm({ agent, issue, onSave, onCancel }: Omit<Props, 'open' | 'onO
           </div>
         )}
         <label className="block space-y-1.5">
-          <span className={label}>Title</span>
+          <span className={label}>
+            Title{!issue && <span className="font-normal text-muted-foreground"> · optional</span>}
+          </span>
           <input
-            autoFocus
+            autoFocus={Boolean(issue)}
             value={title}
             maxLength={120}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="e.g. Books appointments on Sundays"
+            placeholder={issue ? 'e.g. Books appointments on Sundays' : 'Leave empty and Prosper AI will write it'}
             className={field}
           />
         </label>
         <label className="block space-y-1.5">
           <span className={label}>What happened</span>
           <textarea
+            autoFocus={!issue}
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             placeholder={reported === 'clinic' ? 'Paste what the clinic wrote, as it is.' : 'What the agent did, and what it should have done.'}

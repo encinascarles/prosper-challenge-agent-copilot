@@ -11,6 +11,7 @@ import {
   issueMeta,
   outcomeText,
   playCostText,
+  reportReady,
   reporterText,
   snoozeText,
   stateText,
@@ -187,5 +188,13 @@ describe('reported issues', () => {
     expect(eventText({ type: 'reported', by: 'you', at: '', text: 'clinic' })).toBe('Reported it for the clinic')
     expect(eventText({ type: 'reported', by: 'you', at: '', text: 'you' })).toBe('Reported it')
     expect(eventText({ type: 'tidied', by: 'Prosper AI', at: '' })).toBe('Tidied it: plain title, step and severity, kept by you')
+    expect(eventText({ type: 'titled', by: 'Prosper AI', at: '' })).toBe('Wrote the title from what happened')
+  })
+
+  it('opens an issue from what happened alone, and keeps a title once it has one', () => {
+    expect(reportReady(false, '', 'Booked under the mother’s name')).toBe(true)
+    expect(reportReady(false, 'Wrong patient', '  ')).toBe(false)
+    expect(reportReady(true, ' ', 'Booked under the mother’s name')).toBe(false)
+    expect(reportReady(true, 'Wrong patient', 'Booked under the mother’s name')).toBe(true)
   })
 })
