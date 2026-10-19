@@ -17,8 +17,16 @@
 # after a day, a week, or once a new version is live (a fix may have shipped).
 # That is checked whenever issues are read, so nothing has to wake it up.
 # Ignored is "not worth fixing": it leaves the open list but keeps collecting
-# its calls, so how often it happens stays known. Resolved stops collecting:
-# if the problem comes back, it is a new issue.
+# its calls, so how often it happens stays known. Resolved by hand stops
+# collecting: if the problem comes back, it is a new issue.
+#
+# An issue is fixed by a pull request of kind "fix" that points at it (pulls.py):
+# opened, closed and reopened, each logged here too. Merging it resolves the
+# issue in the version it became ("Resolved by PR #5 in v2"). Such an issue is
+# still joinable: a call on that version or a later one with the same problem
+# opens it again ("Came back in v2"), rather than filing the same problem
+# twice; a call answered by an older version, before the fix, joins it and
+# leaves it resolved.
 #
 # What happened to an issue (opened from a call, seen again, snoozed,
 # resolved...) is a small log kept in its row, like a pull request's.
@@ -43,6 +51,7 @@ CREATE TABLE IF NOT EXISTS issues (
     description TEXT NOT NULL,
     state TEXT NOT NULL,  -- open, snoozed, resolved, ignored
     snooze TEXT,  -- { until: ISO time } or { version: n }: when a snoozed issue comes back
+    fixed TEXT,  -- { pull, version }: the fix that resolved it, while it stays resolved
     events TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -106,6 +115,9 @@ def _wake(conn: sqlite3.Connection, agent_id: str) -> None:
 
 _COUNTS = """
 SELECT issues.*,
+    (SELECT json_group_array(json_object('number', pulls.number, 'title', pulls.title,
+            'state', pulls.state, 'merged_version', pulls.merged_version))
+        FROM pulls WHERE pulls.agent_id = issues.agent_id AND pulls.fixes = issues.number) AS pulls,
     (SELECT COUNT(DISTINCT call_id) FROM findings
         WHERE findings.agent_id = issues.agent_id AND findings.issue = issues.number) AS calls,
     (SELECT MIN(calls.at) FROM findings JOIN calls ON calls.id = findings.call_id
@@ -125,6 +137,9 @@ def _to_record(row: sqlite3.Row) -> dict:
         "description": row["description"],
         "state": row["state"],
         "snooze": json.loads(row["snooze"]) if row["snooze"] else None,
+        "fixed": json.loads(row["fixed"]) if row["fixed"] else None,
+        # The pull requests that fix it, open or not, newest first.
+        "pulls": sorted(json.loads(row["pulls"]), key=lambda p: -p["number"]),
         "calls": row["calls"],
         "first_seen": row["first_seen"],
         "last_seen": row["last_seen"],
@@ -149,9 +164,13 @@ def list_issues(agent_id: str) -> list[dict]:
         return [_to_record(row) for row in rows]
 
 
-def tracked(agent_id: str) -> list[dict]:
-    """The issues a new finding may join: those still tracked (open, snoozed or ignored)."""
-    return [issue for issue in list_issues(agent_id) if issue["state"] in TRACKED]
+def joinable(agent_id: str) -> list[dict]:
+    """The issues a new finding may join: those still tracked, and those a fix resolved."""
+    return [issue for issue in list_issues(agent_id) if _joinable(issue["state"], issue["fixed"])]
+
+
+def _joinable(state: str, fixed: Optional[dict]) -> bool:
+    return state in TRACKED or (state == "resolved" and fixed is not None)
 
 
 def _select(conn: sqlite3.Connection, agent_id: str, number: int) -> Optional[dict]:
@@ -211,7 +230,8 @@ def file_finding(
     """Keep a finding of the call in issue `issue`, or in a new issue. Returns its number.
 
     `finding` is { check, step, turn, quote, why } and, for a new issue, its
-    { title, severity, description }. An issue it joins must still be tracked.
+    { title, severity, description }. An issue it joins must still be tracked,
+    or resolved by a fix: then a call on the fixed version opens it again.
     """
     with connect() as conn:
         if issue is None:
@@ -239,15 +259,35 @@ def file_finding(
             )
         else:
             row = conn.execute(
-                "SELECT state, events FROM issues WHERE agent_id = ? AND number = ?",
+                "SELECT state, fixed, events FROM issues WHERE agent_id = ? AND number = ?",
                 (agent_id, issue),
             ).fetchone()
-            if row is None or row["state"] not in TRACKED:
+            fixed = json.loads(row["fixed"]) if row and row["fixed"] else None
+            if row is None or not _joinable(row["state"], fixed):
                 raise Conflict(f"{label(issue)} is not being tracked.")
-            seen = _event("seen", PROSPER, call=call_id, caller=caller)
+            (version,) = conn.execute(
+                "SELECT version FROM calls WHERE id = ?", (call_id,)
+            ).fetchone()
+            state = row["state"]
+            if fixed is not None and version >= fixed["version"]:
+                # The fix is in the version that answered, and the problem is still there.
+                seen = _event(
+                    "came_back", PROSPER, call=call_id, caller=caller, text=f"v{version}"
+                )
+                state, fixed = "open", None
+            else:
+                seen = _event("seen", PROSPER, call=call_id, caller=caller)
             conn.execute(
-                "UPDATE issues SET events = ?, updated_at = ? WHERE agent_id = ? AND number = ?",
-                (json.dumps([*json.loads(row["events"]), seen]), seen["at"], agent_id, issue),
+                "UPDATE issues SET state = ?, fixed = ?, events = ?, updated_at = ?"
+                " WHERE agent_id = ? AND number = ?",
+                (
+                    state,
+                    None if fixed is None else json.dumps(fixed),
+                    json.dumps([*json.loads(row["events"]), seen]),
+                    seen["at"],
+                    agent_id,
+                    issue,
+                ),
             )
         conn.execute(
             "INSERT INTO findings (agent_id, call_id, issue, check_text, step, turn, quote, why)"
@@ -276,8 +316,9 @@ def _change(conn, agent_id: str, number: int, allowed: tuple, state: str, event:
         raise NotFound(f"The agent has no {label(number)}.")
     if row["state"] not in allowed:
         raise Conflict(f"{label(number)} is {row['state']}.")
+    # Resolved by hand or opened again, it is no longer what a fix resolved.
     conn.execute(
-        "UPDATE issues SET state = ?, snooze = ?, events = ?, updated_at = ?"
+        "UPDATE issues SET state = ?, snooze = ?, fixed = NULL, events = ?, updated_at = ?"
         " WHERE agent_id = ? AND number = ?",
         (
             state,
@@ -323,3 +364,66 @@ def reopen(agent_id: str, number: int, by: str) -> dict:
         event = _event("reopened", by)
         allowed = ("snoozed", "resolved", "ignored")
         return _change(conn, agent_id, number, allowed, "open", event)
+
+
+def check_fixable(conn: sqlite3.Connection, agent_id: str, number: int) -> dict:
+    """The issue, which a new pull request may fix. Raises NotFound or Conflict.
+
+    Not one already resolved or ignored, nor one a pull request is fixing.
+    """
+    _require_agent(conn, agent_id)
+    _wake(conn, agent_id)
+    issue = _select(conn, agent_id, number)
+    if issue is None:
+        raise NotFound(f"The agent has no {label(number)}.")
+    if issue["state"] not in ("open", "snoozed"):
+        raise Conflict(f"{label(number)} is {issue['state']}.")
+    if fixing := [p for p in issue["pulls"] if p["state"] == "open"]:
+        raise Conflict(f"PR #{fixing[0]['number']} is fixing {label(number)} already.")
+    return issue
+
+
+def log_fix(conn: sqlite3.Connection, agent_id: str, number: int, kind: str, pull: int, by: str):
+    """Log in the issue what happened to a pull request fixing it.
+
+    `kind` is "fixing" (opened to fix it), "unlinked" (closed without merging)
+    or "relinked" (reopened). Merging is `resolve_by_fix`.
+    """
+    row = conn.execute(
+        "SELECT events FROM issues WHERE agent_id = ? AND number = ?", (agent_id, number)
+    ).fetchone()
+    if row is None:
+        return  # deleted with nothing else: the pull request still stands on its own
+    event = _event(kind, by, pull=pull)
+    conn.execute(
+        "UPDATE issues SET events = ?, updated_at = ? WHERE agent_id = ? AND number = ?",
+        (json.dumps([*json.loads(row["events"]), event]), event["at"], agent_id, number),
+    )
+
+
+def resolve_by_fix(conn: sqlite3.Connection, agent_id: str, number: int, pull: int, version: int):
+    """The pull request fixing the issue merged as `version`: the issue is resolved there."""
+    row = conn.execute(
+        "SELECT events FROM issues WHERE agent_id = ? AND number = ?", (agent_id, number)
+    ).fetchone()
+    if row is None:
+        return
+    event = _event("fixed", "you", pull=pull, version=version)
+    conn.execute(
+        "UPDATE issues SET state = 'resolved', snooze = NULL, fixed = ?, events = ?, updated_at = ?"
+        " WHERE agent_id = ? AND number = ?",
+        (
+            json.dumps({"pull": pull, "version": version}),
+            json.dumps([*json.loads(row["events"]), event]),
+            event["at"],
+            agent_id,
+            number,
+        ),
+    )
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """Give issues from before fixes the column: none of them was resolved by one."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(issues)")}
+    if columns and "fixed" not in columns:
+        conn.execute("ALTER TABLE issues ADD COLUMN fixed TEXT")

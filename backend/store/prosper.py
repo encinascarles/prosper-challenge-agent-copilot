@@ -298,6 +298,23 @@ def take_message(
         return _select(conn, agent_id, number), answers, retry
 
 
+def guidelines(agent_id: str) -> tuple[list[dict], list[dict]]:
+    """What the agent was built from: the sources of its setup and the questions answered there.
+
+    Every later pull request reads these, so a fix or a change is held to the
+    same guidelines as the setup. Both empty for an agent drawn by hand.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT prosper FROM pulls WHERE agent_id = ? AND kind = 'setup'"
+            " AND prosper IS NOT NULL ORDER BY number DESC LIMIT 1",
+            (agent_id,),
+        ).fetchone()
+    work = json.loads(row["prosper"]) if row else {}
+    answered = [q for q in work.get("questions", []) if q["answer"]]
+    return work.get("sources", []), answered
+
+
 def waiting_for(agent_id: str, number: int) -> list[dict]:
     """The questions Prosper AI asked on the pull request that have no answer yet."""
     return [q for q in work_of(agent_id, number).get("questions", []) if q["answer"] is None]

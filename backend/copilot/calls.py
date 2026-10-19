@@ -17,7 +17,8 @@
 # Reviews run in parallel, but grouping takes one call at a time: two calls
 # with the same new problem would otherwise each open an issue for it. A
 # grouping request is only made when there is an issue to join. Any tracked
-# issue may be joined, not only one in the finding's step: in real batches the
+# issue may be joined, or one a fix resolved (a call on the fixed version opens
+# it again), not only one in the finding's step: in real batches the
 # same problem (a detail never confirmed) showed up on the turn of whichever
 # step the agent was in, and keeping steps apart split it into two issues.
 #
@@ -200,12 +201,13 @@ def review(
 
 def _group(llm: LLM, agent_id: str, findings: list[dict]) -> list[Optional[int]]:
     """The issue each finding joins, by number, or None for a new one."""
-    tracked = store.issues.tracked(agent_id)
+    tracked = store.issues.joinable(agent_id)
     if not tracked:
         return [None] * len(findings)
     candidates = {i: [issue["number"] for issue in tracked] for i in range(len(findings))}
     issues = "\n".join(
         f"- [{issue['number']}] {issue['step']} · {issue['title']}: {issue['description']}"
+        f"{_fixed(issue)}"
         for issue in tracked
     )
     found = "\n".join(
@@ -222,18 +224,19 @@ def _group(llm: LLM, agent_id: str, findings: list[dict]) -> list[Optional[int]]
     return [placed.get(i) or None for i in range(len(findings))]
 
 
+def _fixed(issue: dict) -> str:
+    # Still the same problem if it comes back: the grouping should know it was fixed.
+    fixed = issue.get("fixed")
+    return f" (fixed in v{fixed['version']})" if fixed else ""
+
+
 def _context(agent_id: str, version: dict) -> str:
     """What a request about this agent's calls reads first: its guidelines, agent and rules.
 
     The same for every call of a batch and written first, so the model's
     prompt cache serves it to every review after the first.
     """
-    sources, answers = [], []
-    for pull in store.list_pulls(agent_id):
-        if pull["kind"] == "setup" and pull["prosper"] is not None:
-            work = store.prosper.work_of(agent_id, pull["number"])
-            sources = work.get("sources", [])
-            answers = [q for q in work.get("questions", []) if q["answer"]]
+    sources, answers = store.prosper.guidelines(agent_id)
     if sources:
         texts = "\n\n".join(f"=== {s['name']} ===\n{s['text']}" for s in sources)
         guidelines = f"The clinic's guidelines:\n\n{texts}"
