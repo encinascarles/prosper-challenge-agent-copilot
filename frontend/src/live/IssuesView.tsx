@@ -476,7 +476,8 @@ function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct, onToas
             <UserRound className="mt-[3px] size-[14px] shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{issue.description}</p>
-              {!closed && !tidied && (
+              {/* Once kept, Prosper AI's words are there: Edit changes them from then on. */}
+              {!closed && !tidied && !issue.events.some((event) => event.type === 'tidied') && (
                 <button onClick={() => void tidy()} disabled={tidying} className={cn(smallButton, 'mt-3')}>
                   {tidying ? <Loader2 className="size-3.5 animate-spin" /> : <Mark className="h-[11px]" />}
                   {tidying ? 'Prosper AI is tidying it…' : 'Tidy with Prosper AI'}
@@ -551,7 +552,7 @@ function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct, onToas
                     Open call <ArrowRight className="size-3" />
                   </button>
                 </div>
-                {found.turn < 0 && <p className="mt-1 pl-[22px] text-[12px] text-muted-foreground">Linked when it was reported · the whole call</p>}
+                {found.turn < 0 && <p className="mt-1 pl-[22px] text-[12px] text-muted-foreground">Linked to this issue by hand · the whole call</p>}
                 <div className={cn('mt-2 space-y-1 pl-[22px]', found.turn < 0 && 'hidden')}>
                   {found.lines.map((line) => {
                     const isBad = line.index === found.turn
