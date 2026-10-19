@@ -375,13 +375,21 @@ def open_pull(agent_id: str, args: dict, at: dict) -> dict:
         args["what"].strip(),
         work,
     )
-    setup.fix(agent_id, pull["number"])
-    label = store.label(pull["number"])
+    label, link = store.label(pull["number"]), _link("pull", pull["number"])
+    try:
+        setup.fix(agent_id, pull["number"])
+    except Exception as error:  # noqa: BLE001 - the pull request exists: the card must link it
+        # Left as a failed job, like one cut by a restart: a message to it retries.
+        reason = str(error) or type(error).__name__
+        store.prosper.set_job(agent_id, pull["number"], {"kind": "fix"})
+        store.prosper.set_state(agent_id, pull["number"], "failed")
+        text = f"Opened {label} · Prosper AI could not start: {reason} · write to it to retry"
+        return {"text": text, "link": link, "said": text}
     said = (
         f"Opened {label}. Prosper AI works on it now: a test of the change, which should fail "
         "on live, then the smallest change, then the whole suite."
     )
-    return {"text": f"Opened {label}", "link": _link("pull", pull["number"]), "said": said}
+    return {"text": f"Opened {label}", "link": link, "said": said}
 
 
 def _test(copy: dict, name: str, wanted: str) -> dict:

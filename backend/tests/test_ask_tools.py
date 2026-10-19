@@ -340,3 +340,27 @@ def test_a_search_says_what_it_found(client, with_issue):  # noqa: F811
 
     assert line == f"Found 2 calls · Issue #{ISSUE}"
     assert output.startswith("2 calls, latest first:\n- call 2 ·")
+
+
+def test_a_pull_request_opened_is_linked_even_if_prosper_ai_cannot_start(
+    client, live_agent, prosper_model, monkeypatch
+):
+    agent_id = live_agent()
+    prosper_model.script = {"ask": [ANSWER]}
+    chat = _ask(client, agent_id, "Have it ask who the visit is for.")
+
+    def broken(*args):
+        raise RuntimeError("the job pool is shut down")
+
+    monkeypatch.setattr(tools.setup, "fix", broken)
+    args = {"title": "Ask who the visit is for", "what": "Collect details asks it."}
+    done = tools.TOOLS["open_pull_request"].act(agent_id, args, {"chat": chat["id"], "message": 1})
+
+    assert done["link"] == {"kind": "pull", "number": 2}
+    assert done["text"] == (
+        "Opened PR #2 · Prosper AI could not start: the job pool is shut down"
+        " · write to it to retry"
+    )
+    # Failed with its job kept, like one cut by a restart: a message to it retries.
+    work = store.prosper.work_of(agent_id, 2)
+    assert (work["state"], work["job"]) == ("failed", {"kind": "fix"})
