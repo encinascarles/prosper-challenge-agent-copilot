@@ -52,6 +52,12 @@ class Services:
             self._client = AsyncOpenAI()
         return self._client
 
+    async def close(self) -> None:
+        """Close the client, on the event loop it was used on."""
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+
     def llm(self, model: str) -> LLMService:
         return OpenAILLMService(
             api_key=os.environ.get("OPENAI_API_KEY"),

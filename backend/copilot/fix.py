@@ -114,15 +114,23 @@ def _play(llm: LLM, version: dict, test: dict) -> list[dict]:
     from api import checks  # who the calls talk to: the tests swap them for fakes
 
     results: list[dict] = []
-    asyncio.run(
-        simulate.run_suite(
-            version["config"],
-            version["rules"],
-            [{"id": "reproduce", **test}],
-            lambda _, result: results.append(result),
-            services=checks.services or simulate.Services(),
-        )
-    )
+    services = checks.services or simulate.Services()
+
+    async def play() -> None:
+        try:
+            await simulate.run_suite(
+                version["config"],
+                version["rules"],
+                [{"id": "reproduce", **test}],
+                lambda _, result: results.append(result),
+                services=services,
+            )
+        finally:
+            if services is not checks.services:
+                # Its client belongs to this loop: closed with it, not after.
+                await services.close()
+
+    asyncio.run(play())
     model = version["config"].get("model", "")
     usd = 0.0
     for result in results:
