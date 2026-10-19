@@ -25,6 +25,7 @@ const pull = (fields: Partial<PullSummary> = {}): PullSummary => ({
   base_version: 1,
   merged_version: null,
   fixes: null,
+  chat: null,
   created_at: '',
   updated_at: '',
   checks: { state: 'passed', passed: 1, flaky: 0, failing: 0, total: 1 },

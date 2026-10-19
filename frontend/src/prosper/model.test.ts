@@ -12,6 +12,7 @@ const pull = (prosper: PullSummary['prosper'], state: PullSummary['state'] = 'op
   title: 'Set up Anna',
   kind: 'setup',
   fixes: null,
+  chat: null,
   state,
   base_version: 0,
   merged_version: null,

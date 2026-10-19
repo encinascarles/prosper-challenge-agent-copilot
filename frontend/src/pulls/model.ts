@@ -85,7 +85,7 @@ export function testCallLabel(on: On): string {
  * or what became of it. A stale one says first that it needs an update.
  */
 export function pullMeta(pull: PullSummary, live: number): string {
-  const fixes = pull.fixes ? `Fixes Issue #${pull.fixes} · ` : ''
+  const fixes = pull.fixes ? `Fixes Issue #${pull.fixes} · ` : pull.chat ? `From your chat “${pull.chat.title}” · ` : ''
   if (pull.state === 'merged') return `${fixes}merged as ${versionLabel(pull.merged_version ?? 0)}`
   if (pull.state === 'closed') return `${fixes}closed · ${basedOn(pull)}`
   return isStale(pull, live) ? `Needs update · ${fixes}${basedOn(pull)}` : `${fixes}${basedOn(pull)}`

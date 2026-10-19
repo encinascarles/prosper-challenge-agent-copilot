@@ -115,22 +115,26 @@ export function rulesByStep(rules: Rule[], steps: string[]): { step: string | nu
  */
 export function orderTests(list: Test[], on: number | null): Test[] {
   const mine = list.filter((test) => addedIn(test, on)).reverse()
-  // The test that reproduces the issue a fix is for comes first of all.
+  // The test a fix or a change wrote first comes first of all.
   mine.sort((a, b) => Number(isFixTest(b)) - Number(isFixTest(a)))
   return [...mine, ...list.filter((test) => !addedIn(test, on))]
 }
 
-/** Whether the test reproduces an issue: Prosper AI wrote it from the issue's calls. */
-export const isFixTest = (test: Test) => test.source.kind === 'issue' && test.source.before !== undefined
+/**
+ * Whether the test is the one a fix or a change wrote first: from the issue's
+ * calls, or from what was asked in a chat. It knows how it went before.
+ */
+export const isFixTest = (test: Test) => test.source.before !== undefined
 
 /**
- * How the test that reproduces an issue went before and how it goes now:
+ * How the test a fix or a change wrote first went before and how it goes now:
  * "from Issue #3 · 0/3 on v1 → 3/3", or "→ …" while it runs. Null for another test.
  */
 export function beforeAfter(test: Test, run: SuiteRun | null): string | null {
   const before = test.source.before
-  if (test.source.kind !== 'issue' || !before) return null
-  const was = `from Issue #${test.source.issue} · ${before.passed}/${before.runs} on v${before.version}`
+  if (!before) return null
+  const from = test.source.kind === 'issue' ? `Issue #${test.source.issue}` : 'your request'
+  const was = `from ${from} · ${before.passed}/${before.runs} on v${before.version}`
   const now = resultsOf(run).get(test.id)
   return now ? `${was} → ${scoreText(score(now, run!.repeats))}` : was
 }
