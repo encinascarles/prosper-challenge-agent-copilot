@@ -7,7 +7,8 @@
 # with the facts about this agent written into it: the guidelines, the copy
 # the person is looking at (live, or the pull request they are on) with its
 # rules, its tests and how they last went, the versions, pull requests and
-# issues, and the latest calls, one line each. A call the chat names (by its
+# issues, how many calls there were and how they went (all, and today's),
+# and the latest calls, one line each. A call the chat names (by its
 # caller or its number) is given whole: its transcript, its path and what
 # Prosper AI found in it. That is what fits: a few dozen calls in a line each,
 # and the few the question is about in full. No retrieval or tool calls: the
@@ -23,6 +24,7 @@
 #
 
 import re
+from collections import Counter
 from datetime import datetime
 from typing import Optional
 
@@ -243,6 +245,27 @@ def _issues(agent_id: str) -> str:
     return "Issues found in its calls, newest first:\n" + ("\n".join(lines) or "(none)")
 
 
+def _tally(calls: list[dict]) -> str:
+    """How many calls, and how they went, all of them and today's: what a count is asked of."""
+    today = datetime.now().astimezone().date()
+
+    def line(which: list[dict], name: str) -> str:
+        if not which:
+            return f"{name}: none."
+        versions = Counter(f"v{call['version']}" for call in which)
+        outcomes = Counter(call["outcome"] or "not reviewed" for call in which)
+        flagged = sum(1 for call in which if call["issues"])
+        return (
+            f"{name}: {len(which)} calls ({', '.join(f'{n} on {v}' for v, n in versions.items())}),"
+            f" {flagged} with an issue; outcomes: "
+            + ", ".join(f"{n} {outcome}" for outcome, n in outcomes.most_common())
+            + "."
+        )
+
+    on_day = [c for c in calls if datetime.fromisoformat(c["at"]).astimezone().date() == today]
+    return f"{line(calls, 'All calls')}\n{line(on_day, 'Today')}"
+
+
 def _calls(calls: list[dict]) -> str:
     if not calls:
         return "Calls: none yet."
@@ -256,7 +279,7 @@ def _calls(calls: list[dict]) -> str:
             f" · {issues}"
         )
     shown = f"the latest {len(lines)} of {len(calls)}" if len(calls) > len(lines) else "all"
-    return f"Calls, latest first ({shown}):\n" + "\n".join(lines)
+    return f"{_tally(calls)}\n\nCalls, latest first ({shown}):\n" + "\n".join(lines)
 
 
 def _named(calls: list[dict], text: str) -> list[int]:
