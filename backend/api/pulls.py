@@ -159,6 +159,7 @@ class PullEvent(BaseModel):
     rewritten: bool | None = None  # "test": Prosper AI rewrote it, `why` says why
     why: str | None = None
     issue: int | None = None  # "opened": the issue a fix is for
+    chat: int | None = None  # "opened": the chat a change was asked for in
     test: str | None = None  # "reproduced", "proved": the id of the test that reproduces it
 
 
@@ -170,15 +171,24 @@ class Prosper(BaseModel):
     usage: dict[str, float] | None  # requests, tokens and USD spent so far
 
 
+class ChatOf(BaseModel):
+    """The chat a change was asked for in."""
+
+    id: int
+    title: str  # its first question
+
+
 class PullSummary(BaseModel):
     number: int  # per agent: shown as "PR #3"
     title: str
-    # setup: pull request #1 of a new agent; fix: opened from an issue, to fix it
-    kind: Literal["setup", "edit", "fix"]
+    # setup: pull request #1 of a new agent; fix: opened from an issue, to fix
+    # it; change: asked for in a chat with Prosper AI, which makes it
+    kind: Literal["setup", "edit", "fix", "change"]
     state: Literal["open", "merged", "closed"]
     base_version: int  # the live version it was copied from; 0 for a setup
     merged_version: int | None  # the version it became, once merged
     fixes: int | None  # a fix: the number of the issue it fixes
+    chat: ChatOf | None  # a change: the chat it was asked for in
     created_at: str
     updated_at: str
     checks: Checks | None  # its latest run of the tests; None if none ran

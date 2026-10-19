@@ -3,7 +3,7 @@
 # callers import the functions from here and never touch SQLite themselves.
 #
 
-from . import calls, issues, prosper, runs, test_calls
+from . import calls, chats, issues, prosper, runs, test_calls
 from .agents import create_agent, delete_agent, get_agent, init_db, list_agents
 from .db import Conflict, NotFound
 from .pulls import (
@@ -35,6 +35,7 @@ __all__ = [
     "runs",
     "test_calls",
     "calls",
+    "chats",
     "issues",
     "Conflict",
     "add_result",

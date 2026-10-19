@@ -30,7 +30,7 @@ from typing import Optional
 
 from agent_builder import AgentBuilder
 
-from . import calls, issues, runs, test_calls
+from . import calls, chats, issues, runs, test_calls
 from .db import BACKEND_DIR, connect, db_path, now
 from .pulls import insert_pull, stop_prosper
 from .suite import manual, new_id
@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS pulls (
     -- NULL for a pull request Prosper AI has no part in.
     prosper TEXT,
     fixes INTEGER,  -- a fix: the number of the issue it fixes
+    chat TEXT,  -- a change: { id, title } of the chat it was asked for in
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (agent_id, number)
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS pulls (
     *calls.SCHEMA,
     *issues.SCHEMA,
     test_calls.SCHEMA,
+    chats.SCHEMA,
 )
 
 # What the lists and the agent's page read: the row, plus the facts every
@@ -173,7 +175,8 @@ def _migrate_unversioned(conn: sqlite3.Connection) -> None:
 def _migrate_untested(conn: sqlite3.Connection) -> None:
     """Give copies from before rules and tests none of either, and pull requests no Prosper AI.
 
-    Pull requests and issues from before fixes fix nothing and were fixed by nothing.
+    Pull requests and issues from before fixes fix nothing and were fixed by nothing;
+    pull requests from before chats came from none.
     """
     for table in ("versions", "pulls"):
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -184,6 +187,8 @@ def _migrate_untested(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE pulls ADD COLUMN prosper TEXT")
         if table == "pulls" and "fixes" not in columns:
             conn.execute("ALTER TABLE pulls ADD COLUMN fixes INTEGER")
+        if table == "pulls" and "chat" not in columns:
+            conn.execute("ALTER TABLE pulls ADD COLUMN chat TEXT")
     issues.migrate(conn)
 
 

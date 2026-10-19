@@ -19,7 +19,9 @@
 #
 # A fix is a pull request that points at the issue it fixes (issues.py): it is
 # opened from the issue, closing or reopening it is logged there too, and
-# merging it resolves the issue in the same write as the new version.
+# merging it resolves the issue in the same write as the new version. A change
+# is one the person asked Prosper AI for in a chat (chats.py): it names the chat
+# it came from.
 #
 # Prosper AI can work on a pull request (prosper.py): while it does, the
 # person's own changes to that copy are refused, or the two would write over
@@ -40,7 +42,7 @@ from .db import Conflict, NotFound, connect, now, prune
 from .suite import added_in, fingerprint, manual, new_id, prune_rules, rebase, rename_rules
 from .versions import insert_version, live_version
 
-KINDS = ("setup", "edit", "fix")
+KINDS = ("setup", "edit", "fix", "change")
 # Who Prosper AI is in a pull request's log.
 PROSPER = "Prosper AI"
 
@@ -63,6 +65,7 @@ def _to_record(conn: sqlite3.Connection, row: sqlite3.Row, full: bool) -> dict:
         "base_version": row["base_version"],
         "merged_version": row["merged_version"],
         "fixes": row["fixes"],
+        "chat": json.loads(row["chat"]) if row["chat"] else None,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "checks": _checks(conn, row),
@@ -160,12 +163,13 @@ def insert_pull(
     then: Optional[list] = None,
     prosper: Optional[dict] = None,
     fixes: Optional[int] = None,
+    chat: Optional[dict] = None,
 ) -> dict:
     """Open a pull request holding `config`, numbered from the agent's counter. Returns it.
 
     When Prosper AI opens it: `request` is what it was asked, logged before it
     opened it, `then` what it did next, and `prosper` its work on it. A fix
-    names the issue it `fixes`.
+    names the issue it `fixes`; a change, the `chat` ({ id, title }) it was asked in.
     """
     (number,) = conn.execute(
         "UPDATE agents SET next_number = next_number + 1 WHERE id = ? RETURNING next_number - 1",
@@ -177,11 +181,12 @@ def insert_pull(
         by,
         **({"version": base_version} if base_version else {}),
         **({"issue": fixes} if fixes else {}),
+        **({"chat": chat["id"]} if chat else {}),
     )
     conn.execute(
         "INSERT INTO pulls (agent_id, number, title, kind, state, base_version, merged_version,"
-        " config, layout, rules, tests, events, prosper, fixes, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, 'open', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " config, layout, rules, tests, events, prosper, fixes, chat, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, 'open', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             agent_id,
             number,
@@ -195,6 +200,7 @@ def insert_pull(
             json.dumps([*([request] if request else []), opened, *(then or [])]),
             None if prosper is None else json.dumps(prosper),
             fixes,
+            None if chat is None else json.dumps(chat),
             opened["at"],
             opened["at"],
         ),
