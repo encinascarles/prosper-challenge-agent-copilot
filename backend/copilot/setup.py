@@ -83,7 +83,7 @@ def change(agent_id: str, number: int, text: str, answers: Optional[dict] = None
 
 
 def fix(agent_id: str, number: int) -> Future:
-    """Fix the issue pull request `number` was opened for (fix.py)."""
+    """Fix the issue pull request `number` was opened for, or make the change it was (fix.py)."""
     return _submit({"kind": "fix"}, agent_id, number)
 
 
@@ -149,8 +149,8 @@ def after_checks(agent_id: str, number: int) -> None:
     Only after a change of Prosper AI's own (its setup, an answer it turned
     into a rule, its last fix), not after the person's edits, and at most
     MAX_ROUNDS times; then it says what still fails and leaves it to them.
-    On a fix whose checks pass, it says so, with the test that reproduced
-    the issue before and after.
+    On a fix (or a change asked for in a chat) whose checks pass, it says
+    so, with the test it wrote first before and after.
     """
     pull = store.get_pull(agent_id, number)
     if pull is None or pull["state"] != "open" or pull["prosper"] is None:
@@ -162,7 +162,7 @@ def after_checks(agent_id: str, number: int) -> None:
     last = next((e for e in reversed(pull["events"]) if e["type"] != "checks"), None)
     if last is None or last["by"] != PROSPER:
         return
-    if checks["state"] == "passed" and pull["fixes"]:
+    if checks["state"] == "passed" and pull["kind"] in ("fix", "change"):
         from . import fix
 
         return fix.proved(agent_id, number)
@@ -222,7 +222,12 @@ def _answered(agent_id: str, work: dict) -> str:
 
 
 def _fixes(agent_id: str, pull: dict) -> str:
-    """What a fix is for, for any request on it: the issue, as it was found in calls."""
+    """What a fix or a change is for, for any request on it: the issue, or what was asked."""
+    if pull.get("kind") == "change":
+        asked = store.prosper.work_of(agent_id, pull["number"]).get("request")
+        if not asked:
+            return ""
+        return f'\n\nThis pull request makes a change asked for in a chat: "{asked["text"]}"'
     if not pull.get("fixes"):
         return ""
     issue = store.issues.get_issue(agent_id, pull["fixes"])
@@ -455,8 +460,8 @@ def _review(llm: LLM, agent_id: str, number: int) -> None:
         "\n\nThe failing tests:\n" + "\n\n".join(calls)
     )
     removable = {rule["id"] for rule in pull["rules"] if added_in(rule, number)}
-    # The test that reproduces the issue a fix is for says what the agent must do.
-    kept = {test["id"] for test in pull["tests"] if test["source"]["kind"] == "issue"}
+    # The test a fix or a change wrote first says what the agent must do.
+    kept = {test["id"] for test in pull["tests"] if test["source"].get("before")}
     reviewed: dict = {}
 
     def review_ok(answer: dict) -> None:

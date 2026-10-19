@@ -33,7 +33,7 @@ router = APIRouter(prefix="/api/agents/{agent_id}", tags=["versions and pull req
 
 
 class Before(BaseModel):
-    """How the test that reproduces an issue went on the version that had it."""
+    """How the test a fix or a change wrote first went on the version it was based on."""
 
     version: int
     passed: int  # of `runs` calls
@@ -45,13 +45,14 @@ class Source(BaseModel):
     # the person's answer to its question, or from something they asked for.
     # check: added by Prosper AI when it checked its own draft against a failing test.
     # issue: added by Prosper AI fixing an issue: the test that reproduces it,
-    # or the rule that fixes it.
+    # or the rule that fixes it. A change asked for in a chat is a request.
     kind: Literal["manual", "guidelines", "answer", "request", "check", "issue"]
     pull: int | None = None  # the pull request it was added in
     file: str | None = None  # guidelines: the file it quotes, or "your notes"
     quote: str | None = None  # the line it comes from, or the answer or request, word for word
     issue: int | None = None  # issue: the issue's number
-    before: Before | None = None  # issue, a test: how it went on the version with the issue
+    # The test a fix or a change wrote first: how it went on the version before.
+    before: Before | None = None
 
     @model_serializer(mode="wrap")
     def _only_for_issues(self, handler):

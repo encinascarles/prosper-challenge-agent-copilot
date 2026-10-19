@@ -19,6 +19,13 @@
 # test saying so. Each step is logged in the conversation as it lands, and
 # remembered, so a retry after a failure starts from the step that failed.
 #
+# A change the person asked for in a chat (a pull request of kind "change")
+# goes the same way, with their words where the issue was: a test of what
+# they asked for, which should fail on the live version (if it passes, the
+# agent may already do it: Prosper AI says so and asks whether to go on), the
+# smallest change, and the whole suite. Only one test is tried there: a
+# request has no calls to sharpen a caller from.
+#
 # It runs as one of Prosper AI's jobs (setup.py has the pool, the busy guard and
 # the retry). The reproduction's calls are paid like any test's and counted
 # with what Prosper AI spent on the pull request.
@@ -43,10 +50,70 @@ CALLS_SHOWN = 3  # of the issue's calls, the latest, given to write the test
 LINES_BEFORE = 10  # of each call, the lines before the bad turn
 
 
+class Subject:
+    """What the pull request is for: an issue found in calls, or a change asked for in a chat."""
+
+    def __init__(self, agent_id: str, pull: dict):
+        self.number = pull["number"]
+        self.issue = store.issues.get_issue(agent_id, pull["fixes"]) if pull["fixes"] else None
+        work = store.prosper.work_of(agent_id, pull["number"])
+        self.request = work.get("request") or {"text": pull["title"], "what": ""}
+        self.agent_id = agent_id
+
+    @property
+    def tries(self) -> int:
+        return TRIES if self.issue else 1
+
+    def about(self) -> str:
+        """What a request to the model reads about it."""
+        if self.issue:
+            return _issue(self.issue)
+        return (
+            f'The change the person asked for, in a chat: "{self.request["text"]}"\n'
+            f"What it changes, as you offered it: {self.request['what']}"
+        )
+
+    def evidence(self) -> str:
+        return f"\n\n{_calls(self.agent_id, self.issue)}" if self.issue else ""
+
+    def source(self, **more) -> dict:
+        """The source of a test or a rule it adds."""
+        if self.issue:
+            return {"kind": "issue", "pull": self.number, "issue": self.issue["number"], **more}
+        return {"kind": "request", "pull": self.number, "quote": self.request["text"], **more}
+
+    def failing(self, version: dict, passed: int, runs: int) -> str:
+        if self.issue:
+            return (
+                f"Reproduced it: a test that {_callers(self.issue)} fails on {_v(version)} · "
+                f"{passed}/{runs}"
+            )
+        return f"Wrote a test of it: it fails on {_v(version)} as it is · {passed}/{runs}"
+
+    def passing(self, version: dict, passed: int, runs: int) -> str:
+        if self.issue:
+            return (
+                f"Could not reproduce it on {_v(version)}: {passed}/{runs}. "
+                "It may be rare or already fixed."
+            )
+        return (
+            f"The test of it already passes on {_v(version)}: {passed}/{runs}. "
+            "The agent may do this already."
+        )
+
+    def what(self) -> str:
+        return "a fix" if self.issue else "the change"
+
+
+def is_test_of(test: dict) -> bool:
+    """Whether `test` is the one a fix or a change wrote first: it knows how it went before."""
+    return bool(test["source"].get("before"))
+
+
 def run(llm: LLM, agent_id: str, number: int, job: dict) -> None:
-    """Fix the issue the pull request is for, from the step its work stopped at."""
+    """Fix the issue the pull request is for, or make its change, from where its work stopped."""
     pull = store.get_pull(agent_id, number)
-    issue = store.issues.get_issue(agent_id, pull["fixes"])
+    subject = Subject(agent_id, pull)
     version = store.get_version(agent_id, pull["base_version"])
     work = store.prosper.work_of(agent_id, number)
     built = set(work.get("built", []))
@@ -69,12 +136,12 @@ def run(llm: LLM, agent_id: str, number: int, job: dict) -> None:
                 )
                 store.prosper.write(agent_id, number, _event("message", text=text), state="done")
                 return
-            _keep_anyway(agent_id, number, version, work["candidate"])
+            _keep_anyway(agent_id, number, version, work["candidate"], subject)
             built.add("reproduced")
-    if "reproduced" not in built and not _reproduce(llm, agent_id, number, issue, version):
+    if "reproduced" not in built and not _reproduce(llm, agent_id, number, subject, version):
         return  # it asked whether to go on
     if "proposed" not in built:
-        _propose(llm, agent_id, number, issue, version, hint)
+        _propose(llm, agent_id, number, subject, version, hint)
     _ready(agent_id, number)
 
 
@@ -169,24 +236,26 @@ def _how_it_went(results: list[dict]) -> list[str]:
     return lines
 
 
-def _reproduce(llm: LLM, agent_id: str, number: int, issue: dict, version: dict) -> bool:
-    """Write and run a test that fails like the issue's calls. Returns whether it did.
+def _reproduce(llm: LLM, agent_id: str, number: int, subject: Subject, version: dict) -> bool:
+    """Write and run a test that fails like the issue's calls, or as the agent lacks the change.
 
-    If none does after TRIES, it says so and asks whether to go on.
+    Returns whether it did. If none does after its tries, it says so and asks
+    whether to go on.
     """
-    store.prosper.set_state(agent_id, number, "working", f"Reproducing it on {_v(version)}")
+    doing = f"Reproducing it on {_v(version)}" if subject.issue else "Writing a test of it"
+    store.prosper.set_state(agent_id, number, "working", doing)
     tests = "\n".join(
         f"- {test['name']} · caller: {test['caller']} · checks: {'; '.join(test['checks'])}"
         for test in version["tests"]
     )
     content = (
         f"{_context(agent_id, version)}\n\nIts tests:\n{tests or '(none)'}\n\n"
-        f"{_issue(issue)}\n\n{_calls(agent_id, issue)}"
+        f"{subject.about()}{subject.evidence()}"
     )
     results: list[dict] = []
-    for attempt in range(TRIES):
+    for attempt in range(subject.tries):
         test = llm.ask(
-            "reproduce",
+            "reproduce" if subject.issue else "capture",
             content,
             artifacts.REPRODUCE,
             lambda a: artifacts.check_reproduction(a, version["config"]),
@@ -194,10 +263,10 @@ def _reproduce(llm: LLM, agent_id: str, number: int, issue: dict, version: dict)
         results = _play(llm, version, test)
         passed = _passed(results)
         if verdict({"runs": results}, simulate.REPEATS) == "failing":
-            _keep(agent_id, number, issue, version, test, results)
+            _keep(agent_id, number, subject, version, test, results)
             return True
         store.prosper.update(agent_id, number, candidate={"test": test, "passed": passed})
-        if attempt + 1 < TRIES:
+        if attempt + 1 < subject.tries:
             score = f"{passed}/{len(results)} on {_v(version)}"
             said = f"A first test passed {score}: trying a sharper caller"
             store.prosper.log(agent_id, number, _event("step", text=said))
@@ -210,15 +279,12 @@ def _reproduce(llm: LLM, agent_id: str, number: int, issue: dict, version: dict)
                 "moment they did it, and checks that catch exactly what went wrong."
             )
     passed = _passed(results)
-    text = (
-        f"Could not reproduce it on {_v(version)}: {passed}/{len(results)}. "
-        "It may be rare or already fixed."
-    )
+    text = subject.passing(version, passed, len(results))
     store.prosper.log(agent_id, number, _event("message", text=text, details=_how_it_went(results)))
     question = {
-        "text": "Propose a fix anyway, with the test I wrote?",
+        "text": f"Propose {subject.what()} anyway, with the test I wrote?",
         "options": [
-            {"label": "Yes, propose a fix anyway", "rule": None},
+            {"label": f"Yes, propose {subject.what()} anyway", "rule": None},
             {"label": "No, leave it as it is", "rule": None},
         ],
     }
@@ -226,23 +292,17 @@ def _reproduce(llm: LLM, agent_id: str, number: int, issue: dict, version: dict)
     return False
 
 
-def _source(number: int, issue: int, version: dict, passed: int, runs: int) -> dict:
-    before = {"version": version["number"], "passed": passed, "runs": runs}
-    return {"kind": "issue", "pull": number, "issue": issue, "before": before}
+def _before(version: dict, passed: int, runs: int) -> dict:
+    return {"before": {"version": version["number"], "passed": passed, "runs": runs}}
 
 
-def _keep(agent_id: str, number: int, issue: dict, version: dict, test: dict, results: list):
-    """The test reproduced the issue: it joins the pull request's copy, said as a card."""
+def _keep(agent_id: str, number: int, subject: Subject, version: dict, test: dict, results: list):
+    """The test failed as it should: it joins the pull request's copy, said as a card."""
     passed, runs = _passed(results), len(results)
-    kept = {
-        "id": new_id(),
-        **test,
-        "source": _source(number, issue["number"], version, passed, runs),
-    }
+    kept = {"id": new_id(), **test, "source": subject.source(**_before(version, passed, runs))}
     event = _event(
         "reproduced",
-        text=f"Reproduced it: a test that {_callers(issue)} fails on {_v(version)} · "
-        f"{passed}/{runs}",
+        text=subject.failing(version, passed, runs),
         test=kept["id"],
         version=version["number"],
         passed=passed,
@@ -253,11 +313,12 @@ def _keep(agent_id: str, number: int, issue: dict, version: dict, test: dict, re
     store.prosper.update(agent_id, number, failed_on=[r for r in results if not r["passed"]][:1])
 
 
-def _keep_anyway(agent_id: str, number: int, version: dict, candidate: dict) -> None:
-    """The person chose to go on: the test that did not reproduce it joins the copy anyway."""
-    pull = store.get_pull(agent_id, number)
+def _keep_anyway(
+    agent_id: str, number: int, version: dict, candidate: dict, subject: Subject
+) -> None:
+    """The person chose to go on: the test that did not fail joins the copy anyway."""
     test, passed = candidate["test"], candidate["passed"]
-    source = _source(number, pull["fixes"], version, passed, simulate.REPEATS)
+    source = subject.source(**_before(version, passed, simulate.REPEATS))
     kept = {"id": new_id(), **test, "source": source}
     said = f"Added the test anyway: {passed}/{simulate.REPEATS} on {_v(version)}"
     store.prosper.write(
@@ -286,19 +347,19 @@ def _what(before: dict, after: dict) -> list[str]:
 
 
 def _propose(
-    llm: LLM, agent_id: str, number: int, issue: dict, version: dict, hint: Optional[str]
+    llm: LLM, agent_id: str, number: int, subject: Subject, version: dict, hint: Optional[str]
 ) -> None:
-    """Ask for the smallest change that fixes the issue, and write it to the copy."""
+    """Ask for the smallest change that fixes the issue or does what was asked; write it."""
     store.prosper.set_state(agent_id, number, "working", "Proposing the smallest change")
     pull = store.get_pull(agent_id, number)
     work = store.prosper.work_of(agent_id, number)
-    test = next((t for t in pull["tests"] if t["source"]["kind"] == "issue"), None)
+    test = next((t for t in pull["tests"] if is_test_of(t)), None)
     rules = "\n".join(f"- {r['step'] or 'every step'}: {r['text']}" for r in pull["rules"])
     failing = ""
     if test is not None:
         before = test["source"]["before"]
         failing = (
-            f"\n\nThe test that reproduces it, which the fix must make pass: {test['name']}\n"
+            f"\n\nThe test that shows it, which the change must make pass: {test['name']}\n"
             f"  caller: {test['caller']}\n  checks: {'; '.join(test['checks'])}\n"
             f"  on {_v(version)}: passed {before['passed']} of {before['runs']} calls"
         )
@@ -307,7 +368,7 @@ def _propose(
     said = f'\n\nThe person said: "{hint}"' if hint else ""
     content = (
         f"{_sources(work, agent_id)}\n\nThe clinic's answers:\n{_answered(agent_id, work)}\n\n"
-        f"{_agent(pull['config'])}\n\nIts rules:\n{rules or '(none)'}\n\n{_issue(issue)}"
+        f"{_agent(pull['config'])}\n\nIts rules:\n{rules or '(none)'}\n\n{subject.about()}"
         f"{failing}{said}"
     )
     fixed: dict = {}
@@ -322,7 +383,7 @@ def _propose(
         "proposed", text=answer["reply"], details=_what(pull["config"], config), changed=True
     )
     store.prosper.write(agent_id, number, event, config=config if moved else None)
-    source = {"kind": "issue", "pull": number, "issue": issue["number"]}
+    source = subject.source()
     for rule in answer["rules"]:
         step = artifacts.step_of(rule["step"])
         store.prosper.write(
@@ -335,7 +396,10 @@ def _propose(
 
 
 def proved(agent_id: str, number: int) -> None:
-    """The fix's checks passed: say so, with the new test before and after. Once per run."""
+    """The checks of a fix or a change passed: say so, with its new test before and after.
+
+    Once per run.
+    """
     pull = store.get_pull(agent_id, number)
     last = next((e for e in reversed(pull["events"]) if e["type"] != "checks"), None)
     if last is not None and last["type"] == "proved":
@@ -348,7 +412,7 @@ def proved(agent_id: str, number: int) -> None:
         else f"All checks passed · {checks['total']}/{checks['total']}"
     )
     text = f"{head} · {simulate.REPEATS} runs each"
-    test = next((t for t in pull["tests"] if t["source"]["kind"] == "issue"), None)
+    test = next((t for t in pull["tests"] if is_test_of(t)), None)
     result = next((r for r in run["tests"] if test and r["id"] == test["id"]), None)
     more = {}
     if test is not None and result is not None:
