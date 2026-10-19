@@ -52,7 +52,7 @@ export function PlayButton({ arriving, blocker, onPlay, className }: PlayProps) 
     return (
       <span className={cn(smallButton, 'pointer-events-none text-muted-foreground', className)}>
         <Loader2 className="size-3.5 animate-spin" />
-        {arriving.of ? `Calls coming in · ${arriving.done} of ${arriving.of}` : 'Prosper AI is picking callers…'}
+        {arriving.of ? `${arriving.done} of ${arriving.of} calls in` : 'Prosper AI is picking callers…'}
       </span>
     )
   }
