@@ -1,9 +1,9 @@
 #
 # Ask Prosper AI, through the API: a question answered from the agent's facts,
-# a change asked for becoming an offer, and the offer opening a pull request
+# a change asked for becoming a card, and the card opening a pull request
 # where Prosper AI writes a test, makes the change and runs the suite, as on
 # a fix. The model is scripted and the calls run on fakes: nothing here
-# reaches OpenAI.
+# reaches OpenAI. Its other tools: test_ask_tools.py.
 #
 
 import copy
@@ -14,23 +14,20 @@ import store
 from api import checks
 from copilot import artifacts, ask
 from tests.conftest import settle
+from tests.fakes import tool
 from tests.test_fix import EXAMPLE, ISSUE, two_callers, verdicts, with_issue  # noqa: F401
 
 ANSWER = {
     "answer": "No: Collect details only asks for the caller's own name and reason.",
     "links": [],
-    "offer": [],
 }
-OFFER = {
-    "answer": "I can open a pull request for that.",
-    "links": [],
-    "offer": [
-        {
-            "title": "Ask who the visit is for",
-            "what": "Collect details asks whether the visit is for the caller or someone else.",
-        }
-    ],
+CHANGE_ASKED = {
+    "title": "Ask who the visit is for",
+    "what": "Collect details asks whether the visit is for the caller or someone else.",
 }
+PROPOSE = tool("open_pull_request", **CHANGE_ASKED)
+# What Prosper AI says once the pull request is open: nothing the card does not.
+NOTHING_MORE = {"answer": "", "links": []}
 TEST = {
     "name": "Asks who the visit is for",
     "caller": "You are Ana Ruiz and you want to book a check-up for your son Leo.",
@@ -132,15 +129,24 @@ def test_a_call_the_question_names_is_given_whole(client, with_issue, prosper_mo
     ]
 
 
-def test_a_change_asked_for_is_an_offer_and_changes_nothing(client, live_agent, prosper_model):
+def test_a_change_asked_for_is_a_card_and_changes_nothing(client, live_agent, prosper_model):
     agent_id = live_agent()
-    prosper_model.script = {"ask": [ANSWER, OFFER]}
+    prosper_model.script = {"ask": [ANSWER, PROPOSE]}
     chat = _ask(client, agent_id, "Can it book for a child?")
 
     chat = _ask(client, agent_id, "Yes, have it ask who the visit is for.", chat=chat["id"])
 
-    offer = chat["messages"][-1]["offer"]
-    assert offer == {**OFFER["offer"][0], "pull": None}
+    message = chat["messages"][-1]
+    assert message["text"] == ""
+    assert message["action"] == {
+        "tool": "open_pull_request",
+        "title": "Open a pull request",
+        "what": CHANGE_ASKED["title"],
+        "meta": [CHANGE_ASKED["what"], "On v1 · nothing goes live until you merge"],
+        "state": "pending",
+        "result": None,
+        "error": None,
+    }
     # The chat so far went with the request.
     facts = prosper_model.asked["ask"][1][1]["content"]
     assert f"You: {ANSWER['answer']}" in facts
@@ -150,20 +156,26 @@ def test_a_change_asked_for_is_an_offer_and_changes_nothing(client, live_agent, 
 
 @pytest.fixture
 def offered(client, live_agent, prosper_model):
-    """A live agent and a chat whose last answer offers a pull request: (agent id, chat)."""
+    """A live agent and a chat whose last message proposes a pull request: (agent id, chat)."""
     agent_id = live_agent()
-    prosper_model.script = {"ask": [ANSWER, OFFER]}
+    prosper_model.script = {"ask": [ANSWER, PROPOSE]}
     chat = _ask(client, agent_id, "Can it book for a child?")
     chat = _ask(client, agent_id, "Yes, have it ask who the visit is for.", chat=chat["id"])
     return agent_id, chat
 
 
-def _take(client, agent_id, chat, status=201):
-    index = len(chat["messages"]) - 1
-    response = client.post(f"/api/agents/{agent_id}/chats/{chat['id']}/messages/{index}/pull")
+def _take(client, agent_id, chat, status=200, index=None):
+    index = len(chat["messages"]) - 1 if index is None else index
+    response = client.post(
+        f"/api/agents/{agent_id}/chats/{chat['id']}/messages/{index}/action", json={"do": True}
+    )
     assert response.status_code == status, response.text
     settle()
     return response.json()
+
+
+def _opened(chat: dict, index: int) -> int:
+    return chat["messages"][index]["action"]["result"]["link"]["number"]
 
 
 def test_the_offer_opens_a_change_where_a_test_fails_first_then_passes(
@@ -173,11 +185,16 @@ def test_the_offer_opens_a_change_where_a_test_fails_first_then_passes(
     verdicts,  # noqa: F811
 ):
     agent_id, chat = offered
-    prosper_model.script = {"capture": [TEST], "fix": [copy.deepcopy(CHANGE)]}
+    prosper_model.script = {
+        "ask": [NOTHING_MORE],
+        "capture": [TEST],
+        "fix": [copy.deepcopy(CHANGE)],
+    }
     verdicts += [False, False, False]  # the new test fails on v1, all three calls
 
+    index = len(chat["messages"]) - 1
     opened = _take(client, agent_id, chat)
-    number = opened["pull"]["number"]
+    number = _opened(opened, index)
     pull = client.get(f"/api/agents/{agent_id}/pulls/{number}").json()
 
     assert (pull["kind"], pull["title"], pull["base_version"]) == (
@@ -205,16 +222,17 @@ def test_the_offer_opens_a_change_where_a_test_fails_first_then_passes(
     assert pull["events"][-1]["text"] == (
         "All checks passed · 1/1 · 3 runs each · the new test 0/3 on v1 → 3/3"
     )
-    # The test was written from the person's words and the offer.
+    # The test was written from the person's words and the card.
     capture = prosper_model.asked["capture"][0][1]["content"]
     assert '"Yes, have it ask who the visit is for."' in capture
-    assert OFFER["offer"][0]["what"] in capture
+    assert CHANGE_ASKED["what"] in capture
 
-    # The chat says which pull request its offer opened, and opens no other.
-    assert opened["chat"]["messages"][-1]["offer"]["pull"] == number
+    # The card says which pull request it opened, and opens no other.
+    assert opened["messages"][index]["action"]["result"]["text"] == f"Opened PR #{number}"
+    assert len(opened["messages"]) == index + 1  # Prosper AI had nothing to add
     assert client.get(f"/api/agents/{agent_id}/chats").json()[0]["pulls"] == [number]
-    again = _take(client, agent_id, chat, status=409)
-    assert again["detail"] == f"PR #{number} is open for it already."
+    again = _take(client, agent_id, chat, status=409, index=index)
+    assert again["detail"] == "That was done already."
 
     merged = client.post(f"/api/agents/{agent_id}/pulls/{number}/merge")
     assert merged.status_code == 200, merged.text
@@ -225,9 +243,10 @@ def test_when_the_test_already_passes_it_says_so_and_asks_whether_to_go_on(
     client, offered, prosper_model
 ):
     agent_id, chat = offered
-    prosper_model.script = {"capture": [TEST]}  # one try: the judge passes it
+    # One try: the judge passes it.
+    prosper_model.script = {"ask": [NOTHING_MORE], "capture": [TEST]}
 
-    number = _take(client, agent_id, chat)["pull"]["number"]
+    number = _opened(_take(client, agent_id, chat), len(chat["messages"]) - 1)
     pull = client.get(f"/api/agents/{agent_id}/pulls/{number}").json()
 
     message, question = pull["events"][-2:]
@@ -239,14 +258,31 @@ def test_when_the_test_already_passes_it_says_so_and_asks_whether_to_go_on(
     assert len(prosper_model.asked["capture"]) == 1
 
 
-def test_a_message_that_offers_nothing_opens_nothing(client, live_agent, prosper_model):
+def test_a_message_that_proposes_nothing_does_nothing(client, live_agent, prosper_model):
     agent_id = live_agent()
     prosper_model.script = {"ask": [ANSWER]}
     chat = _ask(client, agent_id, "Can it book for a child?")
 
     response = _take(client, agent_id, chat, status=409)
 
-    assert response["detail"] == "That message offers no pull request."
+    assert response["detail"] == "That message proposes nothing to do."
+
+
+def test_an_older_chats_offer_still_opens_its_pull_request(client, live_agent, prosper_model):
+    agent_id = live_agent()
+    prosper_model.script = {"ask": [ANSWER], "capture": [TEST]}
+    chat = _ask(client, agent_id, "Have it ask who the visit is for.")
+    offer = {"by": "Prosper AI", "text": "I can.", "offer": {**CHANGE_ASKED, "pull": None}}
+    chat = store.chats.add_message(agent_id, chat["id"], offer)
+    index = len(chat["messages"]) - 1
+
+    response = client.post(f"/api/agents/{agent_id}/chats/{chat['id']}/messages/{index}/pull")
+    settle()
+
+    assert response.status_code == 201, response.text
+    number = response.json()["pull"]["number"]
+    assert response.json()["chat"]["messages"][index]["offer"]["pull"] == number
+    assert client.get(f"/api/agents/{agent_id}/chats").json()[0]["pulls"] == [number]
 
 
 def test_a_question_from_a_pull_request_is_answered_from_its_copy(client, new_agent, prosper_model):
@@ -291,11 +327,15 @@ def test_a_change_names_its_own_test_not_one_a_fix_left_in_live(
     checks.start(agent_id, pull=1)
     settle()
     assert client.post(f"/api/agents/{agent_id}/pulls/1/merge").status_code == 200
-    prosper_model.script = {"ask": [OFFER], "capture": [TEST], "fix": [copy.deepcopy(CHANGE)]}
+    prosper_model.script = {
+        "ask": [PROPOSE, NOTHING_MORE],
+        "capture": [TEST],
+        "fix": [copy.deepcopy(CHANGE)],
+    }
     chat = _ask(client, agent_id, "Have it ask who the visit is for.")
     verdicts += [False, False, False]
 
-    number = _take(client, agent_id, chat)["pull"]["number"]
+    number = _opened(_take(client, agent_id, chat), 1)
 
     pull = client.get(f"/api/agents/{agent_id}/pulls/{number}").json()
     assert pull["events"][-1]["text"].endswith("the new test 0/3 on v1 → 3/3")

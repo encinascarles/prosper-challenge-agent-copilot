@@ -129,18 +129,26 @@ class FakeServices(Services):
         return {"pass": self.verdict, "detail": reason, "tokens": {"prompt": 7, "completion": 3}}
 
 
+def tool(name: str, **arguments) -> dict:
+    """A step of a scripted conversation where the model calls the tool `name`."""
+    return {"tool": name, "arguments": arguments}
+
+
 class ScriptedModel(LLM):
     """Prosper AI's model, answering each prompt from a script: { prompt: [answers] }.
 
     Only the request is replaced, so what `ask` does with an answer (parse it,
     check it, send the error back) is the real code. `asked` keeps every
-    request's messages, by prompt.
+    request's messages, by prompt: in a conversation with tools, the prompt
+    first and then the conversation so far. An answer made with `tool` is a
+    call of that tool; `tools` keeps, per request, whether tools were allowed.
     """
 
     def __init__(self, script: dict):
         super().__init__(client=None, model="fake")
         self.script = {name: list(answers) for name, answers in script.items()}
         self.asked: dict[str, list[list[dict]]] = {}
+        self.tools: list[bool] = []
 
     def _complete(self, messages, name, schema):
         self.asked.setdefault(name, []).append(list(messages))
@@ -149,3 +157,27 @@ class ScriptedModel(LLM):
         if not answers:
             raise AssertionError(f"Nothing scripted for '{name}'.")
         return json.dumps(answers.pop(0))
+
+    def _turn(self, name, items, tools, schema, use_tools):
+        self.asked.setdefault(name, []).append([{"role": "system", "content": name}, *items])
+        self.tools.append(use_tools)
+        self.usage["requests"] += 1
+        answers = self.script.get(name) or []
+        if not answers:
+            raise AssertionError(f"Nothing scripted for '{name}'.")
+        answer = answers.pop(0)
+        if "tool" in answer:
+            assert use_tools, "A tool was called when only an answer was allowed."
+            call = {
+                "call_id": f"call_{self.usage['requests']}",
+                "name": answer["tool"],
+                "arguments": json.dumps(answer["arguments"]),
+            }
+            return {"output": [{"type": "function_call", **call}], "call": call, "text": ""}
+        text = json.dumps(answer)
+        said = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": text}],
+        }
+        return {"output": [said], "call": None, "text": text}
