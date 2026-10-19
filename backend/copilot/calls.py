@@ -187,9 +187,13 @@ def review(
             for finding in answer["findings"]
         ]
         with _grouping:
-            for finding, issue in zip(findings, _group(llm, agent_id, findings), strict=True):
-                store.issues.file_finding(agent_id, call_id, caller, finding, issue)
-        store.calls.record_review(call_id, answer["outcome"], answer["checks"], llm.usage["usd"])
+            placed = list(zip(findings, _group(llm, agent_id, findings), strict=True))
+            review = {
+                "outcome": answer["outcome"],
+                "checks": answer["checks"],
+                "usd": llm.usage["usd"],
+            }
+            store.issues.file_review(agent_id, call_id, caller, placed, review)
     except Exception:  # noqa: BLE001 - the call stays, marked as not reviewed
         logger.exception(f"Prosper AI could not review call {call_id}")
         store.calls.review_failed(call_id)

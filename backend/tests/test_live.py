@@ -8,7 +8,7 @@ import copy
 
 import pytest
 
-from copilot import audit
+from copilot import audit, calls
 from tests.conftest import settle
 
 # The scripted booking, as a text call writes it down: the agent's lines are 0, 2, 4 and 6.
@@ -104,6 +104,39 @@ def test_a_different_problem_opens_its_own_issue(client, live_agent, prosper_mod
     _play(client, agent_id)
     issues = client.get(f"/api/agents/{agent_id}/issues").json()
     assert [issue["number"] for issue in issues] == [3, 2]
+
+
+def test_an_issue_resolved_while_the_batch_runs_takes_no_more_calls(
+    client, live_agent, prosper_model, monkeypatch
+):
+    agent_id = live_agent()
+    prosper_model.script = {
+        "callers": [CALLERS],
+        "audit": [copy.deepcopy(REVIEW), copy.deepcopy(REVIEW)],
+        "grouping": [{"placements": [{"finding": 0, "issue": 2}]}],
+    }
+    grouped = calls._group
+
+    def then_resolved(llm, agent, findings):
+        # The person resolves #2 after the second call was grouped into it,
+        # before its findings are filed.
+        placed = grouped(llm, agent, findings)
+        if placed == [2]:
+            client.post(f"/api/agents/{agent}/issues/2/resolve")
+        return placed
+
+    monkeypatch.setattr(calls, "_group", then_resolved)
+    page = _play(client, agent_id)
+
+    assert all(call["review"] == "done" for call in page["calls"])
+    assert sorted(call["issues"] for call in page["calls"]) == [[2], [3]]
+    issues = {i["number"]: i for i in client.get(f"/api/agents/{agent_id}/issues").json()}
+    assert (issues[2]["state"], issues[2]["calls"]) == ("resolved", 1)
+    assert (issues[3]["state"], issues[3]["calls"]) == ("open", 1)
+    # The review landed with its findings: the call shows its checks.
+    second = next(c for c in page["calls"] if c["issues"] == [3])
+    call = client.get(f"/api/agents/{agent_id}/calls/{second['id']}").json()
+    assert [c["passed"] for c in call["checks"]] == [True, True, False]
 
 
 def test_a_clean_call_files_nothing_and_asks_no_grouping(client, live_agent, prosper_model):

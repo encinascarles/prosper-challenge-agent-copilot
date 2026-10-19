@@ -29,6 +29,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from .calls import write_review
 from .db import Conflict, NotFound, connect, now
 from .versions import live_version
 
@@ -201,6 +202,26 @@ def get_issue(agent_id: str, number: int) -> Optional[dict]:
         return _select(conn, agent_id, number)
 
 
+def file_review(
+    agent_id: str,
+    call_id: int,
+    caller: str,
+    placed: list[tuple[dict, Optional[int]]],
+    review: dict,
+) -> list[int]:
+    """File a reviewed call's findings and record its review, in one write.
+
+    `placed` is each finding with the issue it was grouped into (None for a
+    new one); `review` is { outcome, checks, usd }. Returns the issue each
+    finding went to. All or nothing: a call never shows half its findings,
+    or issues without the checks that found them.
+    """
+    with connect() as conn:
+        numbers = [_file(conn, agent_id, call_id, caller, f, issue) for f, issue in placed]
+        write_review(conn, call_id, review["outcome"], review["checks"], review["usd"])
+        return numbers
+
+
 def file_finding(
     agent_id: str,
     call_id: int,
@@ -208,62 +229,76 @@ def file_finding(
     finding: dict,
     issue: Optional[int] = None,
 ) -> int:
-    """Keep a finding of the call in issue `issue`, or in a new issue. Returns its number.
-
-    `finding` is { check, step, turn, quote, why } and, for a new issue, its
-    { title, severity, description }. An issue it joins must still be tracked.
-    """
+    """Keep one finding of the call in issue `issue`, or in a new issue. Returns its number."""
     with connect() as conn:
-        if issue is None:
-            (issue,) = conn.execute(
-                "UPDATE agents SET next_number = next_number + 1 WHERE id = ?"
-                " RETURNING next_number - 1",
-                (agent_id,),
-            ).fetchone()
-            opened = _event("opened", PROSPER, call=call_id, caller=caller)
-            conn.execute(
-                "INSERT INTO issues (agent_id, number, title, step, severity, description, state,"
-                " snooze, events, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?, ?)",
-                (
-                    agent_id,
-                    issue,
-                    finding["title"],
-                    finding["step"],
-                    finding["severity"],
-                    finding["description"],
-                    json.dumps([opened]),
-                    opened["at"],
-                    opened["at"],
-                ),
-            )
-        else:
-            row = conn.execute(
-                "SELECT state, events FROM issues WHERE agent_id = ? AND number = ?",
-                (agent_id, issue),
-            ).fetchone()
-            if row is None or row["state"] not in TRACKED:
-                raise Conflict(f"{label(issue)} is not being tracked.")
-            seen = _event("seen", PROSPER, call=call_id, caller=caller)
-            conn.execute(
-                "UPDATE issues SET events = ?, updated_at = ? WHERE agent_id = ? AND number = ?",
-                (json.dumps([*json.loads(row["events"]), seen]), seen["at"], agent_id, issue),
-            )
+        return _file(conn, agent_id, call_id, caller, finding, issue)
+
+
+def _file(
+    conn: sqlite3.Connection,
+    agent_id: str,
+    call_id: int,
+    caller: str,
+    finding: dict,
+    issue: Optional[int],
+) -> int:
+    """`finding` is { check, step, turn, quote, why } and, for a new issue, its
+    { title, severity, description }.
+
+    An issue that stopped being tracked since the finding was grouped into it
+    (resolved while the batch ran, say) takes no more calls: the finding opens
+    a new issue, as a problem that comes back after it was resolved does.
+    """
+    row = None
+    if issue is not None:
+        row = conn.execute(
+            "SELECT state, events FROM issues WHERE agent_id = ? AND number = ?",
+            (agent_id, issue),
+        ).fetchone()
+    if row is None or row["state"] not in TRACKED:
+        (issue,) = conn.execute(
+            "UPDATE agents SET next_number = next_number + 1 WHERE id = ?"
+            " RETURNING next_number - 1",
+            (agent_id,),
+        ).fetchone()
+        opened = _event("opened", PROSPER, call=call_id, caller=caller)
         conn.execute(
-            "INSERT INTO findings (agent_id, call_id, issue, check_text, step, turn, quote, why)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO issues (agent_id, number, title, step, severity, description, state,"
+            " snooze, events, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?, ?)",
             (
                 agent_id,
-                call_id,
                 issue,
-                finding["check"],
+                finding["title"],
                 finding["step"],
-                finding["turn"],
-                finding["quote"],
-                finding["why"],
+                finding["severity"],
+                finding["description"],
+                json.dumps([opened]),
+                opened["at"],
+                opened["at"],
             ),
         )
-        return issue
+    else:
+        seen = _event("seen", PROSPER, call=call_id, caller=caller)
+        conn.execute(
+            "UPDATE issues SET events = ?, updated_at = ? WHERE agent_id = ? AND number = ?",
+            (json.dumps([*json.loads(row["events"]), seen]), seen["at"], agent_id, issue),
+        )
+    conn.execute(
+        "INSERT INTO findings (agent_id, call_id, issue, check_text, step, turn, quote, why)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            agent_id,
+            call_id,
+            issue,
+            finding["check"],
+            finding["step"],
+            finding["turn"],
+            finding["quote"],
+            finding["why"],
+        ),
+    )
+    return issue
 
 
 def _change(conn, agent_id: str, number: int, allowed: tuple, state: str, event: dict, snooze=None):

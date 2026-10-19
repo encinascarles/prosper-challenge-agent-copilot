@@ -164,17 +164,22 @@ def add_call(
         return call_id
 
 
-def record_review(call_id: int, outcome: str, checks: list, usd: float) -> None:
-    """Add Prosper AI's review to the call: its outcome and the checks it applied."""
-    with connect() as conn:
-        row = conn.execute("SELECT usage FROM calls WHERE id = ?", (call_id,)).fetchone()
-        if row is None:
-            return
-        usage = {**json.loads(row["usage"]), "review": usd}
-        conn.execute(
-            "UPDATE calls SET review = 'done', outcome = ?, checks = ?, usage = ? WHERE id = ?",
-            (outcome, json.dumps(checks), json.dumps(usage), call_id),
-        )
+def write_review(
+    conn: sqlite3.Connection, call_id: int, outcome: str, checks: list, usd: float
+) -> None:
+    """Add Prosper AI's review to the call: its outcome and the checks it applied.
+
+    Takes the caller's transaction: the review lands with the findings it
+    filed (issues.file_review), or neither does.
+    """
+    row = conn.execute("SELECT usage FROM calls WHERE id = ?", (call_id,)).fetchone()
+    if row is None:
+        return
+    usage = {**json.loads(row["usage"]), "review": usd}
+    conn.execute(
+        "UPDATE calls SET review = 'done', outcome = ?, checks = ?, usage = ? WHERE id = ?",
+        (outcome, json.dumps(checks), json.dumps(usage), call_id),
+    )
 
 
 def review_failed(call_id: int) -> None:
