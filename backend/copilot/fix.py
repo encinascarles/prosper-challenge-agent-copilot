@@ -334,8 +334,7 @@ def proved(agent_id: str, number: int) -> None:
     checks = pull["checks"]
     run = store.get_run(agent_id, pull=number) or {"tests": []}
     head = (
-        f"Checks pass · {checks['passed'] + checks['flaky']}/{checks['total']}, "
-        f"{checks['flaky']} flaky"
+        f"Checks pass · {checks['passed']}/{checks['total']}, {checks['flaky']} flaky"
         if checks["flaky"]
         else f"All checks passed · {checks['total']}/{checks['total']}"
     )
