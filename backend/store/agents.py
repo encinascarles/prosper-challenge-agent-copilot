@@ -30,7 +30,7 @@ from typing import Optional
 
 from agent_builder import AgentBuilder
 
-from . import runs
+from . import calls, issues, runs
 from .db import BACKEND_DIR, connect, db_path, now
 from .pulls import insert_pull, stop_prosper
 from .suite import manual, new_id
@@ -44,7 +44,7 @@ _SCHEMA = (
 CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    -- Pull requests are numbered per agent; issues will take numbers from the
+    -- Pull requests are numbered per agent; issues take numbers from the
     -- same counter, so "#3" names one thing in an agent.
     next_number INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
@@ -84,14 +84,17 @@ CREATE TABLE IF NOT EXISTS pulls (
     PRIMARY KEY (agent_id, number)
 )""",
     runs.SCHEMA,
+    *calls.SCHEMA,
+    *issues.SCHEMA,
 )
 
-# What the lists and the agent's page read: the row, plus the two facts every
+# What the lists and the agent's page read: the row, plus the facts every
 # screen shows about an agent. The live version is the latest one.
 _SELECT = """
 SELECT agents.*,
     COALESCE((SELECT MAX(number) FROM versions WHERE agent_id = agents.id), 0) AS live_version,
-    (SELECT COUNT(*) FROM pulls WHERE agent_id = agents.id AND state = 'open') AS open_pulls
+    (SELECT COUNT(*) FROM pulls WHERE agent_id = agents.id AND state = 'open') AS open_pulls,
+    (SELECT COUNT(*) FROM issues WHERE agent_id = agents.id AND state = 'open') AS open_issues
 FROM agents
 """
 
@@ -120,6 +123,7 @@ def init_db() -> None:
         _migrate_untested(conn)
         runs.migrate(conn)
         runs.stop_unfinished(conn)
+        calls.stop_unfinished(conn)
         stop_prosper(conn)
         if seed is not None:
             # The example is live from the start, as v1: it is there to be called.
@@ -192,6 +196,7 @@ def _to_record(row: sqlite3.Row) -> dict:
         "name": row["name"],
         "live_version": row["live_version"],
         "open_pulls": row["open_pulls"],
+        "open_issues": row["open_issues"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -231,6 +236,9 @@ def create_agent(config: dict, layout: Optional[dict] = None, by: str = "you") -
 
 
 def delete_agent(agent_id: str) -> bool:
-    """Remove an agent with its versions and pull requests. Returns whether there was one."""
+    """Remove an agent with its versions, pull requests, calls and issues.
+
+    Returns whether there was one.
+    """
     with connect() as conn:
         return conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,)).rowcount > 0

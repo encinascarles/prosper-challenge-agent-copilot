@@ -44,6 +44,7 @@ class Agent(BaseModel):
     name: str  # the live version's, or pull request #1's before the agent is live
     live_version: int  # the version calls run on; 0 until pull request #1 is merged
     open_pulls: int  # how many pull requests are open
+    open_issues: int  # how many issues found in its calls are open
     created_at: str
     updated_at: str
 

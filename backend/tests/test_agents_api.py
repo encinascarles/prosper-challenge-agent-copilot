@@ -26,7 +26,15 @@ def test_list_starts_with_the_seeded_example_live_as_v1(client, agent):
 
     assert response.status_code == 200
     [summary] = response.json()
-    assert set(summary) == {"id", "name", "live_version", "open_pulls", "created_at", "updated_at"}
+    assert set(summary) == {
+        "id",
+        "name",
+        "live_version",
+        "open_pulls",
+        "open_issues",
+        "created_at",
+        "updated_at",
+    }
     assert (summary["name"], summary["live_version"], summary["open_pulls"]) == (
         agent["name"],
         1,
