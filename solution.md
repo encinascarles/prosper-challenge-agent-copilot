@@ -720,7 +720,13 @@ the result, so Prosper AI can say what is next or propose the next act of a
 request ("close PR #18 and fix Issue #10 instead" is two cards in a row).
 Cancel only marks the card, and the next question tells Prosper AI it was
 declined. A card left pending when the person writes again is skipped.
-Nothing changes from a chat without a click.
+Nothing changes from a chat without a click. A card shows the words the act
+will keep (what happened, for an issue; the caller and every check, for a
+test): they may come from a call's transcript, which a caller wrote, and the
+click is the only guard. A card left being done by a server that stopped is
+marked failed at startup ("Interrupted … Check, and ask again"), like
+Prosper AI's interrupted jobs; a pull request opened from a chat is linked
+from its card even if Prosper AI's job on it could not start.
 
 Each act is the route the UI calls, called as a function: an issue from a
 chat goes through `report_issue` like one from New issue, a merge through
@@ -793,12 +799,18 @@ With tools, on Anna (v3, 60 calls, 10 open issues), through the panel:
 - "Snooze the issues about wording for a week" → a card for Issue #13 only.
   No issue is about wording; it took the only one of severity experience
   (the call left open), a stretch. Cancelled; "Issue #13 and Issue #8 for a
-  week instead" → one card for both → done.
+  week instead" → one card for both → done. The prompt now says to say so
+  and ask when nothing matches; asked again: "No issues are specifically
+  about wording; Issue #13 is about leaving calls open … Which issues did
+  you mean?", no card.
 - "Fix issue #17" → PR #18. The fix itself (fix.py, unchanged here) did not
   get green: 2 tests failing after its two rounds. "Merge it" → no card,
   "PR #18 cannot merge: 2 tests are failing"; "check the failures" → two
   reads and a right summary (it called the 2 flaky ones not consistently
-  passing too). "Close PR #18 for now, and fix issue #10 instead" → two
+  passing too: the facts and tools now say pass, flaky and failing with the
+  2/3 rule and that flaky does not block a merge; asked again on v4, "two
+  tests are flaky at 2/3 … none are failing, so no tests block a
+  merge"). "Close PR #18 for now, and fix issue #10 instead" → two
   cards in a row → PR #19, which could not reproduce the issue (3/3 on v3)
   and, told to go on, passed 9/11 with 2 flaky. "Merge it" → "Merge PR #19
   as v4 …" → v4 live, Issue #10 resolved.
