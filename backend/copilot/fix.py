@@ -105,9 +105,12 @@ class Subject:
         return "a fix" if self.issue else "the change"
 
 
-def is_test_of(test: dict) -> bool:
-    """Whether `test` is the one a fix or a change wrote first: it knows how it went before."""
-    return bool(test["source"].get("before"))
+def is_test_of(test: dict, number: int) -> bool:
+    """Whether `test` is the one pull request `number` wrote first: it knows how it went before.
+
+    Only one it added: a version keeps the first test of every fix merged into it.
+    """
+    return bool(test["source"].get("before")) and test["source"].get("pull") == number
 
 
 def run(llm: LLM, agent_id: str, number: int, job: dict) -> None:
@@ -353,7 +356,7 @@ def _propose(
     store.prosper.set_state(agent_id, number, "working", "Proposing the smallest change")
     pull = store.get_pull(agent_id, number)
     work = store.prosper.work_of(agent_id, number)
-    test = next((t for t in pull["tests"] if is_test_of(t)), None)
+    test = next((t for t in pull["tests"] if is_test_of(t, number)), None)
     rules = "\n".join(f"- {r['step'] or 'every step'}: {r['text']}" for r in pull["rules"])
     failing = ""
     if test is not None:
@@ -412,7 +415,7 @@ def proved(agent_id: str, number: int) -> None:
         else f"All checks passed · {checks['total']}/{checks['total']}"
     )
     text = f"{head} · {simulate.REPEATS} runs each"
-    test = next((t for t in pull["tests"] if is_test_of(t)), None)
+    test = next((t for t in pull["tests"] if is_test_of(t, number)), None)
     result = next((r for r in run["tests"] if test and r["id"] == test["id"]), None)
     more = {}
     if test is not None and result is not None:

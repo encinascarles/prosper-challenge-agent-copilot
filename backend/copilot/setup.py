@@ -435,6 +435,8 @@ def _the_call(result: dict) -> str:
 
 
 def _review(llm: LLM, agent_id: str, number: int) -> None:
+    from . import fix  # it builds on this module's helpers
+
     pull = store.get_pull(agent_id, number)
     work = store.prosper.work_of(agent_id, number)
     run = store.get_run(agent_id, pull=number) or {"tests": []}
@@ -461,7 +463,7 @@ def _review(llm: LLM, agent_id: str, number: int) -> None:
     )
     removable = {rule["id"] for rule in pull["rules"] if added_in(rule, number)}
     # The test a fix or a change wrote first says what the agent must do.
-    kept = {test["id"] for test in pull["tests"] if test["source"].get("before")}
+    kept = {test["id"] for test in pull["tests"] if fix.is_test_of(test, number)}
     reviewed: dict = {}
 
     def review_ok(answer: dict) -> None:

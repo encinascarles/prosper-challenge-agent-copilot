@@ -98,7 +98,7 @@ export function PullChecks({ pull, run, onRerun, onRunOne }: Props) {
               <TestIcon score={s} />
               <span className="text-[13px] font-medium">{test.name}</span>
               <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
-                {isFixTest(test) ? (
+                {isFixTest(test) && addedIn(test, pull.number) ? (
                   <span className="font-medium text-brand tabular-nums">new · {beforeAfter(test, null)}</span>
                 ) : addedIn(test, pull.number) ? (
                   <span className="font-medium text-brand">new · added in {pullLabel(pull.number)}</span>

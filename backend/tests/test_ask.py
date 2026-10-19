@@ -10,6 +10,8 @@ import copy
 
 import pytest
 
+import store
+from api import checks
 from copilot import artifacts, ask
 from tests.conftest import settle
 from tests.test_fix import EXAMPLE, ISSUE, two_callers, verdicts, with_issue  # noqa: F401
@@ -265,3 +267,37 @@ def test_titles_are_the_first_question_on_one_line():
     long = "Why " + "did the call go there " * 6
     title = ask.store.chats.title_of(long)
     assert len(title) <= 80 and title.endswith("…")
+
+
+def test_a_change_names_its_own_test_not_one_a_fix_left_in_live(
+    client,
+    new_agent,
+    prosper_model,
+    verdicts,  # noqa: F811
+):
+    # Live keeps the first test of a fix merged into it, with its own "before".
+    agent_id, _ = new_agent()
+    earlier = {
+        **TEST,
+        "name": "Offers only open times",
+        "source": {
+            "kind": "issue",
+            "pull": 1,
+            "issue": 9,
+            "before": {"version": 0, "passed": 1, "runs": 3},
+        },
+    }
+    store.prosper.write(agent_id, 1, {"type": "test", "by": "you", "at": "now"}, tests=(earlier,))
+    checks.start(agent_id, pull=1)
+    settle()
+    assert client.post(f"/api/agents/{agent_id}/pulls/1/merge").status_code == 200
+    prosper_model.script = {"ask": [OFFER], "capture": [TEST], "fix": [copy.deepcopy(CHANGE)]}
+    chat = _ask(client, agent_id, "Have it ask who the visit is for.")
+    verdicts += [False, False, False]
+
+    number = _take(client, agent_id, chat)["pull"]["number"]
+
+    pull = client.get(f"/api/agents/{agent_id}/pulls/{number}").json()
+    assert pull["events"][-1]["text"].endswith("the new test 0/3 on v1 → 3/3")
+    proposal = prosper_model.asked["fix"][0][1]["content"]
+    assert "must make pass: Asks who the visit is for" in proposal
