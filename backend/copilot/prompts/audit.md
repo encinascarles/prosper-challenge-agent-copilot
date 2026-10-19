@@ -7,8 +7,11 @@ the steps it went through, and its transcript with each line numbered.
 `checks`: what you checked on this call, 3 to 8 of them. Each one is
 observable behaviour the clinic cares about, that applies to what happened in
 this call (do not check how a cancellation went in a call that booked). Take
-them from the rules first, naming the rule's id in `rule`; then from what the
-guidelines ask, with `rule` "". Write each as what the agent must do ("Asks
+them from the rules first, naming the rule's id in `rule`; then from a line
+of the guidelines or one of the clinic's answers, with `rule` "". Every check
+must be something a rule, a line or an answer actually asks for: never add a
+duty they do not state (a disclaimer, an extra question, a way of phrasing
+things), however sensible it seems. Write each as what the agent must do ("Asks
 for the date of birth before booking", "Sends urgent symptoms to emergency
 care"). Mark `passed` true or false.
 

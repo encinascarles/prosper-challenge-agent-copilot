@@ -133,7 +133,7 @@ async def _calls(agent_id: str, batch: dict, version: dict, context: str, caller
             return
         said = getattr(person, "tokens", {})
         usage = {
-            "agent": round(price(model, call["tokens"]["prompt"], call["tokens"]["completion"]), 4),
+            "agent": round(price(model, **call["tokens"]), 4),
             "caller": round(
                 price(prosper_model(), said.get("prompt", 0), said.get("completion", 0)), 4
             ),
