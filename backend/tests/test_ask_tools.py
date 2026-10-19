@@ -13,7 +13,7 @@ from api import live, pulls, suite, tools
 from copilot import ask
 from tests.conftest import settle
 from tests.fakes import tool
-from tests.test_fix import ISSUE, two_callers, with_issue  # noqa: F401
+from tests.test_fix import ISSUE, two_callers, verdicts, with_issue  # noqa: F401
 
 ANSWER = {"answer": "Issue #2 is about the times offered.", "links": []}
 NOTHING_MORE = {"answer": "", "links": []}
@@ -405,3 +405,18 @@ def test_a_card_left_running_by_a_stopped_server_is_failed_at_startup(
 
     action = store.chats.get_chat(agent_id, chat["id"])["messages"][index]["action"]
     assert (action["state"], action["error"]) == ("failed", store.chats.INTERRUPTED)
+
+
+def test_flaky_tests_are_said_as_flaky_not_as_failing(client, new_agent, verdicts):  # noqa: F811
+    agent_id, _ = new_agent()
+    test = {"name": "Is polite", "caller": "Ana books.", "checks": ["Is polite"]}
+    client.post(f"/api/agents/{agent_id}/pulls/1/tests", json=test)
+    verdicts += [False]  # one of its three calls fails: 2/3
+    settle()
+
+    output, _ = tools.TOOLS["read_tests"].read(agent_id, {"pull": 1})
+    assert "- Is polite · flaky, 2/3" in output
+    assert "is flaky one short of it (shown, and does not block a merge)" in output
+    assert "Now: 0 of 1 pass, 1 flaky (2/3: does not block a merge)." in output
+    listed, _ = tools.TOOLS["list_pulls"].read(agent_id, {"state": None})
+    assert "checks passed: 0 of 1 pass, 1 flaky (2/3: does not block a merge)" in listed

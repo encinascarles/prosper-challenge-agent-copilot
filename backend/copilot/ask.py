@@ -334,7 +334,14 @@ def tests_of(agent_id: str, copy: dict, name: str) -> str:
             f"  checks: {'; '.join(test['checks'])}"
         )
     ran = f"last run {_when(run['started_at'])}" if run else "never run"
-    return f"Its tests on {name} ({ran}, {repeats} calls each):\n" + ("\n".join(lines) or "(none)")
+    rule = (
+        f"A test passes at {repeats}/{repeats}, is flaky one short of it (shown, and does not "
+        "block a merge), and is failing below that (blocks a merge)."
+    )
+    head = f"Its tests on {name} ({ran}, {repeats} calls each). {rule}"
+    if (summary := store.runs.summary(run)) and summary["state"] != "running":
+        head += f" Now: {tally(summary)}."
+    return f"{head}\n" + ("\n".join(lines) or "(none)")
 
 
 def versions_of(agent_id: str) -> str:
@@ -356,7 +363,7 @@ def pull_line(pull: dict) -> str:
     state = f"merged as v{pull['merged_version']}" if pull["state"] == "merged" else pull["state"]
     checks = pull["checks"]
     if pull["state"] == "open" and checks:
-        state += f", checks {checks['state']} ({checks['passed']}/{checks['total']} pass)"
+        state += f", checks {checks['state']}: {tally(checks)}"
     why = f", fixes Issue #{pull['fixes']}" if pull["fixes"] else ""
     if pull["chat"]:
         why = f', asked for in the chat "{pull["chat"]["title"]}"'
@@ -369,6 +376,16 @@ def pull_line(pull: dict) -> str:
 def _issues(agent_id: str) -> str:
     lines = [issue_line(issue) for issue in store.issues.list_issues(agent_id)]
     return "Issues, newest first:\n" + ("\n".join(lines) or "(none)")
+
+
+def tally(checks: dict) -> str:
+    """How a copy's tests went, by the 2/3 rule: "8 pass, 2 flaky (no block), 1 failing"."""
+    parts = [f"{checks['passed']} of {checks['total']} pass"]
+    if checks["flaky"]:
+        parts.append(f"{checks['flaky']} flaky (2/3: does not block a merge)")
+    if checks["failing"]:
+        parts.append(f"{checks['failing']} failing (blocks a merge)")
+    return ", ".join(parts)
 
 
 def issue_line(issue: dict) -> str:
