@@ -235,6 +235,12 @@ function Event({ event, pull, live, agentName, onShowChanges, onShowChecks }: Pr
           <Who event={event} /> opened this to fix <span className="text-foreground">Issue #{event.issue}</span> on{' '}
           <span className="text-foreground">{versionLabel(event.version ?? 0)}</span> · live stays as it is until you merge
         </>
+      ) : event.chat ? (
+        <>
+          <Who event={event} /> opened this from your chat{' '}
+          <span className="text-foreground">“{pull.chat?.title}”</span> on{' '}
+          <span className="text-foreground">{versionLabel(event.version ?? 0)}</span> · live stays as it is until you merge
+        </>
       ) : isProsper(event) ? (
         <>
           <Who event={event} /> opened this pull request from your guidelines · it goes live when you merge it

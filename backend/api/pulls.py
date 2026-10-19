@@ -33,7 +33,7 @@ router = APIRouter(prefix="/api/agents/{agent_id}", tags=["versions and pull req
 
 
 class Before(BaseModel):
-    """How the test that reproduces an issue went on the version that had it."""
+    """How the test a fix or a change wrote first went on the version it was based on."""
 
     version: int
     passed: int  # of `runs` calls
@@ -45,13 +45,14 @@ class Source(BaseModel):
     # the person's answer to its question, or from something they asked for.
     # check: added by Prosper AI when it checked its own draft against a failing test.
     # issue: added by Prosper AI fixing an issue: the test that reproduces it,
-    # or the rule that fixes it.
+    # or the rule that fixes it. A change asked for in a chat is a request.
     kind: Literal["manual", "guidelines", "answer", "request", "check", "issue"]
     pull: int | None = None  # the pull request it was added in
     file: str | None = None  # guidelines: the file it quotes, or "your notes"
     quote: str | None = None  # the line it comes from, or the answer or request, word for word
     issue: int | None = None  # issue: the issue's number
-    before: Before | None = None  # issue, a test: how it went on the version with the issue
+    # The test a fix or a change wrote first: how it went on the version before.
+    before: Before | None = None
 
     @model_serializer(mode="wrap")
     def _only_for_issues(self, handler):
@@ -159,6 +160,7 @@ class PullEvent(BaseModel):
     rewritten: bool | None = None  # "test": Prosper AI rewrote it, `why` says why
     why: str | None = None
     issue: int | None = None  # "opened": the issue a fix is for
+    chat: int | None = None  # "opened": the chat a change was asked for in
     test: str | None = None  # "reproduced", "proved": the id of the test that reproduces it
 
 
@@ -170,15 +172,24 @@ class Prosper(BaseModel):
     usage: dict[str, float] | None  # requests, tokens and USD spent so far
 
 
+class ChatOf(BaseModel):
+    """The chat a change was asked for in."""
+
+    id: int
+    title: str  # its first question
+
+
 class PullSummary(BaseModel):
     number: int  # per agent: shown as "PR #3"
     title: str
-    # setup: pull request #1 of a new agent; fix: opened from an issue, to fix it
-    kind: Literal["setup", "edit", "fix"]
+    # setup: pull request #1 of a new agent; fix: opened from an issue, to fix
+    # it; change: asked for in a chat with Prosper AI, which makes it
+    kind: Literal["setup", "edit", "fix", "change"]
     state: Literal["open", "merged", "closed"]
     base_version: int  # the live version it was copied from; 0 for a setup
     merged_version: int | None  # the version it became, once merged
     fixes: int | None  # a fix: the number of the issue it fixes
+    chat: ChatOf | None  # a change: the chat it was asked for in
     created_at: str
     updated_at: str
     checks: Checks | None  # its latest run of the tests; None if none ran

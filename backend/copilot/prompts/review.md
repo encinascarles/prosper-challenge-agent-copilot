@@ -41,3 +41,7 @@ word), the rules to add and the ids of rules to take out, the rewritten tests
 one short sentence. A rewritten test has 2 to 4 checks: path checks written
 exactly "Reaches <step>", "Ends the call" or "<field> is recorded", and at
 most one judged line about the call as a whole, never about style.
+
+Rules, tasks and conditions are read by people too, in the editor: write
+them in the product's words (a step, "moves on to", "ends the call"), never
+edge, node, function or transition. The JSON keys keep their names.

@@ -13,7 +13,8 @@
 // On a pull request Prosper AI works on, the page follows it while it works
 // and while its checks run, and its questions are answered in the
 // conversation. The composer under the conversation of any open pull request
-// writes to Prosper AI. A fix says which issue it fixes, and links to it.
+// writes to Prosper AI. A fix says which issue it fixes, and links to it; a
+// change, the chat it was asked for in.
 
 import { ArrowLeft, GitMerge, GitPullRequestArrow, GitPullRequestClosed, MoreHorizontal, Phone, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -57,6 +58,8 @@ type Props = {
   onOpenInBuild: (number: number) => void
   onTry: (number: number) => void
   onIssue: (number: number) => void
+  /** Open the chat a change was asked for in. */
+  onChat: (chat: number) => void
   /** The pull request changed: what lists it, and the agent, may be out of date. */
   onChanged: () => void
   onToast: (text: string) => void
@@ -95,7 +98,7 @@ function TitleInput({ title, onRename }: { title: string; onRename: (title: stri
   )
 }
 
-export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onIssue, onChanged, onToast }: Props) {
+export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onIssue, onChat, onChanged, onToast }: Props) {
   const live = agent.live_version
   // Read again while Prosper AI works on it or its checks run.
   const followed = useFollow(agent.id, number, true)
@@ -244,6 +247,12 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onIssue,
                   </button>
                 )}
                 {pull.fixes !== null && <Dot />}
+                {pull.chat !== null && (
+                  <button onClick={() => onChat(pull.chat!.id)} className="ml-1 truncate text-foreground hover:underline">
+                    From your chat “{pull.chat.title}”
+                  </button>
+                )}
+                {pull.chat !== null && <Dot />}
                 {/* A merged setup was based on nothing; "not live yet" would read as now. */}
                 {!(pull.kind === 'setup' && pull.state === 'merged') && (
                   <span className={cn('ml-1', stale && 'font-medium text-warn')}>

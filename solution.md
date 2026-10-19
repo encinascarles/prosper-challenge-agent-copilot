@@ -661,6 +661,90 @@ it by half or more. Asking for less (only the steps that change, not the
 whole agent) would make each change cheaper and leave less room to go wrong.
 Prosper AI sometimes still names steps in snake case in its own replies.
 
+### Ask Prosper AI: questions in a chat, changes in a pull request
+
+**Context.** Until here Prosper AI only acted inside a pull request. Most of
+what a deployment person wants to know is a question ("Can Anna book for a
+child?", "Why did this caller hang up?", "How many calls went wrong today?"),
+and answering it meant reading the graph, the tests and the calls by hand.
+Some questions end in a change ("then have her ask"), which should not need
+switching to Build.
+
+**Options.**
+- *A chat that also edits the agent.* Rejected: a change made in a chat has
+  no test, no checks and no review, and live would move without a merge.
+- *An agent with tools (search calls, read a test) answering in several
+  steps.* Not now: the facts of one agent fit in one prompt (about 6,600
+  tokens for Anna with 60 calls), so one request answers in 3–5 s for about
+  USD 0.015. Tools are what comes once there are thousands of calls.
+- *One request with the agent's facts written in; changes only as an offer
+  to open a pull request.* Chosen.
+
+**How it works.** "Ask Prosper AI" in the top bar (⌘J) opens a panel at the
+right of every section: new chat, past chats (stored per agent, titled by the
+first question), the chat, a composer. Each answer is one request through
+`llm.py` on Prosper AI's model at low effort (`copilot/ask.py`). It reads:
+the guidelines and the clinic's answers, the copy the person is on (live or
+the pull request) with its rules, its tests and how each last went, the
+versions, pull requests and issues, a tally of all calls and of today's, the
+latest 30 calls in a line each, and whole (transcript, path, findings) the
+calls the chat names by caller or number. The answer is checked in code like
+everything Prosper AI writes: at most 600 characters, no snake_case names,
+and every issue, pull request or call it links to must exist; a refused
+answer goes back with the reason. Links are chips that open what they name.
+
+Asked for a change, the answer carries an offer instead: a title and what it
+would change, as a "Create pull request" card. Nothing changes in the chat.
+The card opens a pull request of kind `change` ("From your chat …"), its
+conversation starting from the person's own words, and Prosper AI runs the
+fix machinery on it (`fix.py`, now about a "subject", an issue or a request):
+a test of what was asked, which should fail on live (if it passes, it says
+the agent may already do it and asks whether to go on; one try, as a request
+has no calls to sharpen a caller from), the smallest change, the whole suite,
+the self-check, and "the new test 0/3 on v2 → 3/3". It always opens on live,
+and the card says so ("Opens a pull request on v2"): asked from a pull
+request, a change to that pull request belongs in its own conversation, which
+the card links to, rather than a second pull request on top of an unmerged
+one. Asking waits for the
+answer in the same HTTP request: one model call, a few seconds, nothing to
+follow in the background.
+
+**What the real run showed.** On Anna (v2, 60 simulated calls, 10 open
+issues), through the panel:
+- "Can Anna book for a child?" → "No: … the clinic requires checking the
+  caller's authorization in the child's chart and she has no access to
+  patient records." Right: Anna routes anyone acting for someone else to
+  Information, from the clinic's own answer.
+- "How many calls went wrong today, and what is the most common problem?"
+  First answer hedged ("the other 30 call records would be needed"): only
+  30 calls were listed. With the tally added: "19 of 60 calls had an issue
+  … Issue #2 affected 5 calls", matching the Calls page.
+- "Why did Priya Desai hang up on Anna?" → Anna kept saying goodbye without
+  ending the call after Priya declined and said she was done; Issue #13.
+  Right, checked against the transcript; it linked the call and the issue.
+- "Does Anna ask callers whether it's their first visit?" → "No … Would you
+  like me to open a pull request?"; "Yes, have her ask" → the card. The pull
+  request: a test failing 0/3 on v2, one rule in Collect details, 8/10 pass
+  and 2 flaky (both flaky on v2 already), new test 3/3, merged as v3. 1 min
+  45 s from the click to checks passing.
+
+The first such pull request ended "the new test 0/3 on v1 → 3/3" on a v2
+base: live keeps the test of the fix merged as v2, which has its own
+"before", and that was the one found. The test written first is now one this
+pull request added (a test covers it); that pull request was closed and the
+change asked for again. Answers were short (1–3 sentences) and grounded every
+time; the rule Prosper AI wrote says "before taking any outgoing edge", words
+for the agent's prompt rather than for a person.
+
+Real spend: 10 answers USD 0.14, the two change pull requests' own requests
+and test calls 0.26, their suites 1.90: about USD 2.3.
+
+**Trade-offs and what is next.** The facts are rebuilt for every answer and
+grow with the agent; past a few hundred calls the list needs search (by
+caller, outcome, issue) rather than "the latest 30". Test calls placed from
+Build are not in the facts yet. A chat answers about one copy at a time; it
+cannot compare two versions. Chats cannot be renamed or deleted.
+
 ### Three kinds of calls, kept apart: calls, test calls and tests
 
 **Context.** People trying the product read "simulated calls" next to the

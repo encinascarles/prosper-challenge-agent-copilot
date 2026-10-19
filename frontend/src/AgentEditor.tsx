@@ -106,6 +106,9 @@ type Props = {
   prosper: Pull | null
   /** Something here changed that pull request (an answer was picked). */
   onProsper: (pull: Pull) => void
+  /** "Ask Prosper AI" for the top bar, and its panel when it is open. */
+  ask?: React.ReactNode
+  askPanel?: React.ReactNode
 }
 
 // The steps a save renames, old name to new: their rules follow them. The
@@ -134,7 +137,7 @@ function locate(sent: Draft, error: unknown): Refusal {
 export function AgentEditor(props: Props) {
   const { agent, pulls, versions, on, copy, agents, onPick, onSettings, onNew, onDelete, showSettings } = props
   const { onDirty, onSaved, onSwitch, onOpenForEdits, onNewPull, onMerged, onProblem, onOpenPage, sections, autoCall } = props
-  const { prosper, onProsper } = props
+  const { prosper, onProsper, ask, askPanel } = props
   // Building or waiting for an answer: the copy is Prosper AI's until then.
   const status = prosper ? prosperStatus(prosper) : null
   const pull = on === null ? null : (pulls.find((p) => p.number === on) ?? null)
@@ -426,6 +429,7 @@ export function AgentEditor(props: Props) {
                 onShowProblem={() => refusal?.node && setFramed({ ids: [refusal.node] })}
               />
             )}
+            {ask}
             <TestCallButton
               label={testCallLabel(on)}
               dirty={unsaved}
@@ -524,6 +528,7 @@ export function AgentEditor(props: Props) {
                 />
               )}
             </div>
+            {askPanel}
           </main>
           <AgentSettingsDialog
             open={settingsOpen}

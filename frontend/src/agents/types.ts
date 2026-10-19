@@ -87,10 +87,10 @@ export type Source = {
   file?: string | null // guidelines: the file it quotes, or "your notes"
   quote?: string | null // the line it comes from, or your answer or request, word for word
   issue?: number // issue: the issue's number
-  before?: Before // issue, a test: how it went on the version that had the issue
+  before?: Before // the test a fix or a change wrote first: how it went on the version before
 }
 
-/** How the test that reproduces an issue went on the version that had it: "0/3 on v1". */
+/** How the test a fix or a change wrote first went on its base: "0/3 on v1". */
 export type Before = { version: number; passed: number; runs: number }
 
 /** A short instruction added to the agent's prompt, on every step (`step` null) or on one. */
@@ -231,6 +231,7 @@ export type PullEvent = {
   rewritten?: boolean | null // "test": Prosper AI rewrote it; `why` says why
   why?: string | null
   issue?: number | null // "opened": the issue a fix is for
+  chat?: number | null // "opened": the chat a change was asked for in
   test?: string | null // "reproduced", "proved": the test that reproduces the issue
 }
 
@@ -245,11 +246,13 @@ export type Prosper = {
 export type PullSummary = {
   number: number // per agent, shown as "PR #3"
   title: string
-  kind: 'setup' | 'edit' | 'fix' // setup: PR #1 of a new agent; fix: opened from an issue
+  // setup: PR #1 of a new agent; fix: opened from an issue; change: asked for in a chat
+  kind: 'setup' | 'edit' | 'fix' | 'change'
   state: 'open' | 'merged' | 'closed'
   base_version: number // the live version it was copied from; 0 for a setup
   merged_version: number | null
   fixes: number | null // a fix: the issue it fixes
+  chat: { id: number; title: string } | null // a change: the chat it was asked for in
   created_at: string
   updated_at: string
   checks: Checks | null // its latest run on the copy as it is now; null if none ran on it
