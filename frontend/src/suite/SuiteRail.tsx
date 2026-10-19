@@ -147,6 +147,8 @@ export function SuiteRail(props: Props) {
   const [writing, setWriting] = useState(false)
   const checks = summarize(run ?? null)
   const results = resultsOf(run)
+  // A test run alone, or a run that stopped, leaves tests with nothing to show.
+  const notRun = run ? suite.tests.filter((test) => !results.has(test.id)).length : 0
   const repeats = run?.repeats ?? 3
   const groups = rulesByStep(suite.rules, steps)
   const running = checks?.state === 'running'
@@ -213,7 +215,7 @@ export function SuiteRail(props: Props) {
         <div className={cn(heading, 'mt-3 border-t')}>
           Tests
           <span className="ml-auto font-normal tracking-normal normal-case tabular-nums">
-            {done ? `Running ${done.done}/${done.of}` : checks && checks.total > 0 ? `${checks.passed}/${checks.total} pass${checks.flaky ? ` · ${checks.flaky} flaky` : ''}` : ''}
+            {done ? `Running ${done.done}/${done.of}` : checks && checks.total > 0 ? `${checks.passed}/${checks.total} pass${checks.flaky ? ` · ${checks.flaky} flaky` : ''}${notRun ? ` · ${notRun} not run` : ''}` : ''}
           </span>
           {suite.tests.length > 0 && (
             <button
