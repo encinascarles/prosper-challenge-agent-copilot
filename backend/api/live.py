@@ -8,7 +8,7 @@
 # batch runs. Issues are read here too, and put aside or closed by hand:
 # snoozed, resolved, ignored or reopened. Fixing one is a pull request opened
 # from it, by the person or by Prosper AI. A person reports one here too (a
-# complaint from the clinic).
+# complaint from the clinic), and Prosper AI can tidy what they wrote.
 #
 # Test calls (the voice calls a person places from Build) are listed apart,
 # and reviewed by Prosper AI only when asked; what it finds stays on the call.
@@ -22,7 +22,8 @@ from pydantic import BaseModel, Field
 import simulate
 import store
 from copilot import calls as playing
-from copilot import setup
+from copilot import setup, tidy
+from copilot.llm import Failed
 
 from . import checks
 from .models import YOU
@@ -254,6 +255,16 @@ class IssueEdit(BaseModel):
     tidied: bool = Field(default=False, description="These are Prosper AI's words, kept.")
 
 
+class Tidied(BaseModel):
+    """What Prosper AI would make of a reported issue; nothing is kept until the person says."""
+
+    title: str
+    step: str  # "" when nothing says which
+    severity: Severity
+    calls: list[int]  # calls that show it, not linked yet: up to 3
+    usd: float  # what the request cost
+
+
 class Snooze(BaseModel):
     until: Literal["day", "week", "version"] = Field(
         description="For a day, for a week, or until the next version is live."
@@ -339,6 +350,19 @@ def edit_issue(agent_id: str, number: int, body: IssueEdit) -> dict:
         changes.pop("step", None)  # null leaves it; "" is "not sure"
     by = store.PROSPER if body.tidied else YOU
     return _answer(store.issues.edit, agent_id, number, changes, body.calls, by)
+
+
+@router.post(
+    "/issues/{number}/tidy", response_model=Tidied, responses=_MISSING | _REFUSED | {502: {}}
+)
+def tidy_issue(agent_id: str, number: int) -> dict:
+    """Prosper AI's plain title, step, severity and calls for a reported issue, to keep or not."""
+    _agent(agent_id)
+    try:
+        return _answer(tidy.tidy, agent_id, number)
+    except Failed as error:
+        detail = f"Prosper AI couldn't tidy it: {error}"
+        raise HTTPException(status_code=502, detail=detail) from error
 
 
 @router.get("/issues/{number}", response_model=Issue, responses=_MISSING)

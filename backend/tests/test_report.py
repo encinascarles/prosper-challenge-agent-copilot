@@ -1,9 +1,9 @@
 #
 # Issues a person reports, through the API: a complaint from the clinic opened
-# by hand, numbered like everything else, with the calls that show it; fixed
-# by Prosper AI from its description alone, and joined by a finding from calls
-# like any other issue. The model is scripted and the calls run on fakes:
-# nothing here reaches OpenAI.
+# by hand, numbered like everything else, with the calls that show it;
+# tidied by Prosper AI when asked; fixed by Prosper AI from its description
+# alone, and joined by a finding from calls like any other issue. The model is
+# scripted and the calls run on fakes: nothing here reaches OpenAI.
 #
 
 import copy
@@ -102,7 +102,50 @@ def test_calls_linked_to_a_report_count_as_its_calls(client, live_agent, prosper
     assert {c["id"]: c["issues"] for c in listed}[calls[0]["id"]] == [issue["number"]]
 
 
-def test_an_issue_found_in_calls_is_not_edited(client, live_agent, prosper_model):
+def test_a_reported_issue_is_edited_and_kept_tidied_by_prosper_ai(
+    client, live_agent, prosper_model
+):
+    agent_id = live_agent()
+    calls = _calls(client, agent_id, prosper_model)
+    number = _report(client, agent_id)["number"]
+    tidied = {
+        "title": "Books appointments on Sundays",
+        "step": "offer_times",
+        "severity": "booking",
+        "calls": [calls[1]["id"]],
+    }
+    # A step that does not exist is sent back, and the answer comes again.
+    prosper_model.script = {"tidy": [{**tidied, "step": "sunday_slots"}, tidied]}
+
+    response = client.post(f"/api/agents/{agent_id}/issues/{number}/tidy")
+    assert response.status_code == 200, response.text
+    assert {k: v for k, v in response.json().items() if k != "usd"} == tidied
+    asked = prosper_model.asked["tidy"][0][1]["content"]
+    assert "we are closed" in asked and f"call {calls[1]['id']} · " in asked
+    # Nothing changes until the person keeps it.
+    before = client.get(f"/api/agents/{agent_id}/issues/{number}").json()
+    assert before["title"] == COMPLAINT["title"]
+
+    kept = client.patch(
+        f"/api/agents/{agent_id}/issues/{number}", json={**tidied, "tidied": True}
+    ).json()
+    assert (kept["title"], kept["step"], kept["severity"], kept["calls"]) == (
+        "Books appointments on Sundays",
+        "offer_times",
+        "booking",
+        1,
+    )
+    assert kept["description"] == COMPLAINT["description"]  # their words stay
+    assert (kept["events"][-1]["type"], kept["events"][-1]["by"]) == ("tidied", "Prosper AI")
+
+    edited = client.patch(
+        f"/api/agents/{agent_id}/issues/{number}", json={"step": "", "severity": None}
+    ).json()
+    assert (edited["step"], edited["severity"], edited["title"]) == ("", None, kept["title"])
+    assert (edited["events"][-1]["type"], edited["events"][-1]["by"]) == ("edited", "you")
+
+
+def test_an_issue_found_in_calls_is_not_edited_or_tidied(client, live_agent, prosper_model):
     agent_id = live_agent()
     prosper_model.script = {"callers": [CALLERS], "audit": [copy.deepcopy(REVIEW)] * 2}
     prosper_model.script["grouping"] = [{"placements": [{"finding": 0, "issue": 2}]}]
@@ -110,6 +153,7 @@ def test_an_issue_found_in_calls_is_not_edited(client, live_agent, prosper_model
     settle()
     path = f"/api/agents/{agent_id}/issues/2"
     assert client.patch(path, json={"title": "Mine"}).status_code == 409
+    assert client.post(f"{path}/tidy").status_code == 409
 
 
 def test_prosper_ai_fixes_a_reported_issue_with_no_calls(
