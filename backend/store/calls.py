@@ -185,6 +185,7 @@ def review_failed(call_id: int) -> None:
 def _summary(row: sqlite3.Row) -> dict:
     return {
         "id": row["id"],
+        "play": row["play"],
         "version": row["version"],
         "caller": row["caller"],
         "at": row["at"],

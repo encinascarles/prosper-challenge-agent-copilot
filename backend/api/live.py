@@ -44,6 +44,7 @@ class Play(BaseModel):
 
 class CallSummary(BaseModel):
     id: int
+    play: int | None  # the batch it came in
     version: int  # the version that answered
     caller: str
     at: str
