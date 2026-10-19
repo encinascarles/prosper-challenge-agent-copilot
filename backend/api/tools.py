@@ -255,8 +255,19 @@ def list_versions(agent_id: str, args: dict) -> tuple[str, str]:
 # --- Acts --------------------------------------------------------------------
 
 
-def _card(title: str, what: str = "", *meta: str) -> dict:
-    return {"title": title, "what": what, "meta": [m for m in meta if m]}
+def _card(title: str, what: str = "", *meta: str, stored: Optional[list[str]] = None) -> dict:
+    # `stored`: the words the act will keep (an issue's account, a test's
+    # caller and checks), shown whole so the click is an informed one: they
+    # may come from a call's transcript, which a caller wrote.
+    return {"title": title, "what": what, "meta": [m for m in meta if m], "stored": stored or []}
+
+
+MAX_STORED_CHARS = 400  # of an issue's account, on its card
+
+
+def _clip(text: str) -> str:
+    text = text.strip()
+    return text if len(text) <= MAX_STORED_CHARS else text[: MAX_STORED_CHARS - 1] + "…"
 
 
 def _issue(agent_id: str, number: int) -> dict:
@@ -289,6 +300,7 @@ def open_issue_card(agent_id: str, args: dict) -> dict:
         (report.severity or "severity not set").capitalize(),
         "Flagged by the clinic" if report.reported == "clinic" else "",
         f"{calls} call{'s' if calls != 1 else ''}" if calls else "",
+        stored=[_clip(report.description)],
     )
 
 
@@ -609,6 +621,7 @@ def add_test_card(agent_id: str, args: dict) -> dict:
         test.name,
         f"{len(test.checks)} check{'s' if len(test.checks) != 1 else ''}",
         "its checks run again",
+        stored=[f"Caller: {test.caller}", *(f"Check: {check}" for check in test.checks)],
     )
 
 

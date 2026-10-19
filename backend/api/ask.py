@@ -56,6 +56,7 @@ class Action(BaseModel):
     title: str  # "Merge PR #5 as v3"
     what: str  # its subject: the issue's or pull request's title, the rule
     meta: list[str]  # what follows from it: "Calls will use v3 from then on"
+    stored: list[str] = []  # the words it will keep, a line each: a test's caller and checks
     # running: being done; skipped: the person wrote again instead
     state: Literal["pending", "running", "done", "failed", "declined", "skipped"]
     result: ActionResult | None = None  # once done

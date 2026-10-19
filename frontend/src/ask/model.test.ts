@@ -50,7 +50,7 @@ describe('suggestions', () => {
 })
 
 describe('actionOutcome', () => {
-  const card: Action = { tool: 'merge_pull', title: 'Merge PR #5 as v3', what: 'Fix', meta: [], state: 'pending', result: null, error: null }
+  const card: Action = { tool: 'merge_pull', title: 'Merge PR #5 as v3', what: 'Fix', meta: [], stored: [], state: 'pending', result: null, error: null }
   it('says nothing while the card waits or runs', () => {
     expect(actionOutcome(card)).toBeNull()
     expect(actionOutcome({ ...card, state: 'running' })).toBeNull()

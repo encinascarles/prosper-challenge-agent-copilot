@@ -143,6 +143,7 @@ def test_a_change_asked_for_is_a_card_and_changes_nothing(client, live_agent, pr
         "title": "Open a pull request",
         "what": CHANGE_ASKED["title"],
         "meta": [CHANGE_ASKED["what"], "On v1 · nothing goes live until you merge"],
+        "stored": [],
         "state": "pending",
         "result": None,
         "error": None,

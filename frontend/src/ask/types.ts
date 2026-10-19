@@ -13,6 +13,7 @@ export type Action = {
   title: string // "Merge PR #5 as v3"
   what: string // its subject: the issue's or pull request's title, the rule
   meta: string[] // what follows from it: "Calls will use v3 from then on"
+  stored: string[] // the words it will keep, a line each: a test's caller and checks
   // running: being done; skipped: the person wrote again instead
   state: 'pending' | 'running' | 'done' | 'failed' | 'declined' | 'skipped'
   result: { text: string; link: Link | null } | null // once done: "Opened Issue #14"

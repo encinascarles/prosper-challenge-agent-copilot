@@ -390,6 +390,14 @@ function ActionCard({ action, busy, disabled, onDecide, onOpen }: { action: Acti
           <div className="text-[13.5px] font-semibold">{action.title}</div>
           {action.what && <div className="mt-0.5 text-[13px] leading-snug">{action.what}</div>}
           {action.meta.length > 0 && <div className="mt-1 text-[12px] leading-snug text-muted-foreground">{action.meta.join(' · ')}</div>}
+          {action.stored.length > 0 && (
+            // What it will keep, word for word: the click is on these.
+            <div className="mt-2 space-y-1 border-l-2 pl-2.5 text-[12.5px] leading-snug whitespace-pre-wrap">
+              {action.stored.map((line, i) => (
+                <p key={i}>{line}</p>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div className="flex items-center justify-end gap-2 border-t bg-muted/30 px-3.5 py-2.5">

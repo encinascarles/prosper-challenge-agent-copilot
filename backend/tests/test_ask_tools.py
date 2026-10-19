@@ -364,3 +364,27 @@ def test_a_pull_request_opened_is_linked_even_if_prosper_ai_cannot_start(
     # Failed with its job kept, like one cut by a restart: a message to it retries.
     work = store.prosper.work_of(agent_id, 2)
     assert (work["state"], work["job"]) == ("failed", {"kind": "fix"})
+
+
+def test_cards_show_the_words_an_act_will_keep(client, with_issue, new_agent):  # noqa: F811
+    agent_id = with_issue()
+    report = {
+        "title": "Books under the parent's name",
+        "description": "The clinic emailed: a mother booked for her son, in her own name.",
+        "step": None,
+        "severity": "booking",
+        "reported": "clinic",
+        "calls": [],
+    }
+    card = tools.TOOLS["open_issue"].card(agent_id, report)
+    assert card["stored"] == [report["description"]]
+
+    other, _ = new_agent("Other")
+    test = {"pull": 1, "name": "Books for a child", "caller": "Ana books for Leo.",
+            "checks": ["Records Leo as the patient", "Ends the call"]}  # fmt: skip
+    card = tools.TOOLS["add_test"].card(other, test)
+    assert card["stored"] == [
+        "Caller: Ana books for Leo.",
+        "Check: Records Leo as the patient",
+        "Check: Ends the call",
+    ]
