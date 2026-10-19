@@ -9,6 +9,9 @@
 # snoozed, resolved, ignored or reopened. Fixing one is a pull request opened
 # from it, by the person or by Prosper AI.
 #
+# Test calls (the voice calls a person places from Build) are listed apart,
+# and reviewed by Prosper AI only when asked; what it finds stays on the call.
+#
 
 from typing import Any, Literal
 
@@ -98,6 +101,38 @@ class Call(CallSummary):
     checks: list[CallCheck]
     findings: list[CallFinding]
     usage: dict[str, float]  # USD: agent, caller, review
+
+
+class TestCallSummary(BaseModel):
+    id: int
+    pull: int | None  # the pull request whose copy it called; null for live
+    version: int | None  # the live version it called
+    by: str
+    at: str
+    seconds: int  # timed: it was a voice call
+    ended: Literal["agent_ended", "caller_hung_up"]
+    review: Literal["none", "pending", "done", "failed"]  # Prosper AI's, only when asked
+    outcome: Outcome | None
+    flagged: int  # how many checks it failed, once reviewed
+
+
+class TestCallFinding(BaseModel):
+    check: str
+    step: str
+    turn: int
+    quote: str
+    why: str
+    title: str
+    severity: Severity
+    description: str
+
+
+class TestCallPage(TestCallSummary):
+    path: list[PathStep]
+    transcript: list[Line]
+    checks: list[CallCheck]
+    findings: list[TestCallFinding]  # never filed as issues
+    usage: dict[str, float]
 
 
 class Fixed(BaseModel):
@@ -213,6 +248,34 @@ def get_call(agent_id: str, call_id: int) -> dict:
     if call is None:
         raise HTTPException(status_code=404, detail=f"The agent has no call {call_id}.")
     return call
+
+
+@router.get("/test-calls", response_model=list[TestCallSummary], responses=_MISSING)
+def list_test_calls(agent_id: str) -> list[dict]:
+    """The voice calls placed from Build, latest first."""
+    return _answer(store.test_calls.list_test_calls, agent_id)
+
+
+@router.get("/test-calls/{call_id}", response_model=TestCallPage, responses=_MISSING)
+def get_test_call(agent_id: str, call_id: int) -> dict:
+    _agent(agent_id)
+    call = store.test_calls.get_test_call(agent_id, call_id)
+    if call is None:
+        raise HTTPException(status_code=404, detail=f"The agent has no test call {call_id}.")
+    return call
+
+
+@router.post(
+    "/test-calls/{call_id}/review",
+    status_code=202,
+    response_model=TestCallPage,
+    responses=_MISSING | _REFUSED,
+)
+def review_test_call(agent_id: str, call_id: int) -> dict:
+    """Have Prosper AI review the test call as it reviews calls; nothing is filed as an issue."""
+    _agent(agent_id)
+    _answer(playing.review_test_call, agent_id, call_id)
+    return store.test_calls.get_test_call(agent_id, call_id)
 
 
 @router.get("/issues", response_model=list[IssueSummary], responses=_MISSING)

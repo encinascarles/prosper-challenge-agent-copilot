@@ -30,7 +30,7 @@ from typing import Optional
 
 from agent_builder import AgentBuilder
 
-from . import calls, issues, runs
+from . import calls, issues, runs, test_calls
 from .db import BACKEND_DIR, connect, db_path, now
 from .pulls import insert_pull, stop_prosper
 from .suite import manual, new_id
@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS pulls (
     runs.SCHEMA,
     *calls.SCHEMA,
     *issues.SCHEMA,
+    test_calls.SCHEMA,
 )
 
 # What the lists and the agent's page read: the row, plus the facts every
@@ -125,6 +126,7 @@ def init_db() -> None:
         runs.migrate(conn)
         runs.stop_unfinished(conn)
         calls.stop_unfinished(conn)
+        test_calls.stop_unfinished(conn)
         stop_prosper(conn)
         if seed is not None:
             # The example is live from the start, as v1: it is there to be called.

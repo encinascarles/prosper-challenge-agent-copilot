@@ -191,7 +191,7 @@ def ran(monkeypatch):
     """bot() with the voice pipeline cut off: the builders it would have run."""
     builders = []
 
-    async def run_bot(transport, runner_args, builder):
+    async def run_bot(transport, runner_args, builder, record=None):
         builders.append(builder)
 
     monkeypatch.setattr(bot, "run_bot", run_bot)

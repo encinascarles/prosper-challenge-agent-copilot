@@ -152,7 +152,7 @@ def test_running_checks_block_the_merge(client, on_pull, monkeypatch):
     assert client.get(_pull(on_pull)).json()["checks"]["state"] == "running"
 
 
-async def _never_runs(agent_id, run, copy):
+async def _never_runs(*args):
     return None
 
 
@@ -268,6 +268,101 @@ def test_running_again_by_hand_always_runs(client, on_pull):
 
     assert again["id"] != before["id"]
     assert again["fingerprint"] == before["fingerprint"]
+
+
+def test_one_test_runs_again_into_the_latest_run_and_the_merge_reads_it(
+    client, on_pull, fake_checks
+):
+    _add_test(client, on_pull, ["Reaches Confirm"], name="Books")
+    second = _add_test(client, on_pull, ["Never gives medical advice"], name="Advice")
+    before = client.get(f"{_pull(on_pull)}/checks").json()
+    books, advice = (test["id"] for test in second["tests"])
+    fake_checks.verdict = False
+
+    started = client.post(f"{_pull(on_pull)}/checks/{advice}")
+    checks.wait()
+
+    assert started.status_code == 200
+    assert (started.json()["id"], started.json()["alone"]) == (before["id"], None)
+    run = client.get(f"{_pull(on_pull)}/checks").json()
+    assert run["id"] == before["id"]
+    assert run["state"] == "done"
+    by_id = {test["id"]: test["runs"] for test in run["tests"]}
+    assert by_id[books] == before["tests"][0]["runs"]  # untouched
+    assert [r["passed"] for r in by_id[advice]] == [False, False, False]
+    assert client.post(f"{_pull(on_pull)}/merge").json() == {
+        "detail": "PR #2 cannot merge: 1 test failing."
+    }
+    fake_checks.verdict = True
+    client.post(f"{_pull(on_pull)}/checks/{advice}")
+    checks.wait()
+    assert client.post(f"{_pull(on_pull)}/merge").status_code == 200
+
+
+def test_one_test_runs_alone_when_the_change_moved_on_and_blocks_the_merge(
+    client, on_pull, agent
+):
+    _add_test(client, on_pull, ["Reaches Confirm"])
+    pull = _add_test(client, on_pull, ["Ends the call"], name="Ends")
+    agent["nodes"][0]["task_messages"][0]["content"] = "Say hello."
+    store.save_pull(on_pull, 2, agent, None, "you")  # stored, its checks not started yet
+    before = client.get(f"{_pull(on_pull)}/checks").json()
+
+    started = client.post(f"{_pull(on_pull)}/checks/{pull['tests'][0]['id']}").json()
+    checks.wait()
+
+    assert started["id"] != before["id"]
+    assert started["alone"].startswith("The change moved on since the last run")
+    response = client.post(f"{_pull(on_pull)}/merge")
+    assert response.json() == {
+        "detail": "PR #2 cannot merge: its checks did not finish: run them again."
+    }
+
+
+def test_one_test_of_a_version_with_no_run_runs_alone_and_the_run_is_not_done(client):
+    (sample,) = client.get("/api/agents").json()
+    url = f"/api/agents/{sample['id']}/versions/1/checks"
+    test_id = client.get(f"/api/agents/{sample['id']}/versions/1").json()["tests"][2]["id"]
+
+    started = client.post(f"{url}/{test_id}").json()
+    checks.wait()
+
+    assert started["alone"] == "This test ran alone: run all for the rest."
+    run = client.get(url).json()
+    assert run["state"] == "stopped"
+    assert [len(test["runs"]) for test in run["tests"]] == [0, 0, 3, 0, 0]
+    assert [test["skipped"] for test in run["tests"]] == [True, True, False, True, True]
+
+
+def test_a_second_test_run_alone_goes_into_the_first_ones_run_and_counts(client):
+    (sample,) = client.get("/api/agents").json()
+    url = f"/api/agents/{sample['id']}/versions/1/checks"
+    tests = client.get(f"/api/agents/{sample['id']}/versions/1").json()["tests"]
+
+    first = client.post(f"{url}/{tests[0]['id']}").json()
+    checks.wait()
+    second = client.post(f"{url}/{tests[1]['id']}").json()
+    checks.wait()
+
+    assert (second["id"], second["alone"]) == (first["id"], None)
+    run = client.get(url).json()
+    assert [len(test["runs"]) for test in run["tests"]] == [3, 3, 0, 0, 0]
+    assert [test["skipped"] for test in run["tests"]] == [False, False, True, True, True]
+    assert run["state"] == "stopped"  # three tests never ran
+
+
+def test_one_test_waits_for_a_run_going_and_must_be_in_the_copy(client, on_pull, monkeypatch):
+    monkeypatch.setattr(checks, "_run", _never_runs)
+    pull = _add_test(client, on_pull, ["Reaches Confirm"])
+
+    going = client.post(f"{_pull(on_pull)}/checks/{pull['tests'][0]['id']}")
+    missing = client.post(f"{_pull(on_pull)}/checks/nope")
+
+    assert (going.status_code, going.json()) == (
+        409,
+        {"detail": "The tests are running: wait for them to finish."},
+    )
+    assert missing.status_code == 404
 
 
 def test_a_run_is_marked_done_even_if_its_log_entry_fails(client, on_pull, monkeypatch):

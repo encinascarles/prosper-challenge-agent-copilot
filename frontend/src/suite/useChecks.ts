@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 
-import { getChecks, runChecks, type ChecksOf } from '@/agents/api'
+import { getChecks, runChecks, runTest, type ChecksOf } from '@/agents/api'
 import type { SuiteRun } from '@/agents/types'
 
 const EVERY = 1500
@@ -22,6 +22,8 @@ export type ChecksState = {
   run: SuiteRun | null | undefined
   /** Run the tests again. */
   rerun: () => Promise<void>
+  /** Run one test again, into the latest run. Resolves to why it ran alone instead, or null. */
+  runOne: (test: string) => Promise<string | null>
 }
 
 /** The checks of the pull request `pull`'s copy, or of the version `version` when `pull` is null. */
@@ -56,5 +58,15 @@ export function useChecks(agentId: string, pull: number | null, version: number,
     setAsked((n) => n + 1)
   }, [agentId, pull, version])
 
-  return { run, rerun }
+  const runOne = useCallback(
+    async (test: string) => {
+      const { alone, ...started } = await runTest(agentId, pull === null ? { version } : { pull }, test)
+      setRun(started)
+      setAsked((n) => n + 1)
+      return alone
+    },
+    [agentId, pull, version],
+  )
+
+  return { run, rerun, runOne }
 }

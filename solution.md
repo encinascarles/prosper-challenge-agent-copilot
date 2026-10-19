@@ -345,7 +345,8 @@ the caller and the judge add a few cents. To keep that from being paid for
 nothing: a save that does not change the config, rules or tests (moving
 cards) keeps the run it has; a new change cancels the run in progress, so a
 burst of saves pays for the calls already started, not for a suite each; and
-"Run again" is the only way to repeat a run on the same copy. At scale, the
+"Run again" is the only way to repeat a whole run on the same copy (one
+test can also be run again on its own: see "Three kinds of calls" below). At scale, the
 next steps would be to run only the tests a change can affect (those whose
 path goes through an edited step, and the new ones) and to make the full
 suite run on demand or before a merge rather than on every save. They run on an event loop in a thread of their
@@ -564,8 +565,8 @@ first smoke run had cost USD 0.10 alone.
 **Trade-offs and what is next.** Simulated callers are not customers: they
 are cooperative and articulate, and they only hit what Prosper AI thought to
 send them. The review is a model's reading and can be wrong, which is why
-every finding shows the turn and why. Next: voice test calls stored as calls
-too; real call data in place of the simulated callers.
+every finding shows the turn and why. Next: real call data in place of the
+simulated callers.
 
 ### Fix with Prosper AI: a failing test first, then the smallest change
 
@@ -659,6 +660,50 @@ while Prosper AI iterates, and the whole suite once before merge, would cut
 it by half or more. Asking for less (only the steps that change, not the
 whole agent) would make each change cheaper and leave less room to go wrong.
 Prosper AI sometimes still names steps in snake case in its own replies.
+
+### Three kinds of calls, kept apart: calls, test calls and tests
+
+**Context.** People trying the product read "simulated calls" next to the
+voice calls they place themselves and the suite's calls, and could not tell
+them apart; their own voice calls were not kept anywhere; and a test could
+only be run again with the whole suite.
+
+**Decision.** Three kinds, each with one home:
+- *Calls* are production: what the line answers. With no phone line in this
+  demo, Play calls stands in for one, and the Calls page says that once, in a
+  slim banner, with the last batch's cost as a plain line under it. Prosper AI
+  reviews every call and files issues.
+- *Test calls* are the voice calls a person places from Build, on live or on
+  a pull request's copy. They are stored in their own table, never mixed into
+  the calls list, never reviewed on their own and never filed as issues: a
+  person poking at an agent is not a caller the clinic failed. "Review with
+  Prosper AI" on a test call's page runs the same review request and keeps
+  what it found on that page.
+- *Tests* are the suite, as before.
+
+**Recording a voice call.** It is captured where the call runs, not sent by
+the browser afterwards: the bot already knows the agent and the pull request,
+and a browser closed mid-call would lose it. `bot.py` stays generic: it hands
+a record object the node messages it already reports (a callback on the same
+`node_entered` handler) and subscribes it to the context aggregators' turn
+events, which give both sides' finished turns as they enter the LLM context.
+The record is stored when the pipeline ends, with the real duration; how it
+ended is read from the path (the end step reached, or the caller hung up). A
+start to the sample at `/client` is not recorded. Cost: a turn the caller
+interrupts is kept as far as it was spoken, which is what the LLM context
+keeps too.
+
+**Running one test.** One test runs 3 times on the copy and goes into the
+latest run, the others' results untouched, only while that run's fingerprint
+still matches the copy: then the run says what the whole suite does, and the
+merge gate reads it like any other run. When the copy has changed since, there
+is nothing valid to merge into, so the test runs alone in a new run, the
+other tests marked as skipped, and the answer says "the change moved on, run
+all". Such a run ends "stopped", not "done", so a run that did not call every
+test can never let a merge through. A test cannot be run while the copy's
+suite is running (two writers on one run would mix results), and Prosper AI
+does not start another round of checking its own work after a person reran
+one test.
 
 ### A test call runs the saved agent, and says where it is
 

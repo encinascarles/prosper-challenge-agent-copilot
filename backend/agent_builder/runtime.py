@@ -22,17 +22,24 @@ from .builder import AgentBuilder
 from .schema import NODE_ACTION
 
 
-def report_nodes(flow_manager: FlowManager, worker: PipelineWorker) -> None:
+def report_nodes(
+    flow_manager: FlowManager,
+    worker: PipelineWorker,
+    on_node: Optional[Callable[[dict], None]] = None,
+) -> None:
     """Send each node the call enters down the pipeline, the start node included.
 
     The message is { type: "node", node, from, edge, collected }. In a voice
     call it reaches the browser; in a text call, the processor that records it.
+    `on_node` is also handed each one: what records a voice call keeps the path.
     """
 
     async def report(action: dict, flow_manager: FlowManager):
         # The builder's action minus what is Flows' business: its type and handler.
         message = {"type": "node"}
         message.update({key: action[key] for key in ("node", "from", "edge", "collected")})
+        if on_node is not None:
+            on_node(message)
         # A server message on the RTVI channel: the client hands it to the page
         # as it is, and no second connection is needed for it.
         await worker.queue_frame(RTVIServerMessageFrame(data=message))
@@ -46,6 +53,7 @@ def start_flow(
     context_aggregator: LLMContextAggregatorPair,
     worker: PipelineWorker,
     transport: Optional[BaseTransport] = None,
+    on_node: Optional[Callable[[dict], None]] = None,
 ) -> Callable[[], Awaitable[None]]:
     """Put `builder`'s agent on the pipeline. Returns what starts it at its first node."""
     flow_manager = FlowManager(
@@ -54,7 +62,7 @@ def start_flow(
         worker=worker,
         transport=transport,
     )
-    report_nodes(flow_manager, worker)
+    report_nodes(flow_manager, worker, on_node)
 
     async def start() -> None:
         await flow_manager.initialize(builder.build_initial_node())

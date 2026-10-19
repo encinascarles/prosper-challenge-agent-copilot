@@ -5,7 +5,8 @@
 # out again only in the pull request that added them; live is never written
 # to. Each change answers with the pull request, and starts its checks again
 # (checks.py). The checks of a copy are its latest run, read here while it
-# runs; a version's checks can also be run again by hand.
+# runs; a version's checks can also be run again by hand, and any copy's
+# tests one at a time.
 #
 
 from typing import Annotated, Any, Literal
@@ -94,6 +95,7 @@ class TestRun(BaseModel):
     id: str
     name: str
     runs: list[TestCall]  # as they finish, up to the run's `repeats`
+    skipped: bool = False  # another test ran alone in this run: this one has no results
 
 
 class SuiteRun(BaseModel):
@@ -107,6 +109,14 @@ class SuiteRun(BaseModel):
     tests: list[TestRun]
     started_at: str
     finished_at: str | None
+
+
+class OneTestRun(SuiteRun):
+    """The run one test was run again in."""
+
+    # Why it ran alone, in a run of its own, rather than into the latest run;
+    # null when it went into it and the others' results still stand.
+    alone: str | None
 
 
 def _changed(agent_id: str, number: int, change, *args) -> dict:
@@ -154,6 +164,18 @@ def run_pull_checks(agent_id: str, number: int) -> dict:
     return checks.start(agent_id, pull=number, again=True)
 
 
+@router.post(
+    "/pulls/{number}/checks/{test_id}", response_model=OneTestRun, responses=_MISSING | _REFUSED
+)
+def run_pull_test(agent_id: str, number: int, test_id: str) -> dict:
+    """Run one test of the pull request's copy again, 3 times, leaving the others' results."""
+    pull = get_pull(agent_id, number)
+    if pull["state"] != "open":
+        raise HTTPException(status_code=409, detail=f"{store.label(number)} is {pull['state']}.")
+    run, alone = _answer(checks.start_test, agent_id, test_id, number, None)
+    return {**run, "alone": alone}
+
+
 @router.get("/versions/{number}/checks", response_model=SuiteRun | None, responses=_MISSING)
 def version_checks(agent_id: str, number: int) -> dict | None:
     """The latest run of the version's tests: run on it, or on the pull request it came from."""
@@ -165,6 +187,18 @@ def version_checks(agent_id: str, number: int) -> dict | None:
 def run_version_checks(agent_id: str, number: int) -> dict:
     _version(agent_id, number)
     return checks.start(agent_id, version=number, again=True)
+
+
+@router.post(
+    "/versions/{number}/checks/{test_id}",
+    response_model=OneTestRun,
+    responses=_MISSING | _REFUSED,
+)
+def run_version_test(agent_id: str, number: int, test_id: str) -> dict:
+    """Run one test of the version again, 3 times, leaving the others' results."""
+    _version(agent_id, number)
+    run, alone = _answer(checks.start_test, agent_id, test_id, None, number)
+    return {**run, "alone": alone}
 
 
 def _version(agent_id: str, number: int) -> None:

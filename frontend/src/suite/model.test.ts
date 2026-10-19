@@ -10,6 +10,8 @@ import {
   checksText,
   namesOf,
   orderTests,
+  progress,
+  resultsOf,
   rulesByStep,
   score,
   scoreText,
@@ -199,5 +201,28 @@ describe('the test that reproduces an issue', () => {
   it('comes first of the tests a pull request adds', () => {
     const other: Test = { ...fixTest, id: 'o', source: { kind: 'request', pull: 5 } }
     expect(orderTests([fixTest, other], 5).map((t) => t.id)).toEqual(['r1', 'o'])
+  })
+})
+
+describe('one test run alone', () => {
+  // Test 1 runs alone: the others are skipped, with no results.
+  const alone = (state: SuiteRun['state'], runs: boolean[]): SuiteRun => {
+    const r = run([[], runs, []], state)
+    return { ...r, tests: r.tests.map((t) => (t.id === 't1' ? t : { ...t, skipped: true })) }
+  }
+
+  it('counts only the test that runs, and reads the skipped ones as not run', () => {
+    const going = alone('running', [true])
+    expect(progress(going)).toEqual({ done: 1, of: 3 })
+    expect([...resultsOf(going).keys()]).toEqual(['t1'])
+  })
+
+  it('keeps a test that has not had its first call yet while the run goes', () => {
+    expect([...resultsOf(run([[true, true, true], []], 'running')).keys()]).toEqual(['t0', 't1'])
+  })
+
+  it('reads the tests a run that stopped never called as not run', () => {
+    expect([...resultsOf(run([[true, true, true], []], 'stopped')).keys()]).toEqual(['t0'])
+    expect(summarize(alone('stopped', [true, true, true]))?.state).toBe('stopped')
   })
 })

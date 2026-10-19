@@ -17,6 +17,12 @@
 # and how a change that does not touch them (moving cards) keeps its run
 # instead of paying for the same calls again.
 #
+# One test can also be run again on its own, into the latest run, but only
+# while that run is about the copy as it is (same fingerprint): its other
+# results still hold, so the run says what the whole suite does without
+# paying for it again. A run whose tests did not all get their calls ends
+# "stopped", whatever stopped them, so it never reads as passing.
+#
 # A run left unfinished by a server that stopped is marked "stopped" when the
 # next one starts: nothing is running it any more.
 #
@@ -25,7 +31,7 @@ import json
 import sqlite3
 from typing import Optional
 
-from .db import connect, now
+from .db import Conflict, NotFound, connect, now
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -36,7 +42,7 @@ CREATE TABLE IF NOT EXISTS runs (
     state TEXT NOT NULL,  -- running, done, stopped
     fingerprint TEXT,  -- of the config, rules and tests it ran on
     repeats INTEGER NOT NULL,
-    tests TEXT NOT NULL,  -- [{ id, name, runs: [...] }], in the order of the suite
+    tests TEXT NOT NULL,  -- [{ id, name, runs: [...], skipped? }], in the order of the suite
     started_at TEXT NOT NULL,
     finished_at TEXT
 )"""
@@ -89,10 +95,13 @@ def start_run(
     fingerprint: str,
     pull: Optional[int] = None,
     version: Optional[int] = None,
+    only: Optional[str] = None,
 ) -> dict:
     """Record a new run of `tests` on the pull request or the version, replacing the last one.
 
-    With no tests there is nothing to run: it is done as it starts.
+    With no tests there is nothing to run: it is done as it starts. With
+    `only`, a test's id, that test runs alone: the others are listed as
+    skipped, with no results.
     """
     at = now()
     with connect() as conn:
@@ -109,7 +118,15 @@ def start_run(
                 "UPDATE runs SET version = NULL WHERE agent_id = ? AND version = ?",
                 (agent_id, version),
             )
-        entries = [{"id": test["id"], "name": test["name"], "runs": []} for test in tests]
+        entries = [
+            {
+                "id": test["id"],
+                "name": test["name"],
+                "runs": [],
+                **({"skipped": True} if only is not None and test["id"] != only else {}),
+            }
+            for test in tests
+        ]
         (run_id,) = conn.execute(
             "INSERT INTO runs (agent_id, pull, version, state, fingerprint, repeats, tests,"
             " started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
@@ -141,9 +158,45 @@ def add_result(run_id: int, test_id: str, result: dict) -> None:
         conn.execute("UPDATE runs SET tests = ? WHERE id = ?", (json.dumps(tests), run_id))
 
 
-def finish_run(run_id: int, state: str = "done") -> Optional[dict]:
-    """Mark the run done (or stopped). Returns it, or None if it was replaced meanwhile."""
+def rerun_test(run_id: int, test_id: str) -> dict:
+    """Clear the test's results in the run and mark it running again, for that test alone.
+
+    Raises NotFound if the run does not have the test, or Conflict if it is
+    still running: two runs writing one row would mix their results.
+    """
     with connect() as conn:
+        row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+        if row is None:
+            raise NotFound("That run is gone: run all the tests.")
+        if row["state"] == "running":
+            raise Conflict("The tests are running: wait for them to finish.")
+        tests = json.loads(row["tests"])
+        if not any(test["id"] == test_id for test in tests):
+            raise NotFound("That run does not have this test: run all the tests.")
+        for test in tests:
+            if test["id"] == test_id:
+                test["runs"] = []
+                # Skipped when another test ran alone in this run: it runs now.
+                test.pop("skipped", None)
+        conn.execute(
+            "UPDATE runs SET tests = ?, state = 'running', finished_at = NULL WHERE id = ?",
+            (json.dumps(tests), run_id),
+        )
+        return _to_record(conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone())
+
+
+def finish_run(run_id: int, state: str = "done") -> Optional[dict]:
+    """Mark the run done (or stopped). Returns it, or None if it was replaced meanwhile.
+
+    A run that is not done with every test (one test run alone) is stopped:
+    "done" is what says the whole suite ran.
+    """
+    with connect() as conn:
+        row = conn.execute("SELECT repeats, tests FROM runs WHERE id = ?", (run_id,)).fetchone()
+        if state == "done" and row is not None:
+            tests = json.loads(row["tests"])
+            if any(len(test["runs"]) < row["repeats"] for test in tests):
+                state = "stopped"
         conn.execute(
             "UPDATE runs SET state = ?, finished_at = ? WHERE id = ? AND state = 'running'",
             (state, now(), run_id),

@@ -67,7 +67,9 @@ export function CallCard({ call, onEnd, onAgain, onClose, onShow }: Props) {
             ) : call.steps.length === 0 ? (
               'It never started'
             ) : (
-              `${call.steps.length} ${call.steps.length === 1 ? 'step' : 'steps'}`
+              // The server stored it as it ended, with its transcript and path;
+              // its steps are listed below.
+              'Saved in Test calls'
             )}
           </div>
         </div>

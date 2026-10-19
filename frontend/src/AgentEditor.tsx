@@ -60,7 +60,7 @@ import { Status } from '@/prosper/parts'
 import { SetupCard } from '@/prosper/SetupCard'
 import { diffAgents, summarize as summarizeChanges } from '@/pulls/diff'
 import { changesAgent, pullLabel, testCallLabel, versionLabel, type On } from '@/pulls/model'
-import { addedIn, asCall, namesOf, summarize } from '@/suite/model'
+import { addedIn, asCall, hasResult, namesOf, summarize } from '@/suite/model'
 import { SuiteRail } from '@/suite/SuiteRail'
 import { NewTestCard, TestCard } from '@/suite/TestCard'
 import { useChecks } from '@/suite/useChecks'
@@ -153,7 +153,7 @@ export function AgentEditor(props: Props) {
   const [runShown, setRunShown] = useState(0)
   const [testSession, setTestSession] = useState(0)
   const shownTest = testOpen === null || testOpen === 'new' ? null : (suite.tests.find((t) => t.id === testOpen) ?? null)
-  const shownResult = shownTest ? checks.run?.tests.find((t) => t.id === shownTest.id) : undefined
+  const shownResult = shownTest ? checks.run?.tests.find((t) => t.id === shownTest.id && hasResult(checks.run!.state, t)) : undefined
   // The run on the graph, while no test call is: the graph is read-only then,
   // as during a call, since the path is drawn over these very names.
   const litRun = testCall.call === null ? (shownResult?.runs[runShown] ?? null) : null
@@ -262,6 +262,12 @@ export function AgentEditor(props: Props) {
     const stored = await changeSuite((number) => addTest(agent.id, number, test))
     showTest(stored.tests.at(-1)?.id ?? null)
   }
+  // One test again, on its own: if it could not go into the latest run, say why.
+  const runTest = (id: string) =>
+    void checks.runOne(id).then(
+      (alone) => alone && onProblem(alone),
+      (error: Error) => onProblem(error.message),
+    )
   const takeOutTest = (id: string) => {
     changeSuite((number) => removeTest(agent.id, number, id)).then(
       () => setTestOpen(null),
@@ -508,9 +514,11 @@ export function AgentEditor(props: Props) {
                   repeats={checks.run?.repeats ?? 3}
                   on={on === null ? versionLabel(agent.live_version) : pullLabel(on)}
                   removable={addedIn(shownTest, on)}
+                  running={checksNow?.state === 'running'}
                   selected={runShown}
                   onSelect={setRunShown}
                   onShowNode={showNode}
+                  onRun={() => runTest(shownTest.id)}
                   onRemove={() => takeOutTest(shownTest.id)}
                   onClose={() => setTestOpen(null)}
                 />

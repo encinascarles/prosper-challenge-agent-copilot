@@ -19,7 +19,7 @@ import { sourceText } from '@/prosper/model'
 import { pullLabel } from '@/pulls/model'
 
 import { ScoreText, TestIcon } from './bits'
-import { addedIn, orderTests, progress, rulesByStep, score, summarize } from './model'
+import { addedIn, orderTests, progress, resultsOf, rulesByStep, score, summarize } from './model'
 
 const heading =
   'flex items-center gap-1.5 px-4 pt-4 pb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase'
@@ -146,7 +146,9 @@ export function SuiteRail(props: Props) {
   const { suite, steps, on, run, into, blocked, openTest, onOpenTest, onNewTest, onAddRule, onRemoveRule, onRerun } = props
   const [writing, setWriting] = useState(false)
   const checks = summarize(run ?? null)
-  const results = new Map((run?.tests ?? []).map((test) => [test.id, test]))
+  const results = resultsOf(run)
+  // A test run alone, or a run that stopped, leaves tests with nothing to show.
+  const notRun = run ? suite.tests.filter((test) => !results.has(test.id)).length : 0
   const repeats = run?.repeats ?? 3
   const groups = rulesByStep(suite.rules, steps)
   const running = checks?.state === 'running'
@@ -213,17 +215,16 @@ export function SuiteRail(props: Props) {
         <div className={cn(heading, 'mt-3 border-t')}>
           Tests
           <span className="ml-auto font-normal tracking-normal normal-case tabular-nums">
-            {done ? `Running ${done.done}/${done.of}` : checks && checks.total > 0 ? `${checks.passed}/${checks.total} pass${checks.flaky ? ` · ${checks.flaky} flaky` : ''}` : ''}
+            {done ? `Running ${done.done}/${done.of}` : checks && checks.total > 0 ? `${checks.passed}/${checks.total} pass${checks.flaky ? ` · ${checks.flaky} flaky` : ''}${notRun ? ` · ${notRun} not run` : ''}` : ''}
           </span>
           {suite.tests.length > 0 && (
             <button
               disabled={running || blocked !== null}
-              title={running ? 'Running' : 'Run them all again'}
-              aria-label="Run the tests again"
+              title={running ? 'Running' : `Runs every test 3 times on ${on === null ? 'live' : pullLabel(on)}`}
               onClick={onRerun}
               className={addButton}
             >
-              <RotateCw className={cn('size-3', running && 'animate-spin')} />
+              <RotateCw className={cn('size-3', running && 'animate-spin')} /> Run all
             </button>
           )}
           <button disabled={blocked !== null} title={blocked ?? `Goes into ${into}`} onClick={onNewTest} className={addButton}>
