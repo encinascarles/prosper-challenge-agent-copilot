@@ -151,7 +151,7 @@ def check_grouping(answer: dict, candidates: dict) -> None:
     """Every finding placed once, in an issue it may join or NEW.
 
     `candidates` maps each finding's index to the numbers of the issues it may
-    join (those tracked, in its step).
+    join (those still tracked).
     """
     problems = Problems()
     placed = [placement["finding"] for placement in answer["placements"]]

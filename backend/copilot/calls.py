@@ -11,13 +11,15 @@
 #                        at once, a moment apart, stored as each one ends
 #   -> review each call  one request per call, as soon as it ends: the checks
 #                        Prosper AI applied, what went wrong and on which turn
-#   -> group findings    a finding joins a tracked issue with the same problem
-#                        in the same step, or opens a new one
+#   -> group findings    a finding joins a tracked issue with the same problem,
+#                        or opens a new one
 #
 # Reviews run in parallel, but grouping takes one call at a time: two calls
 # with the same new problem would otherwise each open an issue for it. A
-# grouping request is only made when there is an issue the finding could join
-# (one tracked in its step); otherwise it opens a new one with no request.
+# grouping request is only made when there is an issue to join. Any tracked
+# issue may be joined, not only one in the finding's step: in real batches the
+# same problem (a detail never confirmed) showed up on the turn of whichever
+# step the agent was in, and keeping steps apart split it into two issues.
 #
 # A batch runs in a thread of its own with its own event loop, like the
 # checks: the voice calls on the server's loop never wait behind it. What each
@@ -199,22 +201,16 @@ def review(
 def _group(llm: LLM, agent_id: str, findings: list[dict]) -> list[Optional[int]]:
     """The issue each finding joins, by number, or None for a new one."""
     tracked = store.issues.tracked(agent_id)
-    candidates = {
-        i: [issue["number"] for issue in tracked if issue["step"] == finding["step"]]
-        for i, finding in enumerate(findings)
-    }
-    candidates = {i: numbers for i, numbers in candidates.items() if numbers}
-    if not candidates:
+    if not tracked:
         return [None] * len(findings)
+    candidates = {i: [issue["number"] for issue in tracked] for i in range(len(findings))}
     issues = "\n".join(
         f"- [{issue['number']}] {issue['step']} · {issue['title']}: {issue['description']}"
         for issue in tracked
-        if issue["number"] in {n for numbers in candidates.values() for n in numbers}
     )
     found = "\n".join(
-        f"- [{i}] {findings[i]['step']} · {findings[i]['title']}: {findings[i]['description']}"
-        f" (may join: {', '.join(map(str, numbers))})"
-        for i, numbers in candidates.items()
+        f"- [{i}] {finding['step']} · {finding['title']}: {finding['description']}"
+        for i, finding in enumerate(findings)
     )
     answer = llm.ask(
         "grouping",

@@ -4,7 +4,8 @@
 # Prosper AI reviews every call (copilot/calls.py). Each thing that went wrong
 # is a finding: the step, the turn it happened on (its index in the transcript
 # and its words) and why it matters. A finding either joins an issue that is
-# still being tracked, the same problem in the same step, or opens a new one.
+# still being tracked, the same problem, or opens a new one; an issue keeps
+# the step it was first seen in.
 # So an issue is a problem with its calls, not one call: "3 calls" says how
 # often callers hit it.
 #
