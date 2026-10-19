@@ -4,6 +4,11 @@ clinic's guidelines, the agent as those calls had it (its steps and rules),
 its tests, the issue, and its calls: who called, what they wanted, and the
 turn where the agent went wrong, with why it matters.
 
+Some issues are reported by a person instead (a complaint from the clinic,
+say), with what they said happened and maybe no calls. Then write the caller
+from that report: the situation it describes, and what the caller says at the
+moment it went wrong.
+
 A test is a simulated call: a model plays the caller, and the call is checked.
 
 - `caller`: written to the person playing them ("You are Ana Ruiz and you

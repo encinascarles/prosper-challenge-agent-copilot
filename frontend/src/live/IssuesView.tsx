@@ -4,13 +4,16 @@
 // issue's page: what goes wrong, the calls with the bad turn highlighted, and
 // what happened to it. From the page, an issue is fixed in a pull request:
 // with Prosper AI, which reproduces it and proposes the change, or by hand.
+// A person reports one with New issue (a complaint from the clinic); Prosper
+// AI tidies it when asked, shown next to theirs to keep or discard.
 
-import { ArrowLeft, ArrowRight, ChevronDown, CircleCheck, CircleSlash, Clock, Loader2, MoreHorizontal, Phone } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronDown, CircleCheck, CircleSlash, Clock, Loader2, MoreHorizontal, Pencil, Phone, Plus, UserRound } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { changeIssue, fixIssue, getIssue, listIssues } from '@/agents/api'
+import { changeIssue, editIssue, fixIssue, getIssue, listCalls, listIssues, reportIssue, tidyIssue } from '@/agents/api'
 import type { Agent, Pull } from '@/agents/types'
 import { Mark } from '@/components/Mark'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,8 +28,9 @@ import { Dot, PullIcon } from '@/pulls/bits'
 import { pullLabel, versionLabel, when } from '@/pulls/model'
 
 import { IssueStateIcon, SeverityIcon, smallButton } from './bits'
-import { around, duration, eventText, fixing, fixText, issueLabel, issueMeta, outcomeText, SEVERITIES, stateText, tabOf, type IssueTab } from './model'
-import type { Issue, IssueSummary, SnoozeFor } from './types'
+import { IssueDialog } from './IssueDialog'
+import { around, duration, eventText, fixing, fixText, issueLabel, issueMeta, outcomeText, reporterText, SEVERITIES, stateText, tabOf, type IssueTab } from './model'
+import type { Issue, IssueReport, IssueSummary, SnoozeFor, Tidied } from './types'
 
 type Action = 'snooze' | 'resolve' | 'ignore' | 'reopen'
 
@@ -49,6 +53,7 @@ export function IssuesView({ agent, page, onPage, onCall, onPull, onFixing, onCh
   const [issues, setIssues] = useState<{ agent: string; list: IssueSummary[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [nudge, setNudge] = useState(0)
+  const [reporting, setReporting] = useState(false)
 
   useEffect(() => {
     if (page !== null) return
@@ -100,10 +105,28 @@ export function IssuesView({ agent, page, onPage, onCall, onPull, onFixing, onCh
         onPull={onPull}
         onFix={fix}
         onAct={act}
+        onToast={onToast}
       />
     )
   }
-  return <IssueList list={issues?.agent === agent.id ? issues.list : null} onOpen={onPage} onAct={act} />
+  const report = async (report: IssueReport) => {
+    const issue = await reportIssue(agent.id, report)
+    setReporting(false)
+    onChanged()
+    onPage(issue.number)
+  }
+  return (
+    <>
+      <IssueList
+        agent={agent}
+        list={issues?.agent === agent.id ? issues.list : null}
+        onOpen={onPage}
+        onAct={act}
+        onNew={() => setReporting(true)}
+      />
+      <IssueDialog agent={agent} open={reporting} onOpenChange={setReporting} onSave={report} />
+    </>
+  )
 }
 
 function SnoozeItems({ onPick }: { onPick: (until: SnoozeFor) => void }) {
@@ -123,20 +146,33 @@ function SnoozeItems({ onPick }: { onPick: (until: SnoozeFor) => void }) {
 
 type Act = (number: number, action: Action, until?: SnoozeFor) => Promise<Issue | null>
 
-function IssueList({ list, onOpen, onAct }: { list: IssueSummary[] | null; onOpen: (n: number) => void; onAct: Act }) {
+type ListProps = { agent: Agent; list: IssueSummary[] | null; onOpen: (n: number) => void; onAct: Act; onNew: () => void }
+
+function IssueList({ agent, list, onOpen, onAct, onNew }: ListProps) {
   const [tab, setTab] = useState<IssueTab>('open')
   const [step, setStep] = useState('all')
   const all = list ?? []
-  const steps = [...new Set(all.map((issue) => issue.step))]
+  // A reported issue may not know its step: it is under "Any step" only.
+  const steps = [...new Set(all.map((issue) => issue.step).filter(Boolean))]
+  const newBlocker = agent.live_version === 0 ? 'Merge PR #1 first: issues are about the live version.' : null
   const inStep = all.filter((issue) => step === 'all' || issue.step === step)
   const rows = inStep.filter((issue) => tabOf(issue.state) === tab)
   return (
     <div className="min-w-0 flex-1 overflow-auto bg-muted/20">
       <div className="mx-auto max-w-[980px] px-8 pt-7 pb-16">
-        <h1 className="text-[18px] font-semibold tracking-[-0.01em]">Issues</h1>
-        <p className="mt-0.5 text-[13px] text-muted-foreground">
-          What Prosper AI found going wrong in the calls. Calls with the same problem join one issue.
-        </p>
+        <div className="flex items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-[18px] font-semibold tracking-[-0.01em]">Issues</h1>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">
+              What goes wrong in the calls: found by Prosper AI, or reported by you or the clinic.
+            </p>
+          </div>
+          <span title={newBlocker ?? 'Report something the clinic or you saw go wrong'} className="flex shrink-0">
+            <Button size="sm" disabled={newBlocker !== null} onClick={onNew}>
+              <Plus className="size-3.5" /> New issue
+            </Button>
+          </span>
+        </div>
         <div className="mt-5 overflow-hidden rounded-xl border bg-card shadow-xs">
           <div role="tablist" className="flex h-11 items-center gap-1 border-b bg-muted/30 px-3">
             {(['open', 'snoozed', 'resolved'] as IssueTab[]).map((key) => (
@@ -188,7 +224,7 @@ function IssueList({ list, onOpen, onAct }: { list: IssueSummary[] | null; onOpe
             rows.length === 0 && (
               <p className="px-4 py-8 text-center text-[13px] text-muted-foreground">
                 {all.length === 0
-                  ? 'No issues. Prosper AI reviews every call as it ends: play calls from Calls.'
+                  ? 'No issues. Prosper AI reviews every call as it ends: play calls from Calls, or report one with New issue.'
                   : `No ${tab} issues${step !== 'all' ? ' in this step' : ''}.`}
               </p>
             )
@@ -245,7 +281,8 @@ function IssueRow({ issue, onOpen, onAct }: { issue: IssueSummary; onOpen: (n: n
           </button>
         )}
       </div>
-      <SeverityIcon severity={issue.severity} />
+      {/* Rows line up whether or not a severity was given. */}
+      {issue.severity ? <SeverityIcon severity={issue.severity} /> : <span className="size-3.5 shrink-0" />}
     </div>
   )
 }
@@ -258,12 +295,16 @@ type PageProps = {
   onPull: (number: number) => void
   onFix: (number: number, prosper: boolean) => Promise<void>
   onAct: Act
+  onToast: (text: string) => void
 }
 
-function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct }: PageProps) {
+function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct, onToast }: PageProps) {
   const [opening, setOpening] = useState<'prosper' | 'yourself' | null>(null)
   const [issue, setIssue] = useState<Issue | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [tidying, setTidying] = useState(false)
+  const [tidied, setTidied] = useState<Tidied | null>(null)
   useEffect(() => {
     getIssue(agent.id, number).then(setIssue, (failure: Error) => setError(failure.message))
   }, [agent.id, number])
@@ -282,6 +323,27 @@ function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct }: Page
     setOpening(prosper ? 'prosper' : 'yourself')
     await onFix(issue.number, prosper)
     setOpening(null)
+  }
+  const tidy = async () => {
+    setTidying(true)
+    try {
+      setTidied(await tidyIssue(agent.id, issue.number))
+    } catch (failure) {
+      onToast((failure as Error).message)
+    } finally {
+      setTidying(false)
+    }
+  }
+  const edit = async (changes: Parameters<typeof editIssue>[2]) => {
+    setIssue(await editIssue(agent.id, issue.number, changes))
+  }
+  const keep = async (proposal: Tidied) => {
+    try {
+      await edit({ title: proposal.title, step: proposal.step, severity: proposal.severity, calls: proposal.calls, tidied: true })
+      setTidied(null)
+    } catch (failure) {
+      onToast((failure as Error).message)
+    }
   }
   const heading = 'mb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase'
   const button =
@@ -305,17 +367,31 @@ function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct }: Page
             <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[12.5px] text-muted-foreground tabular-nums">
               <IssueStateIcon state={issue.state} className="size-3.5" />
               <span className="text-foreground">{stateText(issue)}</span>
-              <Dot />
-              <span>{humanize(issue.step)}</span>
+              {issue.reported && (
+                <>
+                  <Dot />
+                  <span>{reporterText(issue.reported)}</span>
+                </>
+              )}
+              {issue.step && (
+                <>
+                  <Dot />
+                  <span>{humanize(issue.step)}</span>
+                </>
+              )}
               <Dot />
               <span>
                 {issue.calls} {issue.calls === 1 ? 'call' : 'calls'}
                 {issue.first_seen && `, since ${when(issue.first_seen)}`}
               </span>
-              <Dot />
-              <span className="flex items-center gap-1">
-                <SeverityIcon severity={issue.severity} /> {SEVERITIES[issue.severity]}
-              </span>
+              {issue.severity && (
+                <>
+                  <Dot />
+                  <span className="flex items-center gap-1">
+                    <SeverityIcon severity={issue.severity} /> {SEVERITIES[issue.severity]}
+                  </span>
+                </>
+              )}
               {chip && (
                 <button
                   onClick={() => onPull(open?.number ?? issue.fixed!.pull)}
@@ -381,6 +457,11 @@ function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct }: Page
                   <MoreHorizontal className="size-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-60">
+                  {issue.reported && (
+                    <DropdownMenuItem className="text-[13px]" onSelect={() => setEditing(true)}>
+                      <Pencil /> Edit
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem className="text-[13px]" onSelect={() => void act('ignore')}>
                     <CircleSlash /> Ignore · keep counting its calls
                   </DropdownMenuItem>
@@ -390,10 +471,35 @@ function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct }: Page
           </div>
         </div>
 
-        <div className="mt-6 flex gap-2.5">
-          <Mark className="mt-[3px] h-[14px]" />
-          <p className="text-[14px] leading-relaxed">{issue.description}</p>
-        </div>
+        {issue.reported ? (
+          <div className="mt-6 flex gap-2.5">
+            <UserRound className="mt-[3px] size-[14px] shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{issue.description}</p>
+              {/* Once kept, Prosper AI's words are there: Edit changes them from then on. */}
+              {!closed && !tidied && !issue.events.some((event) => event.type === 'tidied') && (
+                <button onClick={() => void tidy()} disabled={tidying} className={cn(smallButton, 'mt-3')}>
+                  {tidying ? <Loader2 className="size-3.5 animate-spin" /> : <Mark className="h-[11px]" />}
+                  {tidying ? 'Prosper AI is tidying it…' : 'Tidy with Prosper AI'}
+                </button>
+              )}
+              {tidied && (
+                <TidyCard
+                  agent={agent}
+                  issue={issue}
+                  tidied={tidied}
+                  onKeep={() => void keep(tidied)}
+                  onDiscard={() => setTidied(null)}
+                />
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-6 flex gap-2.5">
+            <Mark className="mt-[3px] h-[14px]" />
+            <p className="text-[14px] leading-relaxed">{issue.description}</p>
+          </div>
+        )}
 
         {issue.pulls.length > 0 && (
           <div className="mt-8">
@@ -424,7 +530,12 @@ function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct }: Page
 
         <div className="mt-8">
           <div className={heading}>Calls in this issue · {issue.findings.length}</div>
-          <div className="divide-y rounded-xl border bg-card">
+          {issue.findings.length === 0 && (
+            <p className="rounded-xl border border-dashed px-4 py-3 text-[13px] text-muted-foreground">
+              No calls yet. Prosper AI adds the calls it finds with this problem; Fix with Prosper AI works from what was reported.
+            </p>
+          )}
+          <div className={cn('divide-y rounded-xl border bg-card', issue.findings.length === 0 && 'hidden')}>
             {issue.findings.map((found) => (
               <div key={`${found.call}:${found.turn}`} className="px-4 py-3">
                 <div className="flex items-center gap-2 text-[13px]">
@@ -441,7 +552,8 @@ function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct }: Page
                     Open call <ArrowRight className="size-3" />
                   </button>
                 </div>
-                <div className="mt-2 space-y-1 pl-[22px]">
+                {found.turn < 0 && <p className="mt-1 pl-[22px] text-[12px] text-muted-foreground">Linked to this issue by hand · the whole call</p>}
+                <div className={cn('mt-2 space-y-1 pl-[22px]', found.turn < 0 && 'hidden')}>
                   {found.lines.map((line) => {
                     const isBad = line.index === found.turn
                     const [before, quoted, after] = isBad ? around(line.text, found.quote) : ['', line.text, '']
@@ -486,6 +598,72 @@ function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct }: Page
             ))}
           </div>
         </div>
+      </div>
+      {issue.reported && (
+        <IssueDialog
+          agent={agent}
+          issue={issue}
+          open={editing}
+          onOpenChange={setEditing}
+          onSave={async ({ title, description, step, severity, calls }) => {
+            await edit({ title, description, step, severity, calls })
+            setEditing(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/** Prosper AI's tidy next to what the person wrote: kept as a whole, or discarded. */
+type TidyProps = { agent: Agent; issue: Issue; tidied: Tidied; onKeep: () => void; onDiscard: () => void }
+
+function TidyCard({ agent, issue, tidied, onKeep, onDiscard }: TidyProps) {
+  // The calls it points at, by who called: a number says nothing to a person.
+  const [callers, setCallers] = useState<Map<number, string>>(new Map())
+  useEffect(() => {
+    listCalls(agent.id).then((page) => setCallers(new Map(page.calls.map((call) => [call.id, call.caller]))), () => undefined)
+  }, [agent.id])
+  const row = (name: string, before: string, after: string) => (
+    <div className="grid grid-cols-[72px_1fr] gap-3 py-1 text-[13px]">
+      <span className="text-muted-foreground">{name}</span>
+      <span>
+        {before === after ? (
+          <span className="text-muted-foreground">{after} · unchanged</span>
+        ) : (
+          <>
+            <span className="text-muted-foreground line-through decoration-muted-foreground/50">{before}</span>
+            <ArrowRight className="mx-1.5 inline size-3 text-muted-foreground" />
+            <span className="font-medium">{after}</span>
+          </>
+        )}
+      </span>
+    </div>
+  )
+  return (
+    <div className="mt-3 rounded-xl border bg-card px-4 py-3 shadow-xs">
+      <div className="mb-1.5 flex items-center gap-2 text-[12.5px] font-medium">
+        <Mark className="h-[12px]" /> Prosper AI tidied it
+        <span className="ml-auto font-normal text-muted-foreground tabular-nums">USD {tidied.usd.toFixed(3)}</span>
+      </div>
+      {row('Title', issue.title, tidied.title)}
+      {row('Step', issue.step ? humanize(issue.step) : 'Not sure', tidied.step ? humanize(tidied.step) : 'Not sure')}
+      {row('Severity', issue.severity ? SEVERITIES[issue.severity] : 'Not sure', SEVERITIES[tidied.severity])}
+      <div className="grid grid-cols-[72px_1fr] gap-3 py-1 text-[13px]">
+        <span className="text-muted-foreground">Calls</span>
+        <span className={tidied.calls.length ? 'font-medium' : 'text-muted-foreground'}>
+          {tidied.calls.length
+            ? `Links ${tidied.calls.map((id) => `${callers.get(id) ?? 'call'}’s call`).join(', ')}`
+            : 'None of the latest calls shows it'}
+        </span>
+      </div>
+      <div className="mt-2.5 flex gap-2">
+        <Button size="sm" onClick={onKeep}>
+          Keep
+        </Button>
+        <Button size="sm" variant="outline" onClick={onDiscard}>
+          Discard
+        </Button>
       </div>
     </div>
   )

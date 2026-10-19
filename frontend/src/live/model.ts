@@ -4,7 +4,7 @@
 import { humanize } from '@/draft/names'
 import { when } from '@/pulls/model'
 
-import type { CallLine, CallSummary, IssueEvent, IssueState, IssueSummary, Outcome, Play, Severity, TestCallSummary } from './types'
+import type { CallLine, CallSummary, IssueEvent, IssueState, IssueSummary, Outcome, Play, Reporter, Severity, TestCallSummary } from './types'
 
 export const issueLabel = (number: number) => `Issue #${number}`
 
@@ -127,9 +127,19 @@ export function stateText(issue: Pick<IssueSummary, 'state' | 'snooze'>, now = n
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 
-/** The muted line under an issue's title: step · calls · last seen, and why it is not open. */
+/** Who flagged an issue a person reported, as the issue says it. */
+export const reporterText = (reported: Reporter) => (reported === 'clinic' ? 'Flagged by the clinic' : 'Reported by you')
+
+/** Whether the issue form can be saved: what happened is enough for a new issue (Prosper AI writes an empty title); an edit keeps one. */
+export const reportReady = (editing: boolean, title: string, description: string) =>
+  description.trim() !== '' && (!editing || title.trim() !== '')
+
+/** The muted line under an issue's title: who reported it · step · calls · last seen, and why it is not open. */
 export function issueMeta(issue: IssueSummary, now = new Date()): string {
-  const parts = [humanize(issue.step), plural(issue.calls, 'call')]
+  const parts = []
+  if (issue.reported) parts.push(reporterText(issue.reported))
+  if (issue.step) parts.push(humanize(issue.step))
+  parts.push(plural(issue.calls, 'call'))
   if (issue.last_seen) parts.push(`last ${when(issue.last_seen, now)}`)
   const fix = fixText(issue)
   if (fix) parts.push(fix)
@@ -144,6 +154,14 @@ export function eventText(event: IssueEvent): string {
   switch (event.type) {
     case 'opened':
       return `Found it in ${from}`
+    case 'reported':
+      return event.text === 'clinic' ? 'Reported it for the clinic' : 'Reported it'
+    case 'edited':
+      return 'Edited it'
+    case 'tidied':
+      return 'Tidied it: plain title, step and severity, kept by you'
+    case 'titled':
+      return 'Wrote the title from what happened'
     case 'seen':
       return `Found it again in ${from}`
     case 'snoozed':

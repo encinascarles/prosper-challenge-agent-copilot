@@ -15,6 +15,10 @@
 #               and once they pass Prosper AI says it with the new test's score
 #               before and after ("0/3 on v1 → 3/3")
 #
+# An issue a person reported (a complaint from the clinic) may have no calls:
+# the caller is then written from what they said happened, and a call they
+# linked is given whole, as no turn was marked in it.
+#
 # The test stays in the suite once merged: the issue cannot come back without a
 # test saying so. Each step is logged in the conversation as it lands, and
 # remembered, so a retry after a failure starts from the step that failed.
@@ -152,29 +156,55 @@ def _v(version: dict) -> str:
     return f"v{version['number']}"
 
 
+_REPORTERS = {"you": "the deployment team", "clinic": "the clinic"}
+
+
 def _issue(issue: dict) -> str:
+    severity = f" ({issue['severity']})" if issue["severity"] else ""
+    if issue["reported"]:
+        where = f"in step {issue['step']}" if issue["step"] else "step not known"
+        return (
+            f"The issue, Issue #{issue['number']}{severity}, reported by "
+            f"{_REPORTERS[issue['reported']]} ({where}): {issue['title']}.\n"
+            f"What they said happened: {issue['description']}"
+        )
     return (
-        f"The issue, Issue #{issue['number']} ({issue['severity']}), first seen in step "
+        f"The issue, Issue #{issue['number']}{severity}, first seen in step "
         f"{issue['step']}: {issue['title']}. {issue['description']}"
     )
 
 
 def _calls(agent_id: str, issue: dict) -> str:
-    """The issue's latest calls as a test writer reads them: who called, and up to the bad turn."""
+    """The issue's latest calls as a test writer reads them: who called, and up to the bad turn.
+
+    A call a person linked has no bad turn: it is given whole. With no calls
+    at all, the test is written from what the person said happened.
+    """
     shown = []
     for found in issue["findings"][:CALLS_SHOWN]:
         call = store.calls.get_call(agent_id, found["call"])
         if call is None:
             continue
-        start = max(0, found["turn"] - LINES_BEFORE)
+        linked = found["turn"] < 0
+        end = len(call["transcript"]) if linked else found["turn"] + 1
+        start = max(0, end - 1 - LINES_BEFORE) if not linked else 0
         lines = "\n".join(
             f"  [{i}] {line['role']}: {line['text']}"
-            for i, line in enumerate(call["transcript"][start : found["turn"] + 1], start)
+            for i, line in enumerate(call["transcript"][start:end], start)
+        )
+        where = (
+            "Linked by the person who reported it: the whole call."
+            if linked
+            else f'It went wrong on turn {found["turn"]} ("{found["quote"]}"): {found["why"]}'
         )
         shown.append(
             f"- {call['caller']}, on v{call['version']}. Who they were: {call['situation']}\n"
-            f'  It went wrong on turn {found["turn"]} ("{found["quote"]}"): {found["why"]}\n'
-            f"{lines}"
+            f"  {where}\n{lines}"
+        )
+    if not shown:
+        return (
+            "It has no calls: write the caller from what was reported, "
+            "the situation it describes and what the caller says when it goes wrong."
         )
     return f"Its calls ({issue['calls']} in all, the latest {len(shown)} here):\n" + "\n\n".join(
         shown
@@ -183,6 +213,8 @@ def _calls(agent_id: str, issue: dict) -> str:
 
 def _callers(issue: dict) -> str:
     names = list(dict.fromkeys(found["caller"] for found in issue["findings"]))
+    if not names:
+        return "calls like the one reported"
     if len(names) == 1:
         return f"calls like {names[0]}"
     return f"calls like these {len(names)} callers"

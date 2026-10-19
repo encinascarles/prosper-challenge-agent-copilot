@@ -7,7 +7,8 @@
 # later (copilot/calls.py), and the Calls page reads them from here while the
 # batch runs. Issues are read here too, and put aside or closed by hand:
 # snoozed, resolved, ignored or reopened. Fixing one is a pull request opened
-# from it, by the person or by Prosper AI.
+# from it, by the person or by Prosper AI. A person reports one here too (a
+# complaint from the clinic), and Prosper AI can tidy what they wrote.
 #
 # Test calls (the voice calls a person places from Build) are listed apart,
 # and reviewed by Prosper AI only when asked; what it finds stays on the call.
@@ -16,12 +17,13 @@
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import simulate
 import store
 from copilot import calls as playing
-from copilot import setup
+from copilot import setup, tidy
+from copilot.llm import Failed
 
 from . import checks
 from .models import YOU
@@ -150,9 +152,10 @@ class FixPull(BaseModel):
 class IssueSummary(BaseModel):
     number: int
     title: str
-    step: str
-    severity: Severity
+    step: str  # "" when the person who reported it was not sure
+    severity: Severity | None  # None when the person who reported it did not say
     description: str
+    reported: Literal["you", "clinic"] | None  # who flagged it; None: Prosper AI, from calls
     state: IssueState
     snooze: dict[str, Any] | None  # { until: ISO time } or { version: n }
     fixed: Fixed | None  # the fix that resolved it, while it stays resolved
@@ -176,10 +179,10 @@ class IssueCall(BaseModel):
     outcome: Outcome | None
     version: int
     check: str
-    turn: int  # the bad turn
+    turn: int  # the bad turn; -1 for a call a person linked, as a whole
     quote: str
     why: str
-    lines: list[IssueLine]  # the bad turn, with the line before it
+    lines: list[IssueLine]  # the bad turn, with the line before it; none for a linked call
 
 
 class IssueEvent(BaseModel):
@@ -187,8 +190,15 @@ class IssueEvent(BaseModel):
     # A pull request fixing it: fixing (opened for it), unlinked (closed),
     # relinked (reopened), fixed (merged: resolved in `version`), and
     # came_back: a call on the fixed version had the problem again.
+    # reported: a person opened it (`text`: "you" or "clinic"), then edited
+    # it, or kept what Prosper AI tidied; titled: Prosper AI wrote the title
+    # it was reported without.
     type: Literal[
         "opened",
+        "reported",
+        "edited",
+        "tidied",
+        "titled",
         "seen",
         "snoozed",
         "woke",
@@ -221,6 +231,58 @@ class Fix(BaseModel):
         description="Prosper AI reproduces it with a test and proposes the change; "
         "without it, the pull request is yours to edit in Build."
     )
+
+
+class IssueReport(BaseModel):
+    """An issue a person reports: what they or the clinic saw go wrong."""
+
+    title: str = Field(
+        default="", max_length=120, description="Empty: Prosper AI writes it from what happened."
+    )
+    description: str = Field(min_length=1, max_length=4000, description="What happened.")
+    step: str = Field(default="", description="The step it happens in; empty when not sure.")
+    severity: Severity | None = None
+    reported: Literal["you", "clinic"] = Field(
+        default="you", description="Who flagged it: you, or the clinic."
+    )
+    calls: list[int] = Field(default=[], max_length=10, description="Calls that show it.")
+
+    @field_validator("description")
+    @classmethod
+    def _said(cls, text: str) -> str:
+        # The title may be left to Prosper AI; what happened is the report itself.
+        if not text.strip():
+            raise ValueError("Say what happened: it is what the issue is about.")
+        return text
+
+
+class IssueEdit(BaseModel):
+    """A change to a reported issue: only the fields sent change; `calls` are linked too."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, min_length=1, max_length=4000)
+    step: str | None = None
+    severity: Severity | None = None
+    calls: list[int] = Field(default=[], max_length=10)
+    tidied: bool = Field(default=False, description="These are Prosper AI's words, kept.")
+
+    @field_validator("title", "description")
+    @classmethod
+    def _words(cls, text: str | None) -> str:
+        # Left out keeps them; null would blank an issue that must say something.
+        if text is None:
+            raise ValueError("An issue keeps a title and what happened: leave it out to keep it.")
+        return text
+
+
+class Tidied(BaseModel):
+    """What Prosper AI would make of a reported issue; nothing is kept until the person says."""
+
+    title: str
+    step: str  # "" when nothing says which
+    severity: Severity
+    calls: list[int]  # calls that show it, not linked yet: up to 3
+    usd: float  # what the request cost
 
 
 class Snooze(BaseModel):
@@ -281,6 +343,49 @@ def review_test_call(agent_id: str, call_id: int) -> dict:
 @router.get("/issues", response_model=list[IssueSummary], responses=_MISSING)
 def list_issues(agent_id: str) -> list[dict]:
     return _answer(store.issues.list_issues, agent_id)
+
+
+@router.post("/issues", status_code=201, response_model=Issue, responses=_MISSING | _REFUSED)
+def report_issue(agent_id: str, body: IssueReport) -> dict:
+    """Report an issue by hand, numbered like the rest: "Issue #14".
+
+    Left without a title, it gets one Prosper AI writes from what happened.
+    """
+    return _answer(
+        tidy.report,
+        agent_id,
+        body.title.strip(),
+        body.description.strip(),
+        body.step,
+        body.severity,
+        body.reported,
+        body.calls,
+        YOU,
+    )
+
+
+@router.patch("/issues/{number}", response_model=Issue, responses=_MISSING | _REFUSED)
+def edit_issue(agent_id: str, number: int, body: IssueEdit) -> dict:
+    """Change a reported issue's words, step or severity, and link calls to it."""
+    sent = body.model_fields_set - {"calls", "tidied"}
+    changes = {key: getattr(body, key) for key in sent}
+    if changes.get("step") is None:
+        changes.pop("step", None)  # null leaves it; "" is "not sure"
+    by = store.PROSPER if body.tidied else YOU
+    return _answer(store.issues.edit, agent_id, number, changes, body.calls, by)
+
+
+@router.post(
+    "/issues/{number}/tidy", response_model=Tidied, responses=_MISSING | _REFUSED | {502: {}}
+)
+def tidy_issue(agent_id: str, number: int) -> dict:
+    """Prosper AI's plain title, step, severity and calls for a reported issue, to keep or not."""
+    _agent(agent_id)
+    try:
+        return _answer(tidy.tidy, agent_id, number)
+    except Failed as error:
+        detail = f"Prosper AI couldn't tidy it: {error}"
+        raise HTTPException(status_code=502, detail=detail) from error
 
 
 @router.get("/issues/{number}", response_model=Issue, responses=_MISSING)

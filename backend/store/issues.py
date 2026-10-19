@@ -31,6 +31,16 @@
 # What happened to an issue (opened from a call, seen again, snoozed,
 # resolved...) is a small log kept in its row, like a pull request's.
 #
+# An issue can also be reported by a person, as a pull request can be opened
+# by one: a complaint from the clinic, or something they noticed. It has a
+# title and what happened, and may not know the step or the severity yet
+# (stored as ""). Calls the person links to it are kept as findings with no
+# bad turn (-1): the whole call shows it. From there it is like any other: a
+# finding from calls may join it, and it is fixed, snoozed or resolved the
+# same way. `reported` says who flagged it: "you" or "clinic"; NULL for an
+# issue Prosper AI found in calls. Left without a title, it opens with the
+# first line of what happened and Prosper AI then writes one (`titled`).
+#
 
 import json
 import sqlite3
@@ -48,12 +58,13 @@ CREATE TABLE IF NOT EXISTS issues (
     number INTEGER NOT NULL,  -- from the agent's counter, shared with pull requests
     title TEXT NOT NULL,
     step TEXT NOT NULL,
-    severity TEXT NOT NULL,  -- safety, booking, experience
+    severity TEXT NOT NULL,  -- safety, booking, experience; "" when a person did not say
     description TEXT NOT NULL,
     state TEXT NOT NULL,  -- open, snoozed, resolved, ignored
     snooze TEXT,  -- { until: ISO time } or { version: n }: when a snoozed issue comes back
     fixed TEXT,  -- { pull, version }: the fix that resolved it, while it stays resolved
     events TEXT NOT NULL,
+    reported TEXT,  -- who flagged it, "you" or "clinic"; NULL when Prosper AI found it in calls
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (agent_id, number)
@@ -66,7 +77,7 @@ CREATE TABLE IF NOT EXISTS findings (
     issue INTEGER NOT NULL,
     check_text TEXT NOT NULL,  -- the check of the call's review it failed
     step TEXT NOT NULL,
-    turn INTEGER NOT NULL,  -- index of the line in the call's transcript
+    turn INTEGER NOT NULL,  -- index of the line in the call's transcript; -1: linked by a person
     quote TEXT NOT NULL,
     why TEXT NOT NULL,
     FOREIGN KEY (agent_id, issue) REFERENCES issues (agent_id, number) ON DELETE CASCADE
@@ -74,6 +85,8 @@ CREATE TABLE IF NOT EXISTS findings (
 )
 
 SEVERITIES = ("safety", "booking", "experience")
+REPORTERS = ("you", "clinic")
+LINKED = -1  # the turn of a call a person linked: the whole call shows the issue
 # Still being tracked: a new finding with the same problem joins one of these.
 TRACKED = ("open", "snoozed", "ignored")
 SNOOZES = {"day": timedelta(days=1), "week": timedelta(days=7)}
@@ -134,8 +147,9 @@ def _to_record(row: sqlite3.Row) -> dict:
         "number": row["number"],
         "title": row["title"],
         "step": row["step"],
-        "severity": row["severity"],
+        "severity": row["severity"] or None,
         "description": row["description"],
+        "reported": row["reported"],
         "state": row["state"],
         "snooze": json.loads(row["snooze"]) if row["snooze"] else None,
         "fixed": json.loads(row["fixed"]) if row["fixed"] else None,
@@ -309,14 +323,17 @@ def _file(
             state, fixed = "open", None
         else:
             seen = _event("seen", PROSPER, call=call_id, caller=caller)
+        # A reported issue that did not know its step learns it from its first call.
         conn.execute(
-            "UPDATE issues SET state = ?, fixed = ?, events = ?, updated_at = ?"
+            "UPDATE issues SET state = ?, fixed = ?, events = ?, updated_at = ?,"
+            " step = CASE step WHEN '' THEN ? ELSE step END"
             " WHERE agent_id = ? AND number = ?",
             (
                 state,
                 None if fixed is None else json.dumps(fixed),
                 json.dumps([*json.loads(row["events"]), seen]),
                 seen["at"],
+                finding["step"],
                 agent_id,
                 issue,
             ),
@@ -336,6 +353,162 @@ def _file(
         ),
     )
     return issue
+
+
+def _check_step(conn: sqlite3.Connection, agent_id: str, step: str) -> None:
+    """A step a person names is one of the live version's, or "" for not sure."""
+    live = live_version(conn, agent_id)
+    if live == 0:
+        raise Conflict("The agent is not live yet: issues come from its calls once it is.")
+    if not step:
+        return
+    (config,) = conn.execute(
+        "SELECT config FROM versions WHERE agent_id = ? AND number = ?", (agent_id, live)
+    ).fetchone()
+    if step not in {node["name"] for node in json.loads(config)["nodes"]}:
+        raise Conflict(f"v{live} has no step '{step}'.")
+
+
+def _link(conn: sqlite3.Connection, agent_id: str, number: int, step: str, calls: list[int]):
+    """Link calls of the agent to the issue as a whole; those already in it are skipped."""
+    have = {
+        row["call_id"]
+        for row in conn.execute(
+            "SELECT call_id FROM findings WHERE agent_id = ? AND issue = ?", (agent_id, number)
+        )
+    }
+    for call_id in dict.fromkeys(calls):
+        if not conn.execute(
+            "SELECT 1 FROM calls WHERE id = ? AND agent_id = ?", (call_id, agent_id)
+        ).fetchone():
+            raise NotFound(f"The agent has no call {call_id}.")
+        if call_id in have:
+            continue
+        conn.execute(
+            "INSERT INTO findings (agent_id, call_id, issue, check_text, step, turn, quote, why)"
+            " VALUES (?, ?, ?, '', ?, ?, '', '')",
+            (agent_id, call_id, number, step, LINKED),
+        )
+
+
+def report(
+    agent_id: str,
+    title: str,
+    description: str,
+    step: str,
+    severity: Optional[str],
+    reported: str,
+    calls: list[int],
+    by: str,
+) -> dict:
+    """Open an issue a person reports, numbered from the agent's counter. Returns it.
+
+    `step` is "" and `severity` None when they are not sure; `calls` are calls
+    of the agent that show it. Raises NotFound, or Conflict when the agent is
+    not live or has no such step.
+    """
+    with connect() as conn:
+        _require_agent(conn, agent_id)
+        _check_step(conn, agent_id, step)
+        (number,) = conn.execute(
+            "UPDATE agents SET next_number = next_number + 1 WHERE id = ?"
+            " RETURNING next_number - 1",
+            (agent_id,),
+        ).fetchone()
+        event = _event("reported", by, text=reported)
+        conn.execute(
+            "INSERT INTO issues (agent_id, number, title, step, severity, description, state,"
+            " snooze, events, reported, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?, ?, ?)",
+            (
+                agent_id,
+                number,
+                title,
+                step,
+                severity or "",
+                description,
+                json.dumps([event]),
+                reported,
+                event["at"],
+                event["at"],
+            ),
+        )
+        _link(conn, agent_id, number, step, calls)
+        return _select(conn, agent_id, number)
+
+
+def titled(agent_id: str, number: int, title: str) -> dict:
+    """Give a reported issue the title Prosper AI wrote from what happened. Returns it."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT events FROM issues WHERE agent_id = ? AND number = ?", (agent_id, number)
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"The agent has no {label(number)}.")
+        event = _event("titled", PROSPER)
+        conn.execute(
+            "UPDATE issues SET title = ?, events = ?, updated_at = ?"
+            " WHERE agent_id = ? AND number = ?",
+            (
+                title,
+                json.dumps([*json.loads(row["events"]), event]),
+                event["at"],
+                agent_id,
+                number,
+            ),
+        )
+        return _select(conn, agent_id, number)
+
+
+def edit(agent_id: str, number: int, changes: dict, calls: list[int], by: str) -> dict:
+    """Change what a reported issue says, and link more calls to it. Returns it.
+
+    `changes` holds any of title, description, step and severity (None for
+    not sure). Only an issue a person reported: what Prosper AI found is
+    worded from its calls. Logged as "tidied" when the words are Prosper AI's
+    (`by`), "edited" otherwise.
+    """
+    with connect() as conn:
+        _require_agent(conn, agent_id)
+        row = conn.execute(
+            "SELECT * FROM issues WHERE agent_id = ? AND number = ?", (agent_id, number)
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"The agent has no {label(number)}.")
+        if row["reported"] is None:
+            raise Conflict(f"{label(number)} was found in calls: its words are Prosper AI's.")
+        step = changes.get("step", row["step"])
+        # Only a step being changed is checked: a title fixed after the step
+        # left the live version still saves, from the Edit form too (it sends
+        # every field).
+        if step != row["step"]:
+            _check_step(conn, agent_id, step)
+        fields = {
+            "title": changes.get("title", row["title"]),
+            "description": changes.get("description", row["description"]),
+            "step": step,
+            "severity": (changes["severity"] or "") if "severity" in changes else row["severity"],
+        }
+        event = _event("tidied" if by == PROSPER else "edited", by)
+        conn.execute(
+            "UPDATE issues SET title = ?, description = ?, step = ?, severity = ?, events = ?,"
+            " updated_at = ? WHERE agent_id = ? AND number = ?",
+            (
+                *fields.values(),
+                json.dumps([*json.loads(row["events"]), event]),
+                event["at"],
+                agent_id,
+                number,
+            ),
+        )
+        # A linked call shows the issue at its step, so it follows; a finding
+        # from a call's review keeps the step where it happened in that call.
+        conn.execute(
+            "UPDATE findings SET step = ? WHERE agent_id = ? AND issue = ? AND turn = ?",
+            (step, agent_id, number, LINKED),
+        )
+        _link(conn, agent_id, number, step, calls)
+        return _select(conn, agent_id, number)
 
 
 def _change(conn, agent_id: str, number: int, allowed: tuple, state: str, event: dict, snooze=None):
@@ -470,7 +643,10 @@ def resolve_by_fix(
 
 
 def migrate(conn: sqlite3.Connection) -> None:
-    """Give issues from before fixes the column: none of them was resolved by one."""
+    """Give older issues the columns added since: none was fixed by a pull request
+    or reported by a person then."""
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(issues)")}
     if columns and "fixed" not in columns:
         conn.execute("ALTER TABLE issues ADD COLUMN fixed TEXT")
+    if columns and "reported" not in columns:
+        conn.execute("ALTER TABLE issues ADD COLUMN reported TEXT")

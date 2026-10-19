@@ -269,8 +269,8 @@ def _group(llm: LLM, agent_id: str, findings: list[dict]) -> list[Optional[int]]
         return [None] * len(findings)
     candidates = {i: [issue["number"] for issue in tracked] for i in range(len(findings))}
     issues = "\n".join(
-        f"- [{issue['number']}] {issue['step']} · {issue['title']}: {issue['description']}"
-        f"{_fixed(issue)}"
+        f"- [{issue['number']}] {issue['step'] or 'step not known'} · {issue['title']}: "
+        f"{issue['description']}{_fixed(issue)}{_reported(issue)}"
         for issue in tracked
     )
     found = "\n".join(
@@ -285,6 +285,11 @@ def _group(llm: LLM, agent_id: str, findings: list[dict]) -> list[Optional[int]]
     )
     placed = {p["finding"]: p["issue"] for p in answer["placements"]}
     return [placed.get(i) or None for i in range(len(findings))]
+
+
+def _reported(issue: dict) -> str:
+    # A person's words, not a review's: matched by what went wrong, not by how it is put.
+    return " (reported by a person)" if issue.get("reported") else ""
 
 
 def _fixed(issue: dict) -> str:
