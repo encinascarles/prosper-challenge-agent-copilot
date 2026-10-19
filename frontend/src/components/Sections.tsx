@@ -1,13 +1,17 @@
 // The sections of an agent, in the middle of the top bar: Build, where its
-// flow is edited, and Pull requests, where proposed changes to it are read and
-// decided on. The open ones are counted next to the name.
+// flow is edited; Calls, what its live version answered; Issues, what Prosper
+// AI found going wrong in them; and Pull requests, where proposed changes to
+// it are read and decided on. Open issues and open pull requests are counted
+// next to their names.
 
 import { cn } from '@/lib/utils'
 
-export type Section = 'build' | 'pulls'
+export type Section = 'build' | 'calls' | 'issues' | 'pulls'
 
 const NAMES: [Section, string][] = [
   ['build', 'Build'],
+  ['calls', 'Calls'],
+  ['issues', 'Issues'],
   ['pulls', 'Pull requests'],
 ]
 
@@ -15,10 +19,13 @@ type Props = {
   section: Section
   /** Open pull requests. */
   open: number
+  /** Open issues. */
+  issues: number
   onSection: (section: Section) => void
 }
 
-export function Sections({ section, open, onSection }: Props) {
+export function Sections({ section, open, issues, onSection }: Props) {
+  const counts: Partial<Record<Section, number>> = { issues, pulls: open }
   return (
     <nav aria-label="Sections" className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-muted p-0.5 text-[13px]">
       {NAMES.map(([key, name]) => (
@@ -32,7 +39,7 @@ export function Sections({ section, open, onSection }: Props) {
           )}
         >
           {name}
-          {key === 'pulls' && open > 0 && <span className="text-[12px] font-normal text-muted-foreground tabular-nums">{open}</span>}
+          {(counts[key] ?? 0) > 0 && <span className="text-[12px] font-normal text-muted-foreground tabular-nums">{counts[key]}</span>}
         </button>
       ))}
     </nav>

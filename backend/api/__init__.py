@@ -5,7 +5,7 @@
 
 from fastapi import FastAPI
 
-from . import agents, copilot, pulls, suite
+from . import agents, copilot, live, pulls, suite
 from .calls import CallError, agent_for_call, check_start, describe
 
 
@@ -16,6 +16,7 @@ def mount(app: FastAPI) -> None:
     app.include_router(agents.router)
     app.include_router(pulls.router)
     app.include_router(suite.router)
+    app.include_router(live.router)
     app.middleware("http")(check_start)
 
 

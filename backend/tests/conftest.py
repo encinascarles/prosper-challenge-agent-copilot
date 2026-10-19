@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 import api
 import store
 from api import checks
-from copilot import setup
+from copilot import calls, setup
 from store.db import DB_PATH_ENV
 from tests.fakes import FakeServices, ScriptedModel
 
@@ -38,15 +38,18 @@ def prosper_model(monkeypatch) -> ScriptedModel:
     """Prosper AI's model, in every test: scripted, empty until a test scripts it."""
     model = ScriptedModel({})
     monkeypatch.setattr(setup, "new_llm", lambda: model)
+    monkeypatch.setattr(calls, "new_llm", lambda: model)
+    monkeypatch.setattr(calls, "STAGGER", 0)
     yield model
     settle()
 
 
 def settle() -> None:
-    """Wait until Prosper AI and the checks are both idle: each can start the other."""
+    """Wait until Prosper AI, the checks and the calls are idle: each can start another."""
     for _ in range(8):
         setup.wait()
         checks.wait()
+        calls.wait()
 
 
 @pytest.fixture

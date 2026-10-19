@@ -1,11 +1,13 @@
 // App shell: the top bar with the agent picker, and the open agent's sections:
-// Build, its editor, and Pull requests, the list of them and their pages.
+// Build, its editor; Calls and Issues, what its live version answered and what
+// went wrong; and Pull requests, the list of them and their pages.
 //
 // Which agent is open lives in the URL (?agent=<id>), so a reload or a shared
 // link opens the same one. Without it, the first agent of the list opens. So
 // does what the editor is on (&pr=<n>): the live version, or one open pull
 // request. An agent that is not live yet opens on its PR #1. The section is in
-// it too: &view=pulls for the list, and &pull=<n> for a pull request's page.
+// it too: &view=pulls, calls or issues for a list, and &pull=<n>, &call=<id> or
+// &issue=<n> for one page of it.
 //
 // While Prosper AI works on the pull request Build is on, it is followed:
 // whenever Prosper AI has changed the copy (drawn the graph, added rules or
@@ -37,6 +39,8 @@ import { TopBar } from '@/components/TopBar'
 import { useToast } from '@/components/useToast'
 import { VersionPill } from '@/components/VersionPill'
 import { Button } from '@/components/ui/button'
+import { CallsView } from '@/live/CallsView'
+import { IssuesView } from '@/live/IssuesView'
 import { EDITS_TITLE, openedForEdits, pullLabel, versionLabel, type On } from '@/pulls/model'
 import { PullsView } from '@/pulls/PullsView'
 import { sameCopy } from '@/prosper/model'
@@ -45,8 +49,8 @@ import { useFollow } from '@/prosper/useFollow'
 const AGENT_PARAM = 'agent'
 const PULL_PARAM = 'pr'
 const VIEW_PARAM = 'view'
-const PAGE_PARAM = 'pull'
-const PULLS_VIEW = 'pulls'
+// The page of each section that has pages, by its parameter.
+const PAGE_PARAMS: Partial<Record<Section, string>> = { pulls: 'pull', calls: 'call', issues: 'issue' }
 
 /** The open agent and the copy of it the editor is on. */
 type Opened = {
@@ -92,18 +96,22 @@ function writeUrl(id: string | null, on: On) {
   history.replaceState(null, '', url)
 }
 
-/** The section and, in Pull requests, the page shown. */
+/** The section and, in one with pages, the page shown. */
 function writeView(section: Section, page: number | null) {
   const url = new URL(location.href)
-  setParam(url, VIEW_PARAM, section === 'pulls' ? PULLS_VIEW : null)
-  setParam(url, PAGE_PARAM, section === 'pulls' && page !== null ? String(page) : null)
+  setParam(url, VIEW_PARAM, section === 'build' ? null : section)
+  for (const [of, param] of Object.entries(PAGE_PARAMS)) {
+    setParam(url, param, of === section && page !== null ? String(page) : null)
+  }
   history.replaceState(null, '', url)
 }
 
 function readView(): { section: Section; page: number | null } {
   const params = new URLSearchParams(location.search)
-  const section = params.get(VIEW_PARAM) === PULLS_VIEW ? 'pulls' : 'build'
-  return { section, page: section === 'pulls' ? Number(params.get(PAGE_PARAM)) || null : null }
+  const wanted = params.get(VIEW_PARAM) as Section | null
+  const section = wanted && wanted in PAGE_PARAMS ? wanted : 'build'
+  const param = PAGE_PARAMS[section]
+  return { section, page: param ? Number(params.get(param)) || null : null }
 }
 
 export default function App() {
@@ -245,11 +253,12 @@ export default function App() {
     open(shown.agent.id, on)
   }
 
-  // The Pull requests section: the list, or one pull request's page.
-  const showPulls = (page: number | null) => {
+  // A section other than Build: its list, or one of its pages.
+  const showPage = (section: Section, page: number | null) => {
     if (view.section === 'build' && !leave()) return
-    showView('pulls', page)
+    showView(section, page)
   }
+  const showPulls = (page: number | null) => showPage('pulls', page)
 
   // "Try it" on a pull request's page: Build on it, with its test call started.
   const tryIt = (number: number) => {
@@ -319,13 +328,14 @@ export default function App() {
     <Sections
       section={view.section}
       open={shown.pulls.length}
-      onSection={(section) => (section === 'build' ? switchTo(shown.on) : showPulls(null))}
+      issues={shown.agent.open_issues}
+      onSection={(section) => (section === 'build' ? switchTo(shown.on) : showPage(section, null))}
     />
   )
 
   return (
     <>
-      {shown && !error && view.section === 'pulls' ? (
+      {shown && !error && view.section !== 'build' ? (
         <div key={shown.agent.id} className="flex h-dvh flex-col">
           <TopBar
             agents={agents ?? []}
@@ -352,16 +362,36 @@ export default function App() {
           />
           <main className="flex min-h-0 flex-1">
             <ErrorBoundary>
-              <PullsView
-                agent={shown.agent}
-                page={view.page}
-                onPage={showPulls}
-                onOpenInBuild={switchTo}
-                onTry={tryIt}
-                onNew={() => void newPull()}
-                onChanged={reload}
-                onToast={toast.show}
-              />
+              {view.section === 'calls' ? (
+                <CallsView
+                  agent={shown.agent}
+                  page={view.page}
+                  onPage={(call) => showPage('calls', call)}
+                  onIssue={(number) => showPage('issues', number)}
+                  onChanged={reload}
+                  onToast={toast.show}
+                />
+              ) : view.section === 'issues' ? (
+                <IssuesView
+                  agent={shown.agent}
+                  page={view.page}
+                  onPage={(number) => showPage('issues', number)}
+                  onCall={(call) => showPage('calls', call)}
+                  onChanged={reload}
+                  onToast={toast.show}
+                />
+              ) : (
+                <PullsView
+                  agent={shown.agent}
+                  page={view.page}
+                  onPage={showPulls}
+                  onOpenInBuild={switchTo}
+                  onTry={tryIt}
+                  onNew={() => void newPull()}
+                  onChanged={reload}
+                  onToast={toast.show}
+                />
+              )}
             </ErrorBoundary>
           </main>
         </div>

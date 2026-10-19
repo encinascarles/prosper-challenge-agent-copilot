@@ -1,4 +1,4 @@
-// Calls to the agents API (backend/api/agents.py and backend/api/pulls.py).
+// Calls to the agents API (backend/api/agents.py, pulls.py and live.py).
 //
 // Relative URLs: the dev server proxies /api to the backend, so the browser
 // sees one origin. A failed request throws an ApiError whose message is the
@@ -17,6 +17,7 @@ import type {
   Version,
   VersionSummary,
 } from './types'
+import type { Call, CallSummary, Issue, IssueSummary, Play, SnoozeFor } from '@/live/types'
 
 export class ApiError extends Error {
   status: number
@@ -237,4 +238,36 @@ export function updatePull(
   summary: string | null,
 ): Promise<Pull> {
   return request(`${pullPath(id, number)}/update`, 'POST', { ...copy, onto, summary })
+}
+
+/** Starts a batch of simulated calls on the live version; they come in over a minute or two. */
+export function playCalls(id: string): Promise<Play> {
+  return request(`${agentPath(id)}/calls/play`, 'POST')
+}
+
+/** The agent's calls, latest first, and its latest batch. */
+export function listCalls(id: string): Promise<{ play: Play | null; calls: CallSummary[] }> {
+  return request(`${agentPath(id)}/calls`)
+}
+
+export function getCall(id: string, call: number): Promise<Call> {
+  return request(`${agentPath(id)}/calls/${call}`)
+}
+
+export function listIssues(id: string): Promise<IssueSummary[]> {
+  return request(`${agentPath(id)}/issues`)
+}
+
+export function getIssue(id: string, number: number): Promise<Issue> {
+  return request(`${agentPath(id)}/issues/${number}`)
+}
+
+/** Snoozes, resolves, ignores or reopens an issue. */
+export function changeIssue(
+  id: string,
+  number: number,
+  action: 'snooze' | 'resolve' | 'ignore' | 'reopen',
+  until?: SnoozeFor,
+): Promise<Issue> {
+  return request(`${agentPath(id)}/issues/${number}/${action}`, 'POST', action === 'snooze' ? { until } : undefined)
 }

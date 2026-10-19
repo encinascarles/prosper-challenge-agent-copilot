@@ -120,7 +120,8 @@ class TextCall:
         self.llm = llm
         self.transcript: list[dict] = []  # { role: "agent" | "caller", text, node }
         self.path: list[dict] = []  # { node, from, edge, collected }, as a voice call reports it
-        self.tokens = {"prompt": 0, "completion": 0}
+        # `cached`: the part of `prompt` OpenAI served from its prompt cache, at a discount.
+        self.tokens = {"prompt": 0, "completion": 0, "cached": 0}
         self.turn_done = asyncio.Event()
         self._end_nodes = {node.name for node in builder.config.nodes if node.end}
 
@@ -131,6 +132,7 @@ class TextCall:
     def used(self, usage):
         self.tokens["prompt"] += usage.prompt_tokens
         self.tokens["completion"] += usage.completion_tokens
+        self.tokens["cached"] += usage.cache_read_input_tokens or 0
 
     def entered(self, message):
         if isinstance(message, dict) and message.get("type") == "node":

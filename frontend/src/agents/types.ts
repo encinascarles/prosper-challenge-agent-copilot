@@ -63,6 +63,7 @@ export type Agent = {
   name: string // the live version's, or PR #1's before the agent is live
   live_version: number // what calls run on; 0 until PR #1 is merged
   open_pulls: number
+  open_issues: number // found in its calls by Prosper AI, and still open
   created_at: string
   updated_at: string
 }

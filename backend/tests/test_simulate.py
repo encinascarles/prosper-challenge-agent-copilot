@@ -45,7 +45,7 @@ def test_a_call_follows_the_graph_to_its_end_and_reports_the_path(agent):
         "edge": "record_details",
         "collected": {"full_name": "Maria Lopez", "reason": "check-up"},
     }
-    assert result["tokens"] == {"prompt": 70, "completion": 35}
+    assert result["tokens"] == {"prompt": 70, "completion": 35, "cached": 0}
 
 
 def test_the_agents_turn_ends_only_at_a_response_that_calls_no_function(agent):

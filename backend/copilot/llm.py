@@ -49,6 +49,12 @@ PRICES = {
 }
 
 
+def price(model: str, prompt: int, completion: int, cached: int = 0) -> float:
+    """What `model` charges for these tokens, in USD; 0 for a model not listed."""
+    fresh_in, cached_in, out = PRICES.get(model, (0, 0, 0))
+    return ((prompt - cached) * fresh_in + cached * cached_in + completion * out) / 1e6
+
+
 class Failed(RuntimeError):
     """The model gave no answer that passed its check. The message says the last problem."""
 
@@ -169,8 +175,7 @@ class LLM:
         cached = getattr(details, "cached_tokens", 0) or 0
         prompt_tokens = getattr(usage, "input_tokens", None) or usage.prompt_tokens
         completion = getattr(usage, "output_tokens", None) or usage.completion_tokens
-        fresh_in, cached_in, out = PRICES.get(self.model, (0, 0, 0))
-        usd = ((prompt_tokens - cached) * fresh_in + cached * cached_in + completion * out) / 1e6
+        usd = price(self.model, prompt_tokens, completion, cached)
         with self._lock:
             self.usage["requests"] += 1
             self.usage["prompt"] += prompt_tokens
