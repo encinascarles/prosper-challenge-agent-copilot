@@ -28,6 +28,12 @@ care"). Mark `passed` true or false.
 - `description`: one sentence describing the problem in general, so that
   other calls with the same problem fit it, not only this caller.
 
+How the call ended matters too. A call the agent never ended (it kept
+talking after the caller was done, went round in circles, or was cut after
+too many turns) is a finding on the turn where it should have closed the
+call: a caller left on the line is a problem, worse when they were just told
+to get emergency care.
+
 Only behaviour a clinic would act on. No style, tone, wording or length
 nitpicks. Do not fault the agent for what it cannot do: it has no calendar
 and no patient records, so it offers the times its steps give and cannot look

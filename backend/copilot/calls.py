@@ -46,10 +46,14 @@ new_llm: Callable[[], LLM] = LLM
 
 # Seconds between one call starting and the next: calls come in, not all at once.
 STAGGER = 1.5
+# Caller lines before a call is cut. Tests allow more, for a caller who
+# corrects themselves; a real caller stuck in a loop hangs up sooner, and a
+# stuck call would otherwise be the most expensive call of the batch.
+MAX_TURNS = 12
 _ENDED = {
     "agent_ended": "the agent ended it",
     "caller_hung_up": "the caller hung up",
-    "turn_cap": "cut after too many turns",
+    "turn_cap": "it never ended: cut after too many turns",
     "stuck": "the agent stopped answering",
     "end_not_reached": "the goodbye step spoke but the call did not end",
 }
@@ -123,7 +127,7 @@ async def _calls(agent_id: str, batch: dict, version: dict, context: str, caller
         await asyncio.sleep(index * STAGGER)
         person = services.caller(caller["situation"])
         try:
-            call = await TextCall(builder, services.llm(model)).run(person)
+            call = await TextCall(builder, services.llm(model)).run(person, MAX_TURNS)
         except Exception:  # noqa: BLE001 - one call that breaks is not the batch
             logger.exception(f"A call from {caller['name']} did not run")
             return
