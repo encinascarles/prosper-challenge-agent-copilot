@@ -21,8 +21,8 @@ Answer with:
   what holds everywhere. A rule for every step is read at every step, the
   greeting included. Do not repeat a rule it already has.
 - `tests`: tests to add for what changed, if a test would show it works. Same
-  format as its tests: checks like "Reaches <step>", "Ends the call", "<field>
-  is recorded", or one observable fact.
+  format as its tests: 2 to 4 checks, each "Reaches <step>", "Ends the call",
+  "<field> is recorded", and at most one other line: one observable fact.
 - `remove`: the ids of rules or tests to take out, when the change makes them
   wrong (a rule moved to one step is taken out and added again; a test whose
   caller no longer fits is replaced). Only ids shown in brackets.
