@@ -139,6 +139,22 @@ def test_an_issue_resolved_while_the_batch_runs_takes_no_more_calls(
     assert [c["passed"] for c in call["checks"]] == [True, True, False]
 
 
+def test_a_batch_where_no_call_ran_fails_and_says_why(
+    client, live_agent, prosper_model, fake_checks
+):
+    agent_id = live_agent()
+    prosper_model.script = {"callers": [CALLERS]}
+
+    def down(model):
+        raise RuntimeError("The model is down.")
+
+    fake_checks.llm = down
+    page = _play(client, agent_id)
+    assert page["calls"] == []
+    assert page["play"]["state"] == "failed"
+    assert page["play"]["error"] == "None of the 2 calls ran: The model is down."
+
+
 def test_a_clean_call_files_nothing_and_asks_no_grouping(client, live_agent, prosper_model):
     agent_id = live_agent()
     prosper_model.script = {"callers": [CALLERS], "audit": [CLEAN, copy.deepcopy(CLEAN)]}

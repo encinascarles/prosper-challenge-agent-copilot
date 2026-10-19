@@ -124,14 +124,21 @@ async def _calls(agent_id: str, batch: dict, version: dict, context: str, caller
     builder = AgentBuilder.from_dict(version["config"], version["rules"])
     model = builder.config.model
     rules = {rule["id"] for rule in version["rules"]}
+    failed: list[str] = []
 
     async def one(index: int, caller: dict) -> None:
         await asyncio.sleep(index * STAGGER)
         person = services.caller(caller["situation"])
         try:
             call = await TextCall(builder, services.llm(model)).run(person, MAX_TURNS)
-        except Exception:  # noqa: BLE001 - one call that breaks is not the batch
+        except Exception as error:  # noqa: BLE001 - one call that breaks is not the batch
             logger.exception(f"A call from {caller['name']} did not run")
+            failed.append(str(error) or type(error).__name__)
+            return
+        if not any(line["role"] == "agent" for line in call["transcript"]):
+            # The agent never spoke (its model failed inside the pipeline):
+            # nothing to read, and not a call anyone made.
+            failed.append(f"the agent never answered ({call['ended']})")
             return
         said = getattr(person, "tokens", {})
         usage = {
@@ -156,6 +163,9 @@ async def _calls(agent_id: str, batch: dict, version: dict, context: str, caller
         )
 
     await asyncio.gather(*(one(i, caller) for i, caller in enumerate(callers)))
+    if callers and len(failed) == len(callers):
+        # Said as the batch's error, not a batch that went fine with no calls.
+        raise RuntimeError(f"None of the {len(callers)} calls ran: {failed[0]}")
 
 
 def review(
