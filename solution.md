@@ -661,28 +661,35 @@ it by half or more. Asking for less (only the steps that change, not the
 whole agent) would make each change cheaper and leave less room to go wrong.
 Prosper AI sometimes still names steps in snake case in its own replies.
 
-### Ask Prosper AI: questions in a chat, changes in a pull request
+### Ask Prosper AI: questions in a chat, acts on a click
 
 **Context.** Until here Prosper AI only acted inside a pull request. Most of
 what a deployment person wants to know is a question ("Can Anna book for a
 child?", "Why did this caller hang up?", "How many calls went wrong today?"),
 and answering it meant reading the graph, the tests and the calls by hand.
-Some questions end in a change ("then have her ask"), which should not need
-switching to Build.
+And most of what they then do is a handful of clicks spread over three
+sections: open an issue for what the clinic emailed, run a test again, snooze
+the noise, fix one issue, merge the fix. Prosper AI should be able to do
+everything the person can do in the product, from the same chat, in words.
 
 **Options.**
-- *A chat that also edits the agent.* Rejected: a change made in a chat has
-  no test, no checks and no review, and live would move without a merge.
-- *An agent with tools (search calls, read a test) answering in several
-  steps.* Not now: the facts of one agent fit in one prompt (about 6,600
-  tokens for Anna with 60 calls), so one request answers in 3–5 s for about
-  USD 0.015. Tools are what comes once there are thousands of calls.
-- *One request with the agent's facts written in; changes only as an offer
-  to open a pull request.* Chosen.
+- *A chat that also edits the agent directly.* Rejected: a change made in a
+  chat has no test, no checks and no review, and live would move without a
+  merge.
+- *One request with the agent's facts written in, changes only as an offer
+  to open a pull request.* What this section first shipped. It answered well
+  (the facts of one agent fit in one prompt, about 6,600 tokens for Anna with
+  60 calls), but it could not do anything but offer a pull request: every
+  other act was a trip to another section.
+- *An agent with tools: reads run at once, every act waits for a click.*
+  Chosen. Operator parity is the reason, not scale: the facts still fit in
+  one prompt, and most questions are answered from them in one request.
+  Tools add reading in depth (a whole call, an issue's bad turns, a pull
+  request's log) and acting.
 
 **How it works.** "Ask Prosper AI" in the top bar (⌘J) opens a panel at the
 right of every section: new chat, past chats (stored per agent, titled by the
-first question), the chat, a composer. Each answer is one request through
+first question), the chat, a composer. Each answer starts as one request through
 `llm.py` on Prosper AI's model at low effort (`copilot/ask.py`). It reads:
 the guidelines and the clinic's answers, the copy the person is on (live or
 the pull request) with its rules, its tests and how each last went, the
@@ -693,9 +700,46 @@ everything Prosper AI writes: at most 600 characters, no snake_case names,
 and every issue, pull request or call it links to must exist; a refused
 answer goes back with the reason. Links are chips that open what they name.
 
-Asked for a change, the answer carries an offer instead: a title and what it
-would change, as a "Create pull request" card. Nothing changes in the chat.
-The card opens a pull request of kind `change` ("From your chat …"), its
+Then tools, through `llm.turn` on the Responses API with function calling,
+one call per step and at most 8 per message (`copilot/ask.py`, tools in
+`api/tools.py`). Nine read (search calls by caller, outcome, issue, version or
+day; read a call; list and read issues and pull requests; read the tests of
+live or a pull request with their last results; read the steps and rules of
+any copy; versions) and run at once: the chat shows a muted line for each
+("Read Issue #5 and its 3 calls"), never the data. Eleven act: open, tidy or
+fix an issue; open, close, reopen or merge a pull request; add a rule or a
+test to one; run one test or all; play calls; snooze, resolve, ignore or
+reopen issues, several at once. An act never runs from the model: the message
+ends with a card ("Open issue · Books a child's appointment under the
+parent's name · Collect details · Booking · Flagged by the clinic") with Do it
+and Cancel. Merge's card says what follows ("Merge PR #19 as v4 · Calls will
+use v4 from then on · 9 of 11 tests pass, 2 flaky · Resolves Issue #10").
+On Do it the act runs and the card becomes what happened, with a link
+("Opened Issue #17 →"); the conversation goes on from where it stopped with
+the result, so Prosper AI can say what is next or propose the next act of a
+request ("close PR #18 and fix Issue #10 instead" is two cards in a row).
+Cancel only marks the card, and the next question tells Prosper AI it was
+declined. A card left pending when the person writes again is skipped.
+Nothing changes from a chat without a click.
+
+Each act is the route the UI calls, called as a function: an issue from a
+chat goes through `report_issue` like one from New issue, a merge through
+`merge_pull`. So there is one implementation of every action, with its checks,
+and what a route refuses (404, 409, 422, a body that fails validation) goes
+back to the model as the tool's refusal in the person's words. The card is
+built from the same checks where they can be asked without acting (the step
+exists, the issue can move to that state, the pull request can merge), so a
+refused act reaches Prosper AI before a card does: "merge it" on a pull
+request with failing tests is answered "PR #18 cannot merge: 2 tests are
+failing", with no card. A test checks that every act calls its route.
+
+The conversation is kept on our side and sent whole each step, the model's
+reasoning encrypted with it: the OpenAI key's organization has zero data
+retention, so a response cannot be continued by its id. A card waiting for
+its click holds the conversation so far; it is dropped once decided.
+
+Asked for a change, Prosper AI proposes a pull request (`open_pull_request`):
+a title and what it would change. The card opens a pull request of kind `change` ("From your chat …"), its
 conversation starting from the person's own words, and Prosper AI runs the
 fix machinery on it (`fix.py`, now about a "subject", an issue or a request):
 a test of what was asked, which should fail on live (if it passes, it says
@@ -705,9 +749,9 @@ the self-check, and "the new test 0/3 on v2 → 3/3". It always opens on live,
 and the card says so ("Opens a pull request on v2"): asked from a pull
 request, a change to that pull request belongs in its own conversation, which
 the card links to, rather than a second pull request on top of an unmerged
-one. Asking waits for the
-answer in the same HTTP request: one model call, a few seconds, nothing to
-follow in the background.
+one. Asking (and Do it) waits for the
+answer in the same HTTP request: a few model steps, 3 to 15 s in the real
+run, nothing to follow in the background.
 
 **What the real run showed.** On Anna (v2, 60 simulated calls, 10 open
 issues), through the panel:
@@ -739,11 +783,39 @@ for the agent's prompt rather than for a person.
 Real spend: 10 answers USD 0.14, the two change pull requests' own requests
 and test calls 0.26, their suites 1.90: about USD 2.3.
 
+With tools, on Anna (v3, 60 calls, 10 open issues), through the panel:
+- A clinic's email pasted with "open an issue for this" → the card "Open
+  issue · Books a child's appointment under the parent's name · Collect
+  details · Booking · Flagged by the clinic" → Do it → Issue #17, its
+  description restating the email. 5 s to the card, 4 s to open it.
+- "Run the test about cancelling again" → "Run a test again · Cancels after
+  identifying the patient · On v3 · 3 calls" → running.
+- "Snooze the issues about wording for a week" → a card for Issue #13 only.
+  No issue is about wording; it took the only one of severity experience
+  (the call left open), a stretch. Cancelled; "Issue #13 and Issue #8 for a
+  week instead" → one card for both → done.
+- "Fix issue #17" → PR #18. The fix itself (fix.py, unchanged here) did not
+  get green: 2 tests failing after its two rounds. "Merge it" → no card,
+  "PR #18 cannot merge: 2 tests are failing"; "check the failures" → two
+  reads and a right summary (it called the 2 flaky ones not consistently
+  passing too). "Close PR #18 for now, and fix issue #10 instead" → two
+  cards in a row → PR #19, which could not reproduce the issue (3/3 on v3)
+  and, told to go on, passed 9/11 with 2 flaky. "Merge it" → "Merge PR #19
+  as v4 …" → v4 live, Issue #10 resolved.
+
+Spend for that run: the chat's 17 requests USD 0.16 (152k tokens in, half
+cached: the facts are resent each step), the two fix pull requests' own
+requests 0.57, their suites (four runs of 33 calls) about 4.3: about USD 5.
+
 **Trade-offs and what is next.** The facts are rebuilt for every answer and
 grow with the agent; past a few hundred calls the list needs search (by
 caller, outcome, issue) rather than "the latest 30". Test calls placed from
 Build are not in the facts yet. A chat answers about one copy at a time; it
-cannot compare two versions. Chats cannot be renamed or deleted.
+cannot compare two versions. Chats cannot be renamed or deleted. Acting asks
+for a click every time; reversible, cheap acts (snooze, run a test) could be
+allowed without one once people trust it, and edits to a pull request's copy
+in place (beyond adding a rule or a test) are not tools yet: they go through
+Prosper AI's own conversation in the pull request.
 
 ### Issues a person reports: the clinic's complaints in the same list
 
