@@ -11,6 +11,7 @@ import {
   issueMeta,
   outcomeText,
   playCostText,
+  reporterText,
   snoozeText,
   stateText,
   tabOf,
@@ -40,6 +41,7 @@ const issue: IssueSummary = {
   step: 'collect_details',
   severity: 'booking',
   description: '',
+  reported: null,
   state: 'open',
   snooze: null,
   fixed: null,
@@ -170,5 +172,20 @@ describe('the cost of a batch', () => {
   it('is said whole, with its calls, and "so far" while it comes in', () => {
     expect(playCostText(play)).toBe('Last batch: 11 calls · USD 0.48')
     expect(playCostText({ ...play, state: 'working' })).toBe('This batch so far: USD 0.48')
+  })
+})
+
+describe('reported issues', () => {
+  it('says who flagged it, and leaves out a step nobody knows', () => {
+    const reported = { ...issue, reported: 'clinic' as const, step: '', severity: null, calls: 0, last_seen: null }
+    expect(issueMeta(reported, NOW)).toBe('Flagged by the clinic · 0 calls')
+    expect(issueMeta({ ...reported, reported: 'you', step: 'offer_times', calls: 1 }, NOW)).toBe('Reported by you · Offer times · 1 call')
+    expect(reporterText('you')).toBe('Reported by you')
+  })
+
+  it('logs who reported it and what Prosper AI tidied', () => {
+    expect(eventText({ type: 'reported', by: 'you', at: '', text: 'clinic' })).toBe('Reported it for the clinic')
+    expect(eventText({ type: 'reported', by: 'you', at: '', text: 'you' })).toBe('Reported it')
+    expect(eventText({ type: 'tidied', by: 'Prosper AI', at: '' })).toBe('Tidied it: plain title, step and severity, kept by you')
   })
 })

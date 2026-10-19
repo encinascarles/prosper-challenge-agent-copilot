@@ -17,7 +17,7 @@ import type {
   Version,
   VersionSummary,
 } from './types'
-import type { Call, CallSummary, Issue, IssueSummary, Play, SnoozeFor, TestCall, TestCallSummary } from '@/live/types'
+import type { Call, CallSummary, Issue, IssueReport, IssueSummary, Play, SnoozeFor, Tidied, TestCall, TestCallSummary } from '@/live/types'
 import type { Chat, ChatSummary } from '@/ask/types'
 
 export class ApiError extends Error {
@@ -283,6 +283,25 @@ export function listIssues(id: string): Promise<IssueSummary[]> {
 
 export function getIssue(id: string, number: number): Promise<Issue> {
   return request(`${agentPath(id)}/issues/${number}`)
+}
+
+/** Reports an issue by hand: numbered like pull requests. */
+export function reportIssue(id: string, report: IssueReport): Promise<Issue> {
+  return request(`${agentPath(id)}/issues`, 'POST', report)
+}
+
+/** Changes a reported issue (only what is sent) and links `calls` to it. `tidied`: Prosper AI's words, kept. */
+export function editIssue(
+  id: string,
+  number: number,
+  changes: Partial<Omit<IssueReport, 'reported'>> & { tidied?: boolean },
+): Promise<Issue> {
+  return request(`${agentPath(id)}/issues/${number}`, 'PATCH', changes)
+}
+
+/** Prosper AI's plain title, step, severity and calls for a reported issue; nothing changes yet. */
+export function tidyIssue(id: string, number: number): Promise<Tidied> {
+  return request(`${agentPath(id)}/issues/${number}/tidy`, 'POST')
 }
 
 /** Snoozes, resolves, ignores or reopens an issue. */

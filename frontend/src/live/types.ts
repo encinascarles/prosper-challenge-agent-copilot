@@ -83,12 +83,16 @@ export type TestCall = TestCallSummary & {
   usage: Record<string, number>
 }
 
+/** Who flagged an issue a person reported; null when Prosper AI found it in calls. */
+export type Reporter = 'you' | 'clinic'
+
 export type IssueSummary = {
   number: number
   title: string
-  step: string
-  severity: Severity
+  step: string // '' when the person who reported it was not sure
+  severity: Severity | null // null when the person who reported it did not say
   description: string
+  reported: Reporter | null
   state: IssueState
   snooze: { until?: string; version?: number } | null
   fixed: { pull: number; version: number } | null // the fix that resolved it, while it stays so
@@ -108,10 +112,10 @@ export type IssueCall = {
   outcome: Outcome | null
   version: number
   check: string
-  turn: number
+  turn: number // -1 for a call a person linked, as a whole
   quote: string
   why: string
-  lines: (CallLine & { index: number })[] // the bad turn, with the line before it
+  lines: (CallLine & { index: number })[] // the bad turn, with the line before it; none when linked
 }
 
 /** A pull request that fixes an issue, as the issue lists it. */
@@ -125,6 +129,9 @@ export type FixPull = {
 export type IssueEvent = {
   type:
     | 'opened'
+    | 'reported' // by a person: `text` is who flagged it
+    | 'edited'
+    | 'tidied' // what Prosper AI tidied, kept
     | 'seen'
     | 'snoozed'
     | 'woke'
@@ -149,3 +156,22 @@ export type IssueEvent = {
 }
 
 export type Issue = IssueSummary & { findings: IssueCall[]; events: IssueEvent[] }
+
+/** What a person writes to report an issue. */
+export type IssueReport = {
+  title: string
+  description: string
+  step: string // '' for not sure
+  severity: Severity | null
+  reported: Reporter
+  calls: number[]
+}
+
+/** What Prosper AI would make of a reported issue: nothing is kept until the person says. */
+export type Tidied = {
+  title: string
+  step: string
+  severity: Severity
+  calls: number[] // not linked yet
+  usd: number
+}

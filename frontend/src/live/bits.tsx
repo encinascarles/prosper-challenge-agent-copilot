@@ -25,7 +25,9 @@ export function IssueStateIcon({ state, className }: { state: IssueState; classN
 
 const SEVERITY_ICONS = { safety: ShieldAlert, booking: CalendarX, experience: MessageCircleWarning }
 
-export function SeverityIcon({ severity, className }: { severity: Severity; className?: string }) {
+/** Nothing for an issue whose severity nobody gave yet. */
+export function SeverityIcon({ severity, className }: { severity: Severity | null; className?: string }) {
+  if (!severity) return null
   const Icon = SEVERITY_ICONS[severity]
   return (
     <span title={SEVERITIES[severity]} className="flex shrink-0">
