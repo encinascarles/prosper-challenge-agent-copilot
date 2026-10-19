@@ -529,9 +529,9 @@ does. A batch in which no call ran fails with the reason, rather than
 looking like a quiet morning. Issues take numbers from the counter pull requests use, so "Issue #3"
 and "PR #4" never clash and the PR that fixes an issue can name it. An issue
 is open, snoozed (a day, a week, or until the next version: checked when
-issues are read, so nothing has to wake it), resolved (stops collecting;
-if the problem comes back it is a new issue) or ignored (leaves the open list
-but keeps counting calls).
+issues are read, so nothing has to wake it), resolved (by hand it stops
+collecting, and if the problem comes back it is a new issue; by a fix, see
+below) or ignored (leaves the open list but keeps counting calls).
 
 **What the real runs showed.** A setup from the sample files, first option
 everywhere, reached green on its first suite (6 passing, 1 flaky) and was
@@ -564,10 +564,82 @@ first smoke run had cost USD 0.10 alone.
 **Trade-offs and what is next.** Simulated callers are not customers: they
 are cooperative and articulate, and they only hit what Prosper AI thought to
 send them. The review is a model's reading and can be wrong, which is why
-every finding shows the turn and why. Next: Fix with Prosper AI on an issue
-(a test that reproduces it, then the change, in a pull request); voice test
-calls stored as calls too; real call data in place of the simulated callers;
-an issue that comes back after its fix reopening with a link to that fix.
+every finding shows the turn and why. Next: voice test calls stored as calls
+too; real call data in place of the simulated callers.
+
+### Fix with Prosper AI: a failing test first, then the smallest change
+
+**Context.** An issue says what went wrong; someone still has to work out the
+cause, change the agent and hope nothing else broke. A coding agent fixing a
+bug does three things in order, and so does this: reproduce it with a failing
+test, make the smallest change, run the whole suite.
+
+**Options.**
+- *Ask the model for a fix straight from the issue.* Rejected: nothing would
+  show the change fixes anything, or that the problem was real.
+- *Replay the issue's calls on the fixed agent.* Rejected: a recorded caller
+  does not react to new answers, so the replay drifts after the first change.
+- *A test written from the issue's calls, run on the version that had them.*
+  Chosen. It is the same kind of test as every other one, so once merged it
+  stays in the suite and the problem cannot quietly come back.
+
+**How it works.** "Fix with Prosper AI" on an issue opens a pull request of
+kind `fix` ("Fix: <issue title>", based on live, linked to the issue) and a
+background job on the setup's machinery (events in the conversation, busy
+guard, resumable from the step that failed, cost counted):
+1. *Reproduce.* One request writes a test from the issue and its latest calls
+   (who called, the lines up to the bad turn, why it matters), held to the
+   same checks as any test. It runs 3 times on the version the calls had, and
+   counts only if it fails, below 2 of 3. If it passes, one more try with a
+   sharper caller, told how the first went; if that passes too, Prosper AI
+   says it could not reproduce it ("may be rare or already fixed") and asks
+   whether to go on.
+2. *Propose.* One request for the smallest change (a rule on the step where
+   it goes wrong, a plainer task, a field or an edge, in that order), through
+   the same path as any change of Prosper AI's: AgentBuilder, length limits,
+   retries with the error. Two checks of its own: it must change something,
+   and at most two steps. A change also keeps the function names of edges it
+   does not touch, so fixing a hand-drawn agent does not rename its edges.
+3. *Prove.* The whole suite plus the new test runs on the copy. Failing
+   tests go to the setup's self-check (two rounds per request), which may not
+   rewrite the test that reproduces the issue: that test says what the agent
+   must do. When everything passes: "All checks passed · 8/8 · the new test
+   0/3 on v1 → 3/3". The test keeps its score on the old version in its
+   source, so Changes and Checks show it before and after.
+
+The composer now works on any open pull request, so the person refines a fix
+in words, and the checks run again. "Fix it yourself" opens the same kind of
+pull request in Build, without Prosper AI.
+
+**The issue follows its fix.** One open fix per issue; opening, closing and
+reopening it are logged on the issue, which shows "PR #12 open". Merging
+resolves it in the same write as the new version and remembers that version.
+A finding from a later call can still join an issue a fix resolved: on the
+fixed version or later it reopens it ("Came back in v2") instead of filing
+the same problem again; from a call the old version answered, reviewed after
+the merge, it joins and leaves it resolved.
+
+**What the real run showed.** On the v1 of the setup above, Issue #5
+(Safety: symptoms mid-booking get more booking instead of the nurse callback,
+4 calls). Prosper AI's test, a caller who mentions dizzy spells while times
+are offered, failed 0/3 on v1, each call ending at goodbye without reaching
+Nurse callback. The change: one edge from Offer times to Nurse callback, the
+smallest one that fixes it (Offer times had no way there). The first run had
+the new test failing; one self-check round made the edge's condition plainer,
+and the suite passed 8/8, new test 3/3. 3 min 7 s from the click; Prosper AI's
+requests USD 0.19, each suite about USD 0.65–0.77 (the agent's own gpt-4o).
+A refine ("if they don't want to give a callback number…") first failed: the
+model wrote a test with 5 checks, then one with two judged lines, and the
+change prompt never stated those limits (it does now); twice more its answer
+ran past the token limit. Once through, it added a rule in Nurse callback and
+a test, which failed and was handed back after one round, because rounds were
+counted over the whole pull request (now per request).
+
+**Trade-offs and what is next.** A suite is most of the cost (gpt-4o, every
+test 3 times on every change): running only the new and the failing tests
+while Prosper AI iterates, and the whole suite once before merge, would cut
+it by half or more. A cut-off answer is asked for again once as it was;
+asking for less (only the steps that change, not the whole agent) is next.
 
 ### A test call runs the saved agent, and says where it is
 
