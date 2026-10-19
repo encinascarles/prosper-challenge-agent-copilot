@@ -271,3 +271,12 @@ export function changeIssue(
 ): Promise<Issue> {
   return request(`${agentPath(id)}/issues/${number}/${action}`, 'POST', action === 'snooze' ? { until } : undefined)
 }
+
+/**
+ * Opens a pull request that fixes the issue, on a copy of live. With Prosper
+ * AI, it reproduces the issue with a test and proposes the change there;
+ * without, the pull request is yours to edit in Build.
+ */
+export function fixIssue(id: string, number: number, prosper: boolean): Promise<Pull> {
+  return request(`${agentPath(id)}/issues/${number}/fix`, 'POST', { prosper })
+}

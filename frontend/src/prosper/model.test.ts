@@ -11,6 +11,7 @@ const pull = (prosper: PullSummary['prosper'], state: PullSummary['state'] = 'op
   number: 1,
   title: 'Set up Anna',
   kind: 'setup',
+  fixes: null,
   state,
   base_version: 0,
   merged_version: null,
@@ -25,6 +26,13 @@ describe('prosperStatus', () => {
     expect(prosperStatus(pull({ state: 'working', doing: 'Drawing the steps', usage: null }))).toBe('building')
     expect(prosperStatus(pull({ state: 'waiting', doing: null, usage: null }))).toBe('waiting')
     expect(statusText('waiting')).toBe('Waiting for your answer')
+  })
+
+  it('is working, not building, on anything but a setup', () => {
+    const fix = { ...pull({ state: 'working', doing: 'Reproducing it on v1', usage: null }), kind: 'fix' as const }
+    expect(prosperStatus(fix)).toBe('working')
+    expect(statusText('working')).toBe('Prosper AI is working')
+    expect(prosperBlocker(fix)).toBe('Prosper AI is still working on it.')
   })
 
   it('says nothing once it is done, failed, merged, or never involved', () => {
@@ -94,5 +102,17 @@ describe('sourceText', () => {
     expect(sourceText({ kind: 'answer', pull: 1, quote: 'Waitlist' })).toBe('Your answer in PR #1')
     expect(sourceText({ kind: 'request', pull: 1, quote: 'Shorter' })).toBe('Your request in PR #1')
     expect(sourceText({ kind: 'manual', pull: 2 })).toBeNull()
+  })
+})
+
+describe('fixing an issue', () => {
+  it('folds the rules of a proposed change under it', () => {
+    const items = conversation([event('reproduced'), event('proposed'), event('rule', { text: 'Ask first.' }), event('checks', { by: 'checks' })])
+    expect(items.map((item) => item.kind)).toEqual(['event', 'event', 'event'])
+    expect(items[1].kind === 'event' && items[1].changes.map((c) => c.text)).toEqual(['Ask first.'])
+  })
+
+  it('says a rule came from the issue', () => {
+    expect(sourceText({ kind: 'issue', pull: 5, issue: 3 })).toBe('Issue #3 in PR #5')
   })
 })

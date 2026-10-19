@@ -103,6 +103,8 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 export function issueMeta(issue: IssueSummary, now = new Date()): string {
   const parts = [humanize(issue.step), plural(issue.calls, 'call')]
   if (issue.last_seen) parts.push(`last ${when(issue.last_seen, now)}`)
+  const fix = fixText(issue)
+  if (fix) parts.push(fix)
   if (issue.state === 'snoozed') parts.push(`snoozed ${snoozeText(issue, now)}`)
   if (issue.state === 'ignored') parts.push('ignored')
   return parts.join(' · ')
@@ -126,5 +128,28 @@ export function eventText(event: IssueEvent): string {
       return 'Ignored it · its calls are still counted'
     case 'reopened':
       return 'Reopened it'
+    case 'fixing':
+      return `Opened ${pull(event)} to fix it`
+    case 'unlinked':
+      return `Closed ${pull(event)} without merging · still open`
+    case 'relinked':
+      return `Reopened ${pull(event)} to fix it`
+    case 'fixed':
+      return `Resolved by ${pull(event)} in v${event.version}`
+    case 'came_back':
+      return `Came back in ${event.text ?? 'the fixed version'}: ${from}`
   }
+}
+
+const pull = (event: IssueEvent) => `PR #${event.pull}`
+
+/** The pull request fixing the issue now, if one is open. */
+export const fixing = (issue: Pick<IssueSummary, 'pulls'>) => issue.pulls.find((p) => p.state === 'open') ?? null
+
+/** What the issue's chip says about the pull requests fixing it: "PR #5 open", "Fixed in v2". */
+export function fixText(issue: Pick<IssueSummary, 'pulls' | 'fixed'>): string | null {
+  const open = fixing(issue)
+  if (open) return `PR #${open.number} open`
+  if (issue.fixed) return `Fixed in v${issue.fixed.version} by PR #${issue.fixed.pull}`
+  return null
 }

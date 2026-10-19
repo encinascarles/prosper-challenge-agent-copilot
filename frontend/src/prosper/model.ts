@@ -17,22 +17,26 @@ export const PROSPER = 'Prosper AI'
 export const isProsper = (event: PullEvent) => event.by === PROSPER
 
 /** What Prosper AI is doing on `pull` that the person has to know: building, or waiting for them. */
-export function prosperStatus(pull: PullSummary): 'building' | 'waiting' | null {
+export function prosperStatus(pull: PullSummary): 'building' | 'working' | 'waiting' | null {
   if (pull.state !== 'open' || pull.prosper === null) return null
-  if (pull.prosper.state === 'working') return 'building'
+  // Building is a new agent's setup; on anything else it works on a change.
+  if (pull.prosper.state === 'working') return pull.kind === 'setup' ? 'building' : 'working'
   if (pull.prosper.state === 'waiting') return 'waiting'
   return null
 }
 
+export type Status = NonNullable<ReturnType<typeof prosperStatus>>
+
 /** The status in words, as the top bar says it. */
-export function statusText(status: 'building' | 'waiting'): string {
-  return status === 'building' ? 'Prosper AI is building' : 'Waiting for your answer'
+export function statusText(status: Status): string {
+  if (status === 'building') return 'Prosper AI is building'
+  return status === 'working' ? 'Prosper AI is working' : 'Waiting for your answer'
 }
 
 /** Why Prosper AI's work keeps `pull` from merging, or null. */
 export function prosperBlocker(pull: PullSummary): string | null {
   const status = prosperStatus(pull)
-  if (status === 'building') return 'Prosper AI is still working on it.'
+  if (status === 'building' || status === 'working') return 'Prosper AI is still working on it.'
   if (status === 'waiting') return `Prosper AI needs your answer in ${pullLabel(pull.number)}.`
   return null
 }
@@ -60,6 +64,8 @@ export type Item =
   | { kind: 'batch'; by: string; changes: PullEvent[]; at: string }
 
 const isChange = (event: PullEvent) => event.type === 'rule' || event.type === 'test'
+// Turns whose changes (rules and tests added right after) are folded under them.
+const FOLDS = new Set<PullEvent['type']>(['message', 'proposed'])
 
 export function conversation(events: PullEvent[]): Item[] {
   const items: Item[] = []
@@ -68,7 +74,7 @@ export function conversation(events: PullEvent[]): Item[] {
     if (event.type === 'step') {
       if (last?.kind === 'steps') last.steps.push(event)
       else items.push({ kind: 'steps', steps: [event], at: event.at })
-    } else if (isChange(event) && last?.kind === 'event' && last.event.type === 'message' && last.event.by === event.by) {
+    } else if (isChange(event) && last?.kind === 'event' && FOLDS.has(last.event.type) && last.event.by === event.by) {
       last.changes.push(event)
     } else if (isChange(event) && last?.kind === 'batch' && last.by === event.by) {
       last.changes.push(event)
@@ -121,6 +127,7 @@ export function sourceText(source: Source): string | null {
   if (source.kind === 'answer') return `Your answer${where}`
   if (source.kind === 'request') return `Your request${where}`
   if (source.kind === 'check') return `A failing test${where}`
+  if (source.kind === 'issue') return `Issue #${source.issue}${where}`
   return null
 }
 

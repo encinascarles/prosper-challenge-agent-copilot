@@ -12,7 +12,7 @@ import { Mark } from '@/components/Mark'
 import { cn } from '@/lib/utils'
 import { when } from '@/pulls/model'
 
-import { fileMeta, lineCount, PROSPER, statusText } from './model'
+import { fileMeta, lineCount, PROSPER, statusText, type Status as StatusKind } from './model'
 
 export function Avatar({ who }: { who: string }) {
   if (who === PROSPER) {
@@ -143,15 +143,15 @@ export function Notes({ text }: { text: string }) {
   )
 }
 
-/** "Prosper AI is building" or "Waiting for your answer", as the top bar shows it. */
-export function Status({ status, onClick, className }: { status: 'building' | 'waiting'; onClick?: () => void; className?: string }) {
+/** "Prosper AI is building" (or working) or "Waiting for your answer", as the top bar shows it. */
+export function Status({ status, onClick, className }: { status: StatusKind; onClick?: () => void; className?: string }) {
   return (
     <button
       onClick={onClick}
       title="Open the conversation"
       className={cn('flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12.5px] font-medium text-brand hover:bg-muted', className)}
     >
-      {status === 'building' ? <Loader2 className="size-3.5 animate-spin" /> : <Mark className="h-[12px]" />}
+      {status !== 'waiting' ? <Loader2 className="size-3.5 animate-spin" /> : <Mark className="h-[12px]" />}
       {statusText(status)}
     </button>
   )

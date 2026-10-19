@@ -80,11 +80,18 @@ export type AgentCopy = {
  * you asked it for. `pull` is the pull request it was added in.
  */
 export type Source = {
-  kind: 'manual' | 'guidelines' | 'answer' | 'request' | 'check' // check: from a failing test
+  // check: from a failing test; issue: Prosper AI fixing an issue (the test that
+  // reproduces it, or the rule that fixes it)
+  kind: 'manual' | 'guidelines' | 'answer' | 'request' | 'check' | 'issue'
   pull?: number | null // none for one older than pull requests
   file?: string | null // guidelines: the file it quotes, or "your notes"
   quote?: string | null // the line it comes from, or your answer or request, word for word
+  issue?: number // issue: the issue's number
+  before?: Before // issue, a test: how it went on the version that had the issue
 }
+
+/** How the test that reproduces an issue went on the version that had it: "0/3 on v1". */
+export type Before = { version: number; passed: number; runs: number }
 
 /** A short instruction added to the agent's prompt, on every step (`step` null) or on one. */
 export type Rule = {
@@ -200,6 +207,10 @@ export type PullEvent = {
     | 'answer'
     | 'message'
     | 'interrupted' // Prosper AI's work stopped with the server; a message retries it
+    // Fixing an issue: the test that reproduces it, the change, the checks passing with it.
+    | 'reproduced'
+    | 'proposed'
+    | 'proved'
   by: string // "you", "Prosper AI", or "checks" for a run of its tests
   at: string
   version?: number | null // "opened": copied from; "merged": became; "updated": its new base
@@ -218,6 +229,8 @@ export type PullEvent = {
   details?: string[] | null // "message": one line per thing it decided, folded under it
   rewritten?: boolean | null // "test": Prosper AI rewrote it; `why` says why
   why?: string | null
+  issue?: number | null // "opened": the issue a fix is for
+  test?: string | null // "reproduced", "proved": the test that reproduces the issue
 }
 
 /** What Prosper AI is up to on a pull request it works on. */
@@ -231,10 +244,11 @@ export type Prosper = {
 export type PullSummary = {
   number: number // per agent, shown as "PR #3"
   title: string
-  kind: 'setup' | 'edit' // setup: PR #1 of a new agent
+  kind: 'setup' | 'edit' | 'fix' // setup: PR #1 of a new agent; fix: opened from an issue
   state: 'open' | 'merged' | 'closed'
   base_version: number // the live version it was copied from; 0 for a setup
   merged_version: number | null
+  fixes: number | null // a fix: the issue it fixes
   created_at: string
   updated_at: string
   checks: Checks | null // its latest run on the copy as it is now; null if none ran on it

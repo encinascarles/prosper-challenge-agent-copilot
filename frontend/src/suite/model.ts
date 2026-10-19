@@ -101,7 +101,24 @@ export function rulesByStep(rules: Rule[], steps: string[]): { step: string | nu
  */
 export function orderTests(list: Test[], on: number | null): Test[] {
   const mine = list.filter((test) => addedIn(test, on)).reverse()
+  // The test that reproduces the issue a fix is for comes first of all.
+  mine.sort((a, b) => Number(isFixTest(b)) - Number(isFixTest(a)))
   return [...mine, ...list.filter((test) => !addedIn(test, on))]
+}
+
+/** Whether the test reproduces an issue: Prosper AI wrote it from the issue's calls. */
+export const isFixTest = (test: Test) => test.source.kind === 'issue' && test.source.before !== undefined
+
+/**
+ * How the test that reproduces an issue went before and how it goes now:
+ * "from Issue #3 · 0/3 on v1 → 3/3", or "→ …" while it runs. Null for another test.
+ */
+export function beforeAfter(test: Test, run: SuiteRun | null): string | null {
+  const before = test.source.before
+  if (test.source.kind !== 'issue' || !before) return null
+  const was = `from Issue #${test.source.issue} · ${before.passed}/${before.runs} on v${before.version}`
+  const now = run?.tests.find((t) => t.id === test.id)
+  return now ? `${was} → ${scoreText(score(now, run!.repeats))}` : was
 }
 
 /** What a pull request's copy adds to and takes out of the rules and tests of its base. */

@@ -24,6 +24,7 @@ const pull = (fields: Partial<PullSummary> = {}): PullSummary => ({
   state: 'open',
   base_version: 1,
   merged_version: null,
+  fixes: null,
   created_at: '',
   updated_at: '',
   checks: { state: 'passed', passed: 1, flaky: 0, failing: 0, total: 1 },
@@ -113,6 +114,11 @@ describe('pull request lists', () => {
     expect(pullMeta(pull({ state: 'merged', merged_version: 2 }), 2)).toBe('merged as v2')
     expect(pullMeta(pull({ state: 'closed' }), 3)).toBe('closed · based on v1')
     expect(pullMeta(setup, 0)).toBe('not live yet')
+  })
+
+  it('say which issue a fix is for', () => {
+    expect(pullMeta(pull({ kind: 'fix', fixes: 3 }), 1)).toBe('Fixes Issue #3 · based on v1')
+    expect(pullMeta(pull({ kind: 'fix', fixes: 3 }), 2)).toBe('Needs update · Fixes Issue #3 · based on v1')
   })
 
   it('say what an open one means for calls', () => {

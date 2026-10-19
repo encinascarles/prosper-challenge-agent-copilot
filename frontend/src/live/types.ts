@@ -66,6 +66,8 @@ export type IssueSummary = {
   description: string
   state: IssueState
   snooze: { until?: string; version?: number } | null
+  fixed: { pull: number; version: number } | null // the fix that resolved it, while it stays so
+  pulls: FixPull[] // the pull requests that fix it, newest first
   calls: number
   first_seen: string | null
   last_seen: string | null
@@ -87,13 +89,37 @@ export type IssueCall = {
   lines: (CallLine & { index: number })[] // the bad turn, with the line before it
 }
 
+/** A pull request that fixes an issue, as the issue lists it. */
+export type FixPull = {
+  number: number
+  title: string
+  state: 'open' | 'merged' | 'closed'
+  merged_version: number | null
+}
+
 export type IssueEvent = {
-  type: 'opened' | 'seen' | 'snoozed' | 'woke' | 'resolved' | 'ignored' | 'reopened'
+  type:
+    | 'opened'
+    | 'seen'
+    | 'snoozed'
+    | 'woke'
+    | 'resolved'
+    | 'ignored'
+    | 'reopened'
+    // A pull request fixing it: opened, closed, reopened, merged; and the
+    // problem seen again on the version that fixed it.
+    | 'fixing'
+    | 'unlinked'
+    | 'relinked'
+    | 'fixed'
+    | 'came_back'
   by: string
   at: string
   call?: number | null
   caller?: string | null
   text?: string | null
+  pull?: number | null
+  version?: number | null
 }
 
 export type Issue = IssueSummary & { findings: IssueCall[]; events: IssueEvent[] }
