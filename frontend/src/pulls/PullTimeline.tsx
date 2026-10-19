@@ -99,10 +99,11 @@ function Folded({ lines, changes }: { lines: string[]; changes: PullEvent[] }) {
 // Events that are turns of the conversation rather than lines on the rail.
 const TURNS = new Set<PullEvent['type']>(['request', 'question', 'message', 'answer', 'reproduced', 'proposed', 'proved'])
 
-/** One line for what a proposed change touches: "Changed what Offer times says · 1 rule". */
+/** How much a proposed change touches, over its lines: "1 step · 1 rule". */
 function changeSummary(event: PullEvent, changes: PullEvent[]): string {
+  const count = (n: number, one: string) => (n ? `${n} ${one}${n === 1 ? '' : 's'}` : '')
   const rules = changes.filter((c) => c.type === 'rule' && !c.removed).length
-  const parts = [...(event.details ?? []), rules ? `${rules} ${rules === 1 ? 'rule' : 'rules'}` : '']
+  const parts = [count(event.details?.length ?? 0, 'step'), count(rules, 'rule')]
   return parts.filter(Boolean).join(' · ') || 'No change to the steps'
 }
 

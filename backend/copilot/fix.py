@@ -248,6 +248,11 @@ def _keep_anyway(agent_id: str, number: int, version: dict, candidate: dict) -> 
     )
 
 
+def _words(name: str) -> str:
+    # As the editor shows a step's name: "offer_times" is "Offer times".
+    return name.replace("_", " ").capitalize()
+
+
 def _what(before: dict, after: dict) -> list[str]:
     words = {
         "added": "Added step {}",
@@ -255,7 +260,9 @@ def _what(before: dict, after: dict) -> list[str]:
         "task": "Changed what {} says",
         "edges": "Changed when {} moves on",
     }
-    lines = [words[kind].format(name) for name, kind in artifacts.changed_steps(before, after)]
+    lines = [
+        words[kind].format(_words(name)) for name, kind in artifacts.changed_steps(before, after)
+    ]
     if after.get("persona") != before.get("persona"):
         lines.append("Changed the persona")
     return lines

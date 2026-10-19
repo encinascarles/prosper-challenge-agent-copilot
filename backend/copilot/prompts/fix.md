@@ -25,3 +25,6 @@ Answer with:
   starting with a verb ("Added a rule in Collect details: ask the date of
   birth before opening the chart, as the guidelines say.").
 If the person said something, follow it.
+
+Name steps as words wherever a person or the agent reads them (the reply, an
+edge's description, a task): "Nurse callback", never "nurse_callback".
