@@ -9,6 +9,10 @@
 // it too: &view=pulls, calls or issues for a list, and &pull=<n>, &call=<id> or
 // &issue=<n> for one page of it; &tab=test is the Calls section's Test calls.
 //
+// Ask Prosper AI is a panel at the right of every section (⌘J): which chat it
+// shows stays as the person moves between sections. A change asked for there
+// opens a pull request, and its page opens with Prosper AI at work.
+//
 // While Prosper AI works on the pull request Build is on, it is followed:
 // whenever Prosper AI has changed the copy (drawn the graph, added rules or
 // tests), the editor opens it again, so the graph shows up as soon as it is
@@ -16,6 +20,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AgentEditor } from '@/AgentEditor'
+import { AskButton } from '@/ask/AskButton'
+import { AskPanel } from '@/ask/AskPanel'
+import type { Link } from '@/ask/types'
+import { useAskShortcut } from '@/ask/useAskShortcut'
 import {
   ApiError,
   buildAgent,
@@ -131,6 +139,10 @@ export default function App() {
   // The session of the editor that starts a test call as it opens: "Try it"
   // on a pull request's page.
   const [callIn, setCallIn] = useState<number | null>(null)
+  const [asking, setAsking] = useState(false)
+  const [chat, setChat] = useState<{ agent: string; id: number } | null>(null)
+  const toggleAsk = useCallback(() => setAsking((now) => !now), [])
+  useAskShortcut(toggleAsk)
   const toast = useToast()
 
   const loadAgents = useCallback(() => {
@@ -344,6 +356,37 @@ export default function App() {
     open(shown.agent.id, null)
   }
 
+  // What an answer links to, and the pull request a chat's offer opened.
+  const openLink = (link: Link) => {
+    if (link.kind === 'issue') showPage('issues', link.number)
+    else if (link.kind === 'pull') showPulls(link.number)
+    else showPage('calls', link.number)
+  }
+  const openedFromChat = (pull: Pull) => {
+    if (!shown) return
+    toast.show(`Opened ${pullLabel(pull.number)} · live stays on ${versionLabel(shown.agent.live_version)}`)
+    reload()
+    showPulls(pull.number)
+  }
+  const showChat = (id: number) => {
+    if (!shown) return
+    setChat({ agent: shown.agent.id, id })
+    setAsking(true)
+  }
+  const askButton = <AskButton open={asking} onToggle={toggleAsk} />
+  const askPanel = shown && asking && (
+    <AskPanel
+      key={shown.agent.id}
+      agent={shown.agent}
+      on={shown.on}
+      chatId={chat?.agent === shown.agent.id ? chat.id : null}
+      onChat={(id) => setChat(id === null ? null : { agent: shown.agent.id, id })}
+      onClose={() => setAsking(false)}
+      onLink={openLink}
+      onOpened={openedFromChat}
+    />
+  )
+
   const sections = shown && (
     <Sections
       section={view.section}
@@ -379,7 +422,10 @@ export default function App() {
               />
             }
             sections={sections}
-          />
+          >
+            <span className="ml-auto" />
+            {askButton}
+          </TopBar>
           <main className="flex min-h-0 flex-1">
             <ErrorBoundary>
               {view.section === 'calls' ? (
@@ -406,6 +452,7 @@ export default function App() {
               ) : (
                 <PullsView
                   onIssue={(number) => showPage('issues', number)}
+                  onChat={showChat}
                   agent={shown.agent}
                   page={view.page}
                   onPage={showPulls}
@@ -417,6 +464,7 @@ export default function App() {
                 />
               )}
             </ErrorBoundary>
+            {askPanel}
           </main>
         </div>
       ) : shown && !error ? (
@@ -449,6 +497,8 @@ export default function App() {
               autoCall={callIn === shown.session}
               prosper={fresh?.number === shown.on ? fresh : null}
               onProsper={followed.put}
+              ask={askButton}
+              askPanel={askPanel}
             />
           </ErrorBoundary>
         </div>

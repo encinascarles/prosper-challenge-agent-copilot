@@ -18,6 +18,7 @@ import type {
   VersionSummary,
 } from './types'
 import type { Call, CallSummary, Issue, IssueSummary, Play, SnoozeFor, TestCall, TestCallSummary } from '@/live/types'
+import type { Chat, ChatSummary } from '@/ask/types'
 
 export class ApiError extends Error {
   status: number
@@ -301,4 +302,27 @@ export function changeIssue(
  */
 export function fixIssue(id: string, number: number, prosper: boolean): Promise<Pull> {
   return request(`${agentPath(id)}/issues/${number}/fix`, 'POST', { prosper })
+}
+
+export function listChats(id: string): Promise<ChatSummary[]> {
+  return request(`${agentPath(id)}/chats`)
+}
+
+export function getChat(id: string, chat: number): Promise<Chat> {
+  return request(`${agentPath(id)}/chats/${chat}`)
+}
+
+/**
+ * Ask Prosper AI `text`, in a new chat or in `chat`; it resolves with the
+ * chat once answered. `pull` is the open pull request the person is on: the
+ * answer is about its copy rather than live.
+ */
+export function askProsper(id: string, text: string, chat: number | null, pull: number | null): Promise<Chat> {
+  const path = chat === null ? `${agentPath(id)}/chats` : `${agentPath(id)}/chats/${chat}/messages`
+  return request(path, 'POST', { text, pull })
+}
+
+/** Open the pull request message `index` of the chat offers; Prosper AI starts on it. */
+export function openOffer(id: string, chat: number, index: number): Promise<{ pull: Pull; chat: Chat }> {
+  return request(`${agentPath(id)}/chats/${chat}/messages/${index}/pull`, 'POST')
 }
