@@ -120,7 +120,7 @@ def test_a_call_the_question_names_is_given_whole(client, with_issue, prosper_mo
     chat = _ask(client, agent_id, "Why did Ana's call get offered Thursday?")
 
     facts = prosper_model.asked["ask"][0][1]["content"]
-    assert f"Issue #{ISSUE} · open · booking · step offer_times · 2 calls" in facts
+    assert f"Issue #{ISSUE} · open · found in calls · booking · step offer_times · 2 calls" in facts
     assert "The calls this chat is about, in full:" in facts
     assert "who they were: You are Ana Ruiz, for a check-up." in facts
     assert "I can offer Tuesday at 10 AM or Thursday at 2 PM." in facts

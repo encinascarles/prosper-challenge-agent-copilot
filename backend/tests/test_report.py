@@ -1,15 +1,19 @@
 #
 # Issues a person reports, through the API: a complaint from the clinic opened
-# by hand, numbered like everything else, with the calls that show it. The
-# model is scripted and the calls run on fakes: nothing here reaches OpenAI.
+# by hand, numbered like everything else, with the calls that show it; fixed
+# by Prosper AI from its description alone, and joined by a finding from calls
+# like any other issue. The model is scripted and the calls run on fakes:
+# nothing here reaches OpenAI.
 #
 
 import copy
 
 import pytest
 
+import store
 from copilot import audit
 from tests.conftest import settle
+from tests.test_fix import FIX, TEST
 from tests.test_live import CALLERS, REVIEW
 
 COMPLAINT = {
@@ -22,6 +26,19 @@ COMPLAINT = {
 @pytest.fixture(autouse=True)
 def two_callers(monkeypatch):
     monkeypatch.setattr(audit, "CALLERS_PER_BATCH", (2, 2))
+
+
+@pytest.fixture
+def verdicts(fake_checks):
+    """What the judge says, in order; past the list, every check passes."""
+    said: list[bool] = []
+
+    async def judge(check, transcript):
+        verdict = said.pop(0) if said else True
+        return {"pass": verdict, "detail": "Judged.", "tokens": {"prompt": 1, "completion": 1}}
+
+    fake_checks.judge = judge
+    return said
 
 
 def _report(client, agent_id, status=201, **more) -> dict:
@@ -93,3 +110,63 @@ def test_an_issue_found_in_calls_is_not_edited(client, live_agent, prosper_model
     settle()
     path = f"/api/agents/{agent_id}/issues/2"
     assert client.patch(path, json={"title": "Mine"}).status_code == 409
+
+
+def test_prosper_ai_fixes_a_reported_issue_with_no_calls(
+    client, live_agent, prosper_model, verdicts
+):
+    agent_id = live_agent()
+    number = _report(client, agent_id)["number"]
+    prosper_model.script = {"reproduce": [TEST], "fix": [FIX]}
+    verdicts += [False, False, False]  # the test fails on v1
+
+    opened = client.post(f"/api/agents/{agent_id}/issues/{number}/fix", json={"prosper": True})
+    assert opened.status_code == 201, opened.text
+    settle()
+    pull = client.get(f"/api/agents/{agent_id}/pulls/{opened.json()['number']}").json()
+
+    assert pull["title"] == "Fix: Patient booked on a Sunday"
+    assert [e["type"] for e in pull["events"]] == [
+        "opened",
+        "reproduced",
+        "proposed",
+        "rule",
+        "checks",
+        "proved",
+    ]
+    assert pull["events"][1]["text"] == (
+        "Reproduced it: a test that calls like the one reported fails on v1 · 0/3"
+    )
+    # The caller is written from what the clinic said.
+    [asked] = prosper_model.asked["reproduce"]
+    assert "reported by the clinic (step not known)" in asked[1]["content"]
+    assert "we are closed" in asked[1]["content"]
+    assert "It has no calls" in asked[1]["content"]
+
+    merged = client.post(f"/api/agents/{agent_id}/pulls/{pull['number']}/merge")
+    assert merged.status_code == 200, merged.text
+    issue = client.get(f"/api/agents/{agent_id}/issues/{number}").json()
+    assert (issue["state"], issue["fixed"]) == ("resolved", {"pull": pull["number"], "version": 2})
+
+
+def test_a_finding_from_calls_joins_a_reported_issue(client, live_agent, prosper_model):
+    agent_id = live_agent()
+    number = _report(client, agent_id)["number"]
+    prosper_model.script = {
+        "callers": [CALLERS],
+        "audit": [copy.deepcopy(REVIEW), copy.deepcopy(REVIEW)],
+        # Each call's finding is the clinic's complaint.
+        "grouping": [{"placements": [{"finding": 0, "issue": number}]}] * 2,
+    }
+    client.post(f"/api/agents/{agent_id}/calls/play")
+    settle()
+
+    [issue] = client.get(f"/api/agents/{agent_id}/issues").json()
+    assert (issue["number"], issue["calls"], issue["reported"]) == (number, 2, "clinic")
+    assert issue["title"] == COMPLAINT["title"]  # the person's words stay
+    assert issue["step"] == "offer_times"  # learned from the first call
+    grouping = prosper_model.asked["grouping"][0][1]["content"]
+    assert f"[{number}] step not known · Patient booked on a Sunday" in grouping
+    assert "(reported by a person)" in grouping
+    events = store.issues.get_issue(agent_id, number)["events"]
+    assert [e["type"] for e in events] == ["reported", "seen", "seen"]

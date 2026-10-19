@@ -14,5 +14,9 @@ are two issues.
 An issue marked "(fixed in vN)" was fixed: if a finding is that same problem,
 it still joins it (the fix did not hold, and the issue opens again).
 
+An issue marked "(reported by a person)" was written from a complaint (the
+clinic's email, say), not from a call: it is said in their words and may not
+know its step. A finding joins it when it is what they complained about.
+
 Answer with one placement per finding: the finding's number and the issue's
 number, or 0 for a new issue.

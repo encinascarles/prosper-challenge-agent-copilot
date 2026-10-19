@@ -238,12 +238,17 @@ def _issues(agent_id: str) -> str:
     lines = []
     for issue in store.issues.list_issues(agent_id):
         fixed = f", fixed by PR #{issue['fixed']['pull']}" if issue["fixed"] else ""
+        who = {"you": "reported by the team", "clinic": "flagged by the clinic"}.get(
+            issue["reported"] or "", "found in calls"
+        )
+        last = f", last {_when(issue['last_seen'])}" if issue["last_seen"] else ""
         lines.append(
-            f"- Issue #{issue['number']} · {issue['state']}{fixed} · {issue['severity']} · "
-            f"step {issue['step']} · {issue['calls']} calls, last {_when(issue['last_seen'])}\n"
+            f"- Issue #{issue['number']} · {issue['state']}{fixed} · {who} · "
+            f"{issue['severity'] or 'severity not set'} · step {issue['step'] or 'not known'} · "
+            f"{issue['calls']} calls{last}\n"
             f"  {issue['title']}. {issue['description']}"
         )
-    return "Issues found in its calls, newest first:\n" + ("\n".join(lines) or "(none)")
+    return "Issues, newest first:\n" + ("\n".join(lines) or "(none)")
 
 
 def _tally(calls: list[dict]) -> str:
