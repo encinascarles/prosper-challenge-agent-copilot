@@ -701,7 +701,11 @@ fix machinery on it (`fix.py`, now about a "subject", an issue or a request):
 a test of what was asked, which should fail on live (if it passes, it says
 the agent may already do it and asks whether to go on; one try, as a request
 has no calls to sharpen a caller from), the smallest change, the whole suite,
-the self-check, and "the new test 0/3 on v2 → 3/3". Asking waits for the
+the self-check, and "the new test 0/3 on v2 → 3/3". It always opens on live,
+and the card says so ("Opens a pull request on v2"): asked from a pull
+request, a change to that pull request belongs in its own conversation, which
+the card links to, rather than a second pull request on top of an unmerged
+one. Asking waits for the
 answer in the same HTTP request: one model call, a few seconds, nothing to
 follow in the background.
 

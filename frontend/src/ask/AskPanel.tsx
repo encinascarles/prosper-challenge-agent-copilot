@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils'
 import { Turn } from '@/prosper/parts'
 import { pullLabel, versionLabel } from '@/pulls/model'
 
-import { chatMeta, linkText, suggestions, withQuestion, type Known } from './model'
+import { chatMeta, linkText, offerWhere, suggestions, withQuestion, type Known } from './model'
 import type { Chat, ChatMessage, ChatSummary, Link } from './types'
 
 type Props = {
@@ -141,6 +141,7 @@ export function AskPanel({ agent, on, chatId, onChat, onClose, onLink, onOpened 
             waiting={waiting}
             known={known}
             live={agent.live_version}
+            on={on}
             onLink={onLink}
             onCreate={(index) => create(index)}
           />
@@ -212,6 +213,8 @@ function Empty({ name, live, onAsk }: { name: string; live: boolean; onAsk: (tex
 }
 
 type ThreadProps = {
+  /** The open pull request the panel is on; null for live. */
+  on: number | null
   messages: ChatMessage[]
   waiting: boolean
   known: Known
@@ -220,7 +223,7 @@ type ThreadProps = {
   onCreate: (index: number) => Promise<void>
 }
 
-function Thread({ messages, waiting, known, live, onLink, onCreate }: ThreadProps) {
+function Thread({ messages, waiting, known, live, on, onLink, onCreate }: ThreadProps) {
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' })
@@ -237,7 +240,7 @@ function Thread({ messages, waiting, known, live, onLink, onCreate }: ThreadProp
               ))}
             </div>
           )}
-          {message.offer && <OfferCard offer={message.offer} live={live} onCreate={() => onCreate(i)} onOpen={(n) => onLink({ kind: 'pull', number: n })} />}
+          {message.offer && <OfferCard offer={message.offer} live={live} on={on} onCreate={() => onCreate(i)} onOpen={(n) => onLink({ kind: 'pull', number: n })} />}
         </Turn>
       ))}
       {waiting && (
@@ -267,8 +270,12 @@ function LinkChip({ link, known, onOpen }: { link: Link; known: Known; onOpen: (
   )
 }
 
-/** A change asked for: what it would be, and the button that opens its pull request. */
-function OfferCard({ offer, live, onCreate, onOpen }: { offer: NonNullable<ChatMessage['offer']>; live: number; onCreate: () => Promise<void>; onOpen: (pull: number) => void }) {
+/**
+ * A change asked for: what it would be, and the button that opens its pull
+ * request. It opens on live, always: a pull request the person is on has its
+ * own conversation for changes, which the card points to.
+ */
+function OfferCard({ offer, live, on, onCreate, onOpen }: { offer: NonNullable<ChatMessage['offer']>; live: number; on: number | null; onCreate: () => Promise<void>; onOpen: (pull: number) => void }) {
   const [creating, setCreating] = useState(false)
   return (
     <div className="overflow-hidden rounded-xl border border-brand/40 bg-card">
@@ -278,8 +285,16 @@ function OfferCard({ offer, live, onCreate, onOpen }: { offer: NonNullable<ChatM
           <div className="text-[13.5px] font-semibold">{offer.title}</div>
           <div className="mt-0.5 text-[12.5px] leading-snug">{offer.what}</div>
           <div className="mt-1 text-[12px] text-muted-foreground">
-            {live ? `Based on ${versionLabel(live)} · nothing goes live until you merge` : 'Nothing goes live until you merge'}
+            {offerWhere(live)}
           </div>
+          {offer.pull === null && on !== null && (
+            <div className="mt-1 text-[12px] text-muted-foreground">
+              To change {pullLabel(on)},{' '}
+              <button onClick={() => onOpen(on)} className="font-medium text-foreground hover:underline">
+                write in its conversation
+              </button>
+            </div>
+          )}
         </div>
       </div>
       <div className="flex items-center justify-end border-t bg-muted/30 px-3.5 py-2.5">

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { PullSummary } from '@/agents/types'
 import type { CallSummary, IssueSummary } from '@/live/types'
 
-import { chatMeta, linkText, suggestions, withQuestion } from './model'
+import { chatMeta, linkText, offerWhere, suggestions, withQuestion } from './model'
 
 const NOW = new Date('2026-10-19T12:00:00')
 
@@ -45,5 +45,12 @@ describe('suggestions', () => {
   it('asks about calls only once the agent is live', () => {
     expect(suggestions('Anna', true)[2]).toBe('Which calls went wrong today?')
     expect(suggestions('Anna', false)[2]).toBe('What is left before Anna can go live?')
+  })
+})
+
+describe('offerWhere', () => {
+  it('says the pull request opens on live', () => {
+    expect(offerWhere(2)).toBe('Opens a pull request on v2 · nothing goes live until you merge')
+    expect(offerWhere(0)).toBe('Nothing goes live until you merge')
   })
 })

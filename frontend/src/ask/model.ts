@@ -2,7 +2,7 @@
 
 import type { PullSummary } from '@/agents/types'
 import type { CallSummary, IssueSummary } from '@/live/types'
-import { when } from '@/pulls/model'
+import { versionLabel, when } from '@/pulls/model'
 
 import type { Chat, ChatMessage, ChatSummary, Link } from './types'
 
@@ -45,4 +45,9 @@ export function suggestions(name: string, live: boolean): string[] {
     'Which tests are not passing, and why?',
     live ? 'Which calls went wrong today?' : `What is left before ${agent} can go live?`,
   ]
+}
+
+/** Where the pull request an offer opens goes: always on live, "Opens a pull request on v2". */
+export function offerWhere(live: number): string {
+  return live ? `Opens a pull request on ${versionLabel(live)} · nothing goes live until you merge` : 'Nothing goes live until you merge'
 }
