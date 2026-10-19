@@ -2,10 +2,11 @@
 # Test calls — the voice calls a person places from Build to try the agent,
 # kept apart from the calls callers make.
 #
-# A test call is stored as it ends, by the voice pipeline that ran it
-# (api/test_calls.py): what it ran on (the live version, or a pull request's
-# copy), who placed it, when, how long it really lasted, how it ended, the
-# path the call took and what both sides said. Nobody reviews it on its own
+# A test call is stored as it ends, by the voice pipeline that ran it (its
+# record, TestCallRecord in api/calls.py, which bot.py wires in): what it ran
+# on (the live version, or a pull request's copy), who placed it, when, how
+# long it really lasted, how it ended, the path the call took and what both
+# sides said. Nobody reviews it on its own
 # and it never opens an issue: a person trying an agent is not a caller the
 # clinic missed. Prosper AI can review one when asked; what it found is kept
 # on the test call, and only shown there.
