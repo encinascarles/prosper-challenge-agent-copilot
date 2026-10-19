@@ -9,6 +9,7 @@
 
 import type { AgentConfig, FileRead, PullEvent, PullSummary, Rule, Source, Test } from '@/agents/types'
 
+import { humanize } from '@/draft/names'
 import { pullLabel } from '@/pulls/model'
 
 /** Who Prosper AI is in a pull request's log. */
@@ -138,4 +139,37 @@ export function sameCopy(
 ): boolean {
   const key = (copy: typeof a) => JSON.stringify([copy.config, copy.rules, copy.tests])
   return key(a) === key(b)
+}
+
+/** The step and field names of an agent, as stored: what a text may name in snake case. */
+export function namesIn(config: AgentConfig): string[] {
+  const fields = config.nodes.flatMap((node) => (node.edges ?? []).flatMap((edge) => Object.keys(edge.properties ?? {})))
+  return [...new Set([...config.nodes.map((node) => node.name), ...fields])]
+}
+
+/**
+ * `text` with the stored names it mentions said as words, as the editor shows
+ * them: "go to nurse_callback" reads "go to Nurse callback". Only names with
+ * an underscore: a one-word name ("goodbye") is a word already, and changing
+ * its case mid-sentence would read worse.
+ */
+export function inWords(text: string, names: string[]): string {
+  const snake = names.filter((name) => name.includes('_')).sort((a, b) => b.length - a.length)
+  if (snake.length === 0) return text
+  const escaped = snake.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  return text.replace(new RegExp(`\\b(${escaped.join('|')})\\b`, 'g'), (name) => humanize(name))
+}
+
+/** Events with every text that may name a step or a field said in words. Read at display time. */
+export function eventsInWords(events: PullEvent[], config: AgentConfig): PullEvent[] {
+  const names = namesIn(config)
+  const words = (text: string | null | undefined) => (text ? inWords(text, names) : text)
+  return events.map((event) => ({
+    ...event,
+    text: words(event.text),
+    summary: words(event.summary),
+    why: words(event.why),
+    details: event.details?.map((line) => inWords(line, names)),
+    options: event.options?.map((line) => inWords(line, names)),
+  }))
 }

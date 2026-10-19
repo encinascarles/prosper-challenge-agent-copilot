@@ -12,7 +12,7 @@ import type { Pull } from '@/agents/types'
 import { Mark } from '@/components/Mark'
 import { pullLabel } from '@/pulls/model'
 
-import { isProsper, openQuestions } from './model'
+import { eventsInWords, isProsper, openQuestions } from './model'
 import { Question, Steps } from './parts'
 
 type Props = {
@@ -27,9 +27,10 @@ export function SetupCard({ agentId, pull, onChanged, onOpenPage }: Props) {
   const [picking, setPicking] = useState<number | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const work = pull.prosper
-  const steps = pull.events.filter((event) => event.type === 'step')
-  const questions = openQuestions(pull.events)
-  const failed = work?.state === 'failed' ? pull.events.findLast((e) => e.type === 'message' && isProsper(e)) : undefined
+  const events = eventsInWords(pull.events, pull.config)
+  const steps = events.filter((event) => event.type === 'step')
+  const questions = openQuestions(events)
+  const failed = work?.state === 'failed' ? events.findLast((e) => e.type === 'message' && isProsper(e)) : undefined
 
   const pick = async (question: string, option: number) => {
     setPicking(option)

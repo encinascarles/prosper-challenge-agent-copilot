@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import type { PullEvent, PullSummary } from '@/agents/types'
+import type { AgentConfig, PullEvent, PullSummary } from '@/agents/types'
 
-import { batchText, conversation, openQuestions, prosperBlocker, prosperStatus, sourceText, statusText } from './model'
+import { batchText, conversation, eventsInWords, inWords, openQuestions, prosperBlocker, prosperStatus, sourceText, statusText } from './model'
 
 const at = '2026-10-18T10:00:00.000Z'
 const event = (type: PullEvent['type'], more: Partial<PullEvent> = {}): PullEvent => ({ type, by: 'Prosper AI', at, ...more })
@@ -114,5 +114,30 @@ describe('fixing an issue', () => {
 
   it('says a rule came from the issue', () => {
     expect(sourceText({ kind: 'issue', pull: 5, issue: 3 })).toBe('Issue #3 in PR #5')
+  })
+})
+
+describe('names in what Prosper AI wrote', () => {
+  const names = ['offer_times', 'nurse_callback', 'goodbye', 'callback_number']
+
+  it('says stored step and field names as words', () => {
+    expect(inWords('Added an edge in offer_times that routes to nurse_callback.', names)).toBe(
+      'Added an edge in Offer times that routes to Nurse callback.',
+    )
+    expect(inWords('Reaches nurse_callback · callback_number is recorded', names)).toBe('Reaches Nurse callback · Callback number is recorded')
+  })
+
+  it('leaves one-word names and other words alone', () => {
+    expect(inWords('Say goodbye after offer_timesheet.', names)).toBe('Say goodbye after offer_timesheet.')
+  })
+
+  it('reads every text of an old event that way', () => {
+    const config = {
+      name: 'Anna',
+      initial_node: 'offer_times',
+      nodes: [{ name: 'offer_times', task_messages: [], edges: [{ function: 'f', description: '', target: 'nurse_callback' }] }, { name: 'nurse_callback', task_messages: [] }],
+    } as unknown as AgentConfig
+    const [said] = eventsInWords([event('proposed', { text: 'Changed offer_times.', details: ['Changed when offer_times moves on'] })], config)
+    expect([said.text, said.details]).toEqual(['Changed Offer times.', ['Changed when Offer times moves on']])
   })
 })

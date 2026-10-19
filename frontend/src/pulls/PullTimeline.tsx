@@ -24,12 +24,12 @@ import {
   RefreshCw,
 } from 'lucide-react'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import type { Pull, PullEvent } from '@/agents/types'
 import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
-import { answerTo, batchText, conversation, isProsper } from '@/prosper/model'
+import { answerTo, batchText, conversation, eventsInWords, isProsper } from '@/prosper/model'
 import { FileChips, Notes, Question, Steps, Turn } from '@/prosper/parts'
 
 import { versionLabel, when } from './model'
@@ -399,8 +399,11 @@ function Batch({ by, changes, at }: { by: string; changes: PullEvent[]; at: stri
 // A summary is written to stand alone ("Edited Confirm"); after "You" it reads lower case.
 const lower = (text: string) => text[0].toLowerCase() + text.slice(1)
 
-export function PullTimeline(props: Props) {
-  const { pull, running } = props
+export function PullTimeline(given: Props) {
+  // Step and field names said as words in every text, old events included.
+  const pull = useMemo(() => ({ ...given.pull, events: eventsInWords(given.pull.events, given.pull.config) }), [given.pull])
+  const props = { ...given, pull }
+  const { running } = props
   const items = conversation(pull.events)
   const doing = pull.prosper?.state === 'working' ? pull.prosper.doing : null
   // The spinner goes on Prosper AI's last turn of steps, if that is where it is.
