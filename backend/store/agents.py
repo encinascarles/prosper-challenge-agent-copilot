@@ -129,6 +129,7 @@ def init_db() -> None:
         runs.stop_unfinished(conn)
         calls.stop_unfinished(conn)
         test_calls.stop_unfinished(conn)
+        chats.stop_unfinished(conn)
         stop_prosper(conn)
         if seed is not None:
             # The example is live from the start, as v1: it is there to be called.

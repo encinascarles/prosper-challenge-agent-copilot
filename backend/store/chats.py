@@ -193,6 +193,32 @@ def settle_action(
         return _to_record(_row(conn, agent_id, chat_id), full=True)
 
 
+INTERRUPTED = "Interrupted: the server stopped while it was being done. Check, and ask again."
+
+
+def stop_unfinished(conn: sqlite3.Connection) -> None:
+    """Mark as failed the actions a stopped server left being done.
+
+    Done in the server's process, so after a restart nothing is doing them;
+    left "running", they could be neither retried nor cancelled. Whether the
+    act itself happened is not known: the card says to check.
+    """
+    rows = conn.execute("SELECT id, messages FROM chats WHERE messages LIKE '%\"running\"%'")
+    for row in rows.fetchall():
+        messages = json.loads(row["messages"])
+        stopped = False
+        for message in messages:
+            action = message.get("action") or {}
+            if action.get("state") == "running":
+                action.update(state="failed", error=INTERRUPTED)
+                message.pop("resume", None)
+                stopped = True
+        if stopped:
+            conn.execute(
+                "UPDATE chats SET messages = ? WHERE id = ?", (json.dumps(messages), row["id"])
+            )
+
+
 def open_change(agent_id: str, chat_id: int, index: int, title: str, what: str, work: dict) -> dict:
     """Open a pull request of kind "change" for what the chat asked, up to message `index`.
 

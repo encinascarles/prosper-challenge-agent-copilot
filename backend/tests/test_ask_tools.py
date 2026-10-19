@@ -388,3 +388,20 @@ def test_cards_show_the_words_an_act_will_keep(client, with_issue, new_agent):  
         "Check: Records Leo as the patient",
         "Check: Ends the call",
     ]
+
+
+def test_a_card_left_running_by_a_stopped_server_is_failed_at_startup(
+    client,
+    with_issue,  # noqa: F811
+    prosper_model,
+):
+    agent_id = with_issue()
+    prosper_model.script = {"ask": [SNOOZE]}
+    chat = _ask(client, agent_id, "Snooze Issue #2 for a week.")
+    index = len(chat["messages"]) - 1
+    store.chats.claim_action(agent_id, chat["id"], index, True)  # and the server stops
+
+    store.init_db()
+
+    action = store.chats.get_chat(agent_id, chat["id"])["messages"][index]["action"]
+    assert (action["state"], action["error"]) == ("failed", store.chats.INTERRUPTED)
