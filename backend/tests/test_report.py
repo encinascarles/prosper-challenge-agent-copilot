@@ -214,3 +214,17 @@ def test_a_finding_from_calls_joins_a_reported_issue(client, live_agent, prosper
     assert "(reported by a person)" in grouping
     events = store.issues.get_issue(agent_id, number)["events"]
     assert [e["type"] for e in events] == ["reported", "seen", "seen"]
+
+
+def test_a_reported_issue_is_edited_after_its_step_left_the_live_version(client, live_agent):
+    agent_id = live_agent()
+    number = _report(client, agent_id, step="offer_times")["number"]
+    with store.db.connect() as conn:  # as if a later version renamed the step
+        conn.execute("UPDATE issues SET step = 'old_times' WHERE number = ?", (number,))
+    path = f"/api/agents/{agent_id}/issues/{number}"
+
+    edited = client.patch(path, json={"title": "Offers Sunday slots"})
+    assert edited.status_code == 200, edited.text
+    assert (edited.json()["title"], edited.json()["step"]) == ("Offers Sunday slots", "old_times")
+    # Naming a step is still checked.
+    assert "no step" in client.patch(path, json={"step": "nowhere"}).json()["detail"]
