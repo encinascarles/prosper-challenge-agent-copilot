@@ -35,7 +35,7 @@ export function SeverityIcon({ severity, className }: { severity: Severity; clas
 }
 
 export const smallButton =
-  'flex h-7 items-center gap-1 rounded-md border bg-card px-2.5 text-[12.5px] outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 data-[state=open]:bg-muted disabled:pointer-events-none disabled:opacity-50'
+  'flex h-7 shrink-0 whitespace-nowrap items-center gap-1 rounded-md border bg-card px-2.5 text-[12.5px] outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 data-[state=open]:bg-muted disabled:pointer-events-none disabled:opacity-50'
 
 type PlayProps = {
   /** Calls in, of how many, while a batch is going. */
@@ -52,7 +52,7 @@ export function PlayButton({ arriving, blocker, onPlay, className }: PlayProps) 
     return (
       <span className={cn(smallButton, 'pointer-events-none text-muted-foreground', className)}>
         <Loader2 className="size-3.5 animate-spin" />
-        {arriving.of ? `Calls coming in · ${arriving.done} of ${arriving.of}` : 'Picking callers…'}
+        {arriving.of ? `Calls coming in · ${arriving.done} of ${arriving.of}` : 'Prosper AI is picking callers…'}
       </span>
     )
   }
