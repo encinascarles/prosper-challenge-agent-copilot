@@ -150,6 +150,7 @@ export type TestRun = {
   id: string
   name: string
   runs: TestCall[]
+  skipped?: boolean // another test ran alone in this run: this one has no results
 }
 
 /** A run of a copy's whole suite: each test `repeats` times. */

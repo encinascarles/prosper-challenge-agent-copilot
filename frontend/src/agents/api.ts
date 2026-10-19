@@ -17,7 +17,7 @@ import type {
   Version,
   VersionSummary,
 } from './types'
-import type { Call, CallSummary, Issue, IssueSummary, Play, SnoozeFor } from '@/live/types'
+import type { Call, CallSummary, Issue, IssueSummary, Play, SnoozeFor, TestCall, TestCallSummary } from '@/live/types'
 
 export class ApiError extends Error {
   status: number
@@ -209,6 +209,14 @@ export function runChecks(id: string, of: ChecksOf): Promise<SuiteRun> {
   return request(checksPath(id, of), 'POST')
 }
 
+/**
+ * Runs one test of the copy again, 3 times, leaving the others' results. `alone`
+ * says why it ran in a run of its own instead (the copy changed since the last run).
+ */
+export function runTest(id: string, of: ChecksOf, test: string): Promise<SuiteRun & { alone: string | null }> {
+  return request(`${checksPath(id, of)}/${encodeURIComponent(test)}`, 'POST')
+}
+
 /** Makes the pull request's copy the next version, which goes live. */
 export function mergePull(id: string, number: number): Promise<Pull> {
   return request(`${pullPath(id, number)}/merge`, 'POST')
@@ -252,6 +260,20 @@ export function listCalls(id: string): Promise<{ play: Play | null; calls: CallS
 
 export function getCall(id: string, call: number): Promise<Call> {
   return request(`${agentPath(id)}/calls/${call}`)
+}
+
+/** The voice calls placed from Build, latest first. */
+export function listTestCalls(id: string): Promise<TestCallSummary[]> {
+  return request(`${agentPath(id)}/test-calls`)
+}
+
+export function getTestCall(id: string, call: number): Promise<TestCall> {
+  return request(`${agentPath(id)}/test-calls/${call}`)
+}
+
+/** Has Prosper AI review the test call; what it finds stays on the call, never an issue. */
+export function reviewTestCall(id: string, call: number): Promise<TestCall> {
+  return request(`${agentPath(id)}/test-calls/${call}/review`, 'POST')
 }
 
 export function listIssues(id: string): Promise<IssueSummary[]> {

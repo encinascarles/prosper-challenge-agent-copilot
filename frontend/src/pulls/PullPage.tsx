@@ -379,6 +379,12 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onIssue,
             pull={pull}
             run={checks.run}
             onRerun={() => void checks.rerun().catch((failure: Error) => setProblem(failure.message))}
+            onRunOne={(test) =>
+              void checks.runOne(test).then(
+                (alone) => setProblem(alone),
+                (failure: Error) => setProblem(failure.message),
+              )
+            }
           />
         ) : changes === null || suite === null ? (
           <p className="py-10 text-center text-[13px] text-muted-foreground">Loading…</p>

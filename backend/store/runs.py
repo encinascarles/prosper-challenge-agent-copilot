@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS runs (
     state TEXT NOT NULL,  -- running, done, stopped
     fingerprint TEXT,  -- of the config, rules and tests it ran on
     repeats INTEGER NOT NULL,
-    tests TEXT NOT NULL,  -- [{ id, name, runs: [...] }], in the order of the suite
+    tests TEXT NOT NULL,  -- [{ id, name, runs: [...], skipped? }], in the order of the suite
     started_at TEXT NOT NULL,
     finished_at TEXT
 )"""
@@ -95,10 +95,13 @@ def start_run(
     fingerprint: str,
     pull: Optional[int] = None,
     version: Optional[int] = None,
+    only: Optional[str] = None,
 ) -> dict:
     """Record a new run of `tests` on the pull request or the version, replacing the last one.
 
-    With no tests there is nothing to run: it is done as it starts.
+    With no tests there is nothing to run: it is done as it starts. With
+    `only`, a test's id, that test runs alone: the others are listed as
+    skipped, with no results.
     """
     at = now()
     with connect() as conn:
@@ -115,7 +118,15 @@ def start_run(
                 "UPDATE runs SET version = NULL WHERE agent_id = ? AND version = ?",
                 (agent_id, version),
             )
-        entries = [{"id": test["id"], "name": test["name"], "runs": []} for test in tests]
+        entries = [
+            {
+                "id": test["id"],
+                "name": test["name"],
+                "runs": [],
+                **({"skipped": True} if only is not None and test["id"] != only else {}),
+            }
+            for test in tests
+        ]
         (run_id,) = conn.execute(
             "INSERT INTO runs (agent_id, pull, version, state, fingerprint, repeats, tests,"
             " started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",

@@ -50,13 +50,27 @@ export function summarize(run: SuiteRun | null): Checks | null {
   return { state, passed, flaky, failing, total: run.tests.length }
 }
 
-/** How many of a run's calls are done, of how many. */
+/** How many of a run's calls are done, of how many: those of a test run alone, if one was. */
 export function progress(run: SuiteRun): { done: number; of: number } {
+  const going = run.tests.filter((test) => !test.skipped)
   return {
-    done: run.tests.reduce((sum, test) => sum + test.runs.length, 0),
-    of: run.tests.length * run.repeats,
+    done: going.reduce((sum, test) => sum + test.runs.length, 0),
+    of: going.length * run.repeats,
   }
 }
+
+/**
+ * The run's results by test id, without the tests it has nothing on: those
+ * skipped while another ran alone, and those a run that stopped never called.
+ * A test missing here reads "not run", not "running".
+ */
+export function resultsOf(run: SuiteRun | null | undefined): Map<string, TestRun> {
+  return new Map((run?.tests ?? []).filter((test) => hasResult(run!.state, test)).map((test) => [test.id, test]))
+}
+
+/** Whether a run in `state` has anything on `test`, as `resultsOf` keeps it. */
+export const hasResult = (state: SuiteRun['state'], test: TestRun) =>
+  test.runs.length > 0 || (state === 'running' && !test.skipped)
 
 const tests = (n: number) => `${n} ${n === 1 ? 'test' : 'tests'}`
 
@@ -117,7 +131,7 @@ export function beforeAfter(test: Test, run: SuiteRun | null): string | null {
   const before = test.source.before
   if (test.source.kind !== 'issue' || !before) return null
   const was = `from Issue #${test.source.issue} · ${before.passed}/${before.runs} on v${before.version}`
-  const now = run?.tests.find((t) => t.id === test.id)
+  const now = resultsOf(run).get(test.id)
   return now ? `${was} → ${scoreText(score(now, run!.repeats))}` : was
 }
 

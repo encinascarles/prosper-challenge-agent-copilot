@@ -1,10 +1,11 @@
 // A test opened over the graph, at the right of the canvas where a test call's
 // card goes: what it checks and how its runs went. The run picked is drawn on
 // the graph the way a test call is, so where it went is read on the flow
-// itself. And the card a new test is written in: a name, who calls, and the
-// checks, one per line.
+// itself. It runs again on its own from here, 3 times, leaving the other
+// tests' results as they are. And the card a new test is written in: a name,
+// who calls, and the checks, one per line.
 
-import { Plus, Trash2, X } from 'lucide-react'
+import { Plus, RotateCw, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 
 import type { Test, TestRun } from '@/agents/types'
@@ -44,14 +45,18 @@ type Props = {
   on: string
   /** It was added in the pull request the editor is on, so it can be taken out there. */
   removable: boolean
+  /** The copy's tests are running, this one or others: nothing else runs until they end. */
+  running: boolean
   selected: number
   onSelect: (index: number) => void
   onShowNode: (node: string) => void
+  onRun: () => void
   onRemove: () => void
   onClose: () => void
 }
 
-export function TestCard({ test, names, result, repeats, on, removable, selected, onSelect, onShowNode, onRemove, onClose }: Props) {
+export function TestCard(props: Props) {
+  const { test, names, result, repeats, on, removable, running, selected, onSelect, onShowNode, onRun, onRemove, onClose } = props
   const s = result ? score(result, repeats) : null
   const shown = s ? verdict(s) : null
   const sub =
@@ -74,13 +79,19 @@ export function TestCard({ test, names, result, repeats, on, removable, selected
           onShowNode={onShowNode}
         />
       </div>
-      {removable && (
-        <div className="flex justify-end border-t bg-muted/30 px-4 py-2.5">
-          <Button size="sm" variant="outline" className="text-bad" onClick={onRemove}>
+      <div className="flex items-center gap-2 border-t bg-muted/30 px-4 py-2.5">
+        <span title={running ? 'Waits for the tests running now' : `Runs it 3 times on ${on}; the other tests keep their results`}>
+          <Button size="sm" variant="outline" disabled={running} onClick={onRun}>
+            <RotateCw className={cn('size-3.5', running && shown === 'running' && 'animate-spin')} />
+            {running && shown === 'running' ? 'Running…' : 'Run this test'}
+          </Button>
+        </span>
+        {removable && (
+          <Button size="sm" variant="outline" className="ml-auto text-bad" onClick={onRemove}>
             <Trash2 className="size-3.5" /> Take this test out
           </Button>
-        </div>
-      )}
+        )}
+      </div>
     </section>
   )
 }

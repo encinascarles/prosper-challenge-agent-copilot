@@ -58,6 +58,31 @@ export type Call = CallSummary & {
   usage: Record<string, number>
 }
 
+/** A voice call placed from Build: on live, or on a pull request's copy. Never reviewed unless asked. */
+export type TestCallSummary = {
+  id: number
+  pull: number | null
+  version: number | null
+  by: string
+  at: string
+  seconds: number // timed: it was a voice call
+  ended: 'agent_ended' | 'caller_hung_up'
+  review: 'none' | 'pending' | 'done' | 'failed'
+  outcome: Outcome | null
+  flagged: number // checks it failed, once reviewed
+}
+
+/** What Prosper AI found in a test call: like a call's finding, with no issue. */
+export type TestCallFinding = Omit<CallFinding, 'issue' | 'state'> & { severity: Severity; description: string }
+
+export type TestCall = TestCallSummary & {
+  path: Call['path']
+  transcript: CallLine[]
+  checks: CallCheck[]
+  findings: TestCallFinding[]
+  usage: Record<string, number>
+}
+
 export type IssueSummary = {
   number: number
   title: string

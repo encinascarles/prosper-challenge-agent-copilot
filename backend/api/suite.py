@@ -95,6 +95,7 @@ class TestRun(BaseModel):
     id: str
     name: str
     runs: list[TestCall]  # as they finish, up to the run's `repeats`
+    skipped: bool = False  # another test ran alone in this run: this one has no results
 
 
 class SuiteRun(BaseModel):

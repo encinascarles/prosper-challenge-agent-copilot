@@ -331,6 +331,7 @@ def test_one_test_of_a_version_with_no_run_runs_alone_and_the_run_is_not_done(cl
     run = client.get(url).json()
     assert run["state"] == "stopped"
     assert [len(test["runs"]) for test in run["tests"]] == [0, 0, 3, 0, 0]
+    assert [test["skipped"] for test in run["tests"]] == [True, True, False, True, True]
 
 
 def test_one_test_waits_for_a_run_going_and_must_be_in_the_copy(client, on_pull, monkeypatch):

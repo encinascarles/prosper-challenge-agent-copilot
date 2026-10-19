@@ -91,7 +91,7 @@ def start_test(
             else "This test ran alone: run all for the rest."
         )
         run = store.start_run(
-            agent_id, copy["tests"], simulate.REPEATS, ran_on, pull=pull, version=version
+            agent_id, copy["tests"], simulate.REPEATS, ran_on, pull, version, only=test_id
         )
     _launch(agent_id, run, copy, [test], pull, version, whole=False)
     return run, alone
