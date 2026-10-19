@@ -4,7 +4,10 @@
 // out are logged with what they say, and each finished run of the checks with
 // how it went. Prosper AI takes part in the same timeline, in turns: what it
 // was asked (the notes and files), its progress, its questions with their
-// options, and its messages. The composer under it is the pull request's page's.
+// options, and its messages. Fixing an issue, it shows three cards: the test
+// that reproduces it failing on the live version, the change it proposes
+// (what and why, "See the diff"), and the checks passing with it. The
+// composer under it is the pull request's page's.
 
 import {
   CircleCheck,
@@ -14,6 +17,7 @@ import {
   GitPullRequestArrow,
   GitPullRequestClosed,
   ChevronRight,
+  FileDiff,
   ListChecks,
   Loader2,
   Pencil,
@@ -93,10 +97,17 @@ function Folded({ lines, changes }: { lines: string[]; changes: PullEvent[] }) {
 }
 
 // Events that are turns of the conversation rather than lines on the rail.
-const TURNS = new Set<PullEvent['type']>(['request', 'question', 'message', 'answer'])
+const TURNS = new Set<PullEvent['type']>(['request', 'question', 'message', 'answer', 'reproduced', 'proposed', 'proved'])
+
+/** One line for what a proposed change touches: "Changed what Offer times says · 1 rule". */
+function changeSummary(event: PullEvent, changes: PullEvent[]): string {
+  const rules = changes.filter((c) => c.type === 'rule' && !c.removed).length
+  const parts = [...(event.details ?? []), rules ? `${rules} ${rules === 1 ? 'rule' : 'rules'}` : '']
+  return parts.filter(Boolean).join(' · ') || 'No change to the steps'
+}
 
 /** An event that is a turn of the conversation: what was said, by whom, and what it changed. */
-function TurnOf({ event, changes, pull, onShowChanges, onPick, picking }: Props & { event: PullEvent; changes: PullEvent[] }) {
+function TurnOf({ event, changes, pull, onShowChanges, onShowChecks, onPick, picking }: Props & { event: PullEvent; changes: PullEvent[] }) {
   switch (event.type) {
     case 'request':
       return (
@@ -121,6 +132,65 @@ function TurnOf({ event, changes, pull, onShowChanges, onPick, picking }: Props 
         </Turn>
       )
     }
+    case 'reproduced': {
+      const test = pull.tests.find((t) => t.id === event.test)
+      return (
+        <Turn who={event.by} at={event.at}>
+          <p className="text-[13px] leading-relaxed">{event.text}</p>
+          <button
+            onClick={onShowChecks}
+            className="flex w-full items-center gap-2 rounded-lg border bg-card px-3 py-2 text-left text-[13px] hover:border-foreground/30"
+          >
+            <CircleX className="size-4 shrink-0 text-bad" />
+            <span className="min-w-0 flex-1 truncate font-medium">{test?.name ?? 'The test'}</span>
+            <span className="shrink-0 text-[12px] text-bad tabular-nums">
+              {event.passed}/{event.total} on {versionLabel(event.version ?? 0)}
+            </span>
+          </button>
+          <Folded lines={event.details ?? []} changes={[]} />
+        </Turn>
+      )
+    }
+    case 'proposed':
+      return (
+        <Turn who={event.by} at={event.at} title="proposed a change">
+          <p className="text-[13px] leading-relaxed">{event.text}</p>
+          <div className="overflow-hidden rounded-xl border bg-card">
+            <div className="flex items-center gap-2 border-b px-3.5 py-2">
+              <FileDiff className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">{changeSummary(event, changes)}</span>
+              <button onClick={onShowChanges} className="shrink-0 text-[12.5px] font-medium hover:underline">
+                See the diff
+              </button>
+            </div>
+            <ul className="space-y-1 px-3.5 py-2.5 text-[12.5px] text-muted-foreground">
+              {(event.details ?? []).map((line, i) => (
+                <li key={`d${i}`} className="text-foreground/85">
+                  {line}
+                </li>
+              ))}
+              {changes.map((change, i) => (
+                <li key={`c${i}`} className="leading-snug">
+                  {changeText(change)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Turn>
+      )
+    case 'proved':
+      return (
+        <Turn who={event.by} at={event.at}>
+          <button
+            onClick={onShowChecks}
+            className="flex w-full items-center gap-2 rounded-lg border border-emerald-600/30 bg-card px-3 py-2 text-left text-[13px] hover:border-emerald-600/60"
+          >
+            <CircleCheck className="size-4 shrink-0 text-emerald-600" />
+            <span className="min-w-0 flex-1 font-medium tabular-nums">{event.text}</span>
+            <span className="shrink-0 text-[12px] text-muted-foreground">Details →</span>
+          </button>
+        </Turn>
+      )
     case 'message':
     case 'answer':
       return (
@@ -159,7 +229,12 @@ function Event({ event, pull, live, agentName, onShowChanges, onShowChecks }: Pr
   let text: React.ReactNode
   switch (event.type) {
     case 'opened':
-      text = isProsper(event) ? (
+      text = event.issue ? (
+        <>
+          <Who event={event} /> opened this to fix <span className="text-foreground">Issue #{event.issue}</span> on{' '}
+          <span className="text-foreground">{versionLabel(event.version ?? 0)}</span> · live stays as it is until you merge
+        </>
+      ) : isProsper(event) ? (
         <>
           <Who event={event} /> opened this pull request from your guidelines · it goes live when you merge it
         </>
@@ -197,7 +272,11 @@ function Event({ event, pull, live, agentName, onShowChanges, onShowChecks }: Pr
       text = (
         <span className="text-foreground">
           <Who event={event} /> merged this as <b className="font-semibold">{versionLabel(event.version ?? 0)}</b>
-          <span className="text-muted-foreground"> · calls now run {versionLabel(event.version ?? 0)}</span>
+          <span className="text-muted-foreground">
+            {' '}
+            · calls now run {versionLabel(event.version ?? 0)}
+            {pull.fixes ? ` · Issue #${pull.fixes} is resolved, and its test stays in the suite` : ''}
+          </span>
         </span>
       )
       break
@@ -205,7 +284,7 @@ function Event({ event, pull, live, agentName, onShowChanges, onShowChecks }: Pr
       mark = <GitPullRequestClosed className="size-3 text-muted-foreground" />
       text = (
         <>
-          <Who event={event} /> closed this without merging
+          <Who event={event} /> closed this without merging{pull.fixes ? ` · Issue #${pull.fixes} stays open` : ''}
         </>
       )
       break

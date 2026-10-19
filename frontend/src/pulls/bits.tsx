@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 
 import { versionLabel } from './model'
 
-export function PullIcon({ pull, className }: { pull: PullSummary; className?: string }) {
+export function PullIcon({ pull, className }: { pull: Pick<PullSummary, 'state'>; className?: string }) {
   const base = cn('size-4 shrink-0', className)
   if (pull.state === 'merged') return <GitMerge className={cn(base, 'text-foreground/70')} />
   if (pull.state === 'closed') return <GitPullRequestClosed className={cn(base, 'text-muted-foreground')} />

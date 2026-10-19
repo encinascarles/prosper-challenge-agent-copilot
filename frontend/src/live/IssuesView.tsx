@@ -2,13 +2,14 @@
 // calls, each problem once with all the calls that hit it. A dense list (Open ·
 // Snoozed · Resolved, a Step filter, Snooze and Resolve on hover) and an
 // issue's page: what goes wrong, the calls with the bad turn highlighted, and
-// what happened to it.
+// what happened to it. From the page, an issue is fixed in a pull request:
+// with Prosper AI, which reproduces it and proposes the change, or by hand.
 
-import { ArrowLeft, ArrowRight, ChevronDown, CircleCheck, CircleSlash, Clock, MoreHorizontal, Phone } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronDown, CircleCheck, CircleSlash, Clock, Loader2, MoreHorizontal, Phone } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { changeIssue, getIssue, listIssues } from '@/agents/api'
-import type { Agent } from '@/agents/types'
+import { changeIssue, fixIssue, getIssue, listIssues } from '@/agents/api'
+import type { Agent, Pull } from '@/agents/types'
 import { Mark } from '@/components/Mark'
 import {
   DropdownMenu,
@@ -20,11 +21,11 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
-import { Dot } from '@/pulls/bits'
-import { when } from '@/pulls/model'
+import { Dot, PullIcon } from '@/pulls/bits'
+import { pullLabel, versionLabel, when } from '@/pulls/model'
 
 import { IssueStateIcon, SeverityIcon, smallButton } from './bits'
-import { around, duration, eventText, issueLabel, issueMeta, outcomeText, SEVERITIES, stateText, tabOf, type IssueTab } from './model'
+import { around, duration, eventText, fixing, fixText, issueLabel, issueMeta, outcomeText, SEVERITIES, stateText, tabOf, type IssueTab } from './model'
 import type { Issue, IssueSummary, SnoozeFor } from './types'
 
 type Action = 'snooze' | 'resolve' | 'ignore' | 'reopen'
@@ -35,12 +36,16 @@ type Props = {
   page: number | null
   onPage: (number: number | null) => void
   onCall: (call: number) => void
+  /** A pull request's page. */
+  onPull: (number: number) => void
+  /** A fix was opened for an issue: its page with Prosper AI, Build without. */
+  onFixing: (pull: Pull, prosper: boolean) => void
   /** An issue changed state: what the top bar counts changes with it. */
   onChanged: () => void
   onToast: (text: string) => void
 }
 
-export function IssuesView({ agent, page, onPage, onCall, onChanged, onToast }: Props) {
+export function IssuesView({ agent, page, onPage, onCall, onPull, onFixing, onChanged, onToast }: Props) {
   const [issues, setIssues] = useState<{ agent: string; list: IssueSummary[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [nudge, setNudge] = useState(0)
@@ -78,7 +83,25 @@ export function IssuesView({ agent, page, onPage, onCall, onChanged, onToast }: 
 
   if (error) return <p className="m-auto text-sm text-bad">{error}</p>
   if (page !== null) {
-    return <IssuePage key={page} agent={agent} number={page} onBack={() => onPage(null)} onCall={onCall} onAct={act} />
+    const fix = async (number: number, prosper: boolean) => {
+      try {
+        onFixing(await fixIssue(agent.id, number, prosper), prosper)
+      } catch (failure) {
+        onToast((failure as Error).message)
+      }
+    }
+    return (
+      <IssuePage
+        key={page}
+        agent={agent}
+        number={page}
+        onBack={() => onPage(null)}
+        onCall={onCall}
+        onPull={onPull}
+        onFix={fix}
+        onAct={act}
+      />
+    )
   }
   return <IssueList list={issues?.agent === agent.id ? issues.list : null} onOpen={onPage} onAct={act} />
 }
@@ -232,10 +255,13 @@ type PageProps = {
   number: number
   onBack: () => void
   onCall: (call: number) => void
+  onPull: (number: number) => void
+  onFix: (number: number, prosper: boolean) => Promise<void>
   onAct: Act
 }
 
-function IssuePage({ agent, number, onBack, onCall, onAct }: PageProps) {
+function IssuePage({ agent, number, onBack, onCall, onPull, onFix, onAct }: PageProps) {
+  const [opening, setOpening] = useState<'prosper' | 'yourself' | null>(null)
   const [issue, setIssue] = useState<Issue | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
@@ -249,6 +275,14 @@ function IssuePage({ agent, number, onBack, onCall, onAct }: PageProps) {
     if (changed) setIssue(changed)
   }
   const closed = issue.state === 'resolved' || issue.state === 'ignored'
+  const open = fixing(issue)
+  const chip = fixText(issue)
+  const fix = async (prosper: boolean) => {
+    if (opening) return
+    setOpening(prosper ? 'prosper' : 'yourself')
+    await onFix(issue.number, prosper)
+    setOpening(null)
+  }
   const heading = 'mb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase'
   const button =
     'flex h-8 items-center gap-1.5 rounded-lg border bg-card px-3 text-[13px] outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 data-[state=open]:bg-muted'
@@ -282,10 +316,41 @@ function IssuePage({ agent, number, onBack, onCall, onAct }: PageProps) {
               <span className="flex items-center gap-1">
                 <SeverityIcon severity={issue.severity} /> {SEVERITIES[issue.severity]}
               </span>
+              {chip && (
+                <button
+                  onClick={() => onPull(open?.number ?? issue.fixed!.pull)}
+                  className="ml-1 inline-flex h-6 items-center gap-1 rounded-full border bg-card px-2 text-[12px] font-medium text-foreground hover:bg-muted"
+                >
+                  <PullIcon pull={open ?? { state: 'merged' }} className="size-3.5" /> {chip}
+                </button>
+              )}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {/* The next pull request puts "Fix with Prosper AI" here, first and in black. */}
+            {!closed && !open && (
+              <>
+                <button
+                  onClick={() => void fix(true)}
+                  disabled={opening !== null}
+                  className="flex h-8 items-center gap-2 rounded-lg bg-foreground px-3.5 text-[13px] font-medium text-background outline-none hover:bg-foreground/90 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-70"
+                >
+                  {opening === 'prosper' ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Mark className="h-[13px] [&_polygon:first-child]:fill-background" />
+                  )}
+                  Fix with Prosper AI
+                </button>
+                <button
+                  onClick={() => void fix(false)}
+                  disabled={opening !== null}
+                  title="A pull request of yours that fixes it: change the flow, add a rule or a test in Build, then merge"
+                  className={button}
+                >
+                  Fix it yourself
+                </button>
+              </>
+            )}
             {issue.state === 'open' && (
               <DropdownMenu>
                 <DropdownMenuTrigger className={button}>
@@ -329,6 +394,33 @@ function IssuePage({ agent, number, onBack, onCall, onAct }: PageProps) {
           <Mark className="mt-[3px] h-[14px]" />
           <p className="text-[14px] leading-relaxed">{issue.description}</p>
         </div>
+
+        {issue.pulls.length > 0 && (
+          <div className="mt-8">
+            <div className={heading}>Pull requests · {issue.pulls.length}</div>
+            <div className="divide-y overflow-hidden rounded-xl border bg-card">
+              {issue.pulls.map((pull) => (
+                <button
+                  key={pull.number}
+                  onClick={() => onPull(pull.number)}
+                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left outline-none hover:bg-muted/40 focus-visible:bg-muted/40"
+                >
+                  <PullIcon pull={pull} />
+                  <span className="text-[12.5px] text-muted-foreground tabular-nums">{pullLabel(pull.number)}</span>
+                  <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">{pull.title}</span>
+                  <span className="text-[12.5px] text-muted-foreground tabular-nums">
+                    {pull.state === 'merged'
+                      ? `Merged as ${versionLabel(pull.merged_version ?? 0)}`
+                      : pull.state === 'closed'
+                        ? 'Closed'
+                        : 'Open'}
+                  </span>
+                  <ArrowRight className="size-3.5 text-muted-foreground" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="mt-8">
           <div className={heading}>Calls in this issue · {issue.findings.length}</div>
