@@ -226,6 +226,9 @@ def test_a_reported_issue_is_edited_after_its_step_left_the_live_version(client,
     edited = client.patch(path, json={"title": "Offers Sunday slots"})
     assert edited.status_code == 200, edited.text
     assert (edited.json()["title"], edited.json()["step"]) == ("Offers Sunday slots", "old_times")
+    # The Edit form sends every field, the step unchanged.
+    form = {**COMPLAINT, "step": "old_times", "title": "Offers Sunday times"}
+    assert client.patch(path, json=form).status_code == 200
     # Naming a step is still checked.
     assert "no step" in client.patch(path, json={"step": "nowhere"}).json()["detail"]
 

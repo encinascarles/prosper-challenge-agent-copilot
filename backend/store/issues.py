@@ -454,9 +454,10 @@ def edit(agent_id: str, number: int, changes: dict, calls: list[int], by: str) -
         if row["reported"] is None:
             raise Conflict(f"{label(number)} was found in calls: its words are Prosper AI's.")
         step = changes.get("step", row["step"])
-        # Only a step being named is checked: a title fixed after the step left
-        # the live version still saves.
-        if "step" in changes:
+        # Only a step being changed is checked: a title fixed after the step
+        # left the live version still saves, from the Edit form too (it sends
+        # every field).
+        if step != row["step"]:
             _check_step(conn, agent_id, step)
         fields = {
             "title": changes.get("title", row["title"]),
