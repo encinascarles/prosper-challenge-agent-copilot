@@ -19,10 +19,11 @@
 # person at a sentence nobody wrote. A test's path checks must name steps and
 # fields the agent has.
 #
-# What Prosper AI writes is kept short, and that is checked too, not only
-# asked for: a step's task is at most three short sentences, a rule is one,
-# and a change is held to that only where it changes something. Tests check
-# what the guidelines (or the person's answers) ask for: 2 to 4 checks, at
+# What Prosper AI writes is kept short and in the product's words (steps,
+# "moves on", never edge or node), and that is checked too, not only asked
+# for: a step's task is at most three short sentences, a rule is one, and a
+# change is held to that only where it changes something. Tests check what
+# the guidelines (or the person's answers) ask for: 2 to 4 checks, at
 # most one judged, and never style or wording, which no guideline states and
 # a judge reads differently each time.
 #
@@ -49,6 +50,10 @@ _STYLE = re.compile(
     r"wording|phrasing|short (replies|answers|responses))\b",
     re.IGNORECASE,
 )
+
+# The graph's words, which no one reading a rule, a task or a condition should
+# meet: the UI says steps, "moves on when" and "ends the call".
+_JARGON = re.compile(r"\b(edges?|nodes?|functions?|transitions?|go_to_\w+)\b", re.IGNORECASE)
 
 _TEXT = {"type": "string"}
 _STEP = {"type": ["string", "null"]}
@@ -315,13 +320,33 @@ def _task(node: dict) -> str:
     return "\n\n".join(m["content"] for m in node.get("task_messages", []))
 
 
+def _said(node: dict) -> tuple:
+    # What a person reads of a step: its task, and when it moves on.
+    return (_task(node), tuple(edge.get("description", "") for edge in node.get("edges", [])))
+
+
+def check_words(text: str, what: str) -> None:
+    """Raise ValueError if `text` speaks of the graph rather than in the product's words."""
+    if found := _JARGON.search(text):
+        raise ValueError(
+            f'{what} says "{found.group()}": people read it, so say it in the product\'s words '
+            '(a step, "moves on to", "ends the call"), never edge, node, function or transition.'
+        )
+
+
 def check_concise(config: dict, before: Optional[dict] = None) -> None:
-    """Raise ValueError if a step's task is long. With `before`, only for the tasks that changed."""
-    old = {node["name"]: _task(node) for node in before["nodes"]} if before else {}
+    """Raise ValueError if a step's task is long, or its words are the graph's.
+
+    With `before`, only for the steps whose task or conditions changed.
+    """
+    old = {node["name"]: _said(node) for node in before["nodes"]} if before else {}
     for node in config["nodes"]:
         task = _task(node)
-        if before is not None and old.get(node["name"]) == task:
+        if before is not None and old.get(node["name"]) == _said(node):
             continue
+        check_words(task, f"The task of step '{node['name']}'")
+        for edge in node.get("edges", []):
+            check_words(edge.get("description", ""), f"A condition of step '{node['name']}'")
         count = len(sentences(task))
         if count > MAX_TASK_SENTENCES or len(task) > MAX_TASK_CHARS:
             raise ValueError(
@@ -334,6 +359,7 @@ def check_concise(config: dict, before: Optional[dict] = None) -> None:
 def check_rule_text(text: str) -> None:
     if len(sentences(text)) > 1 or len(text) > MAX_RULE_CHARS:
         raise ValueError(f"Rule '{text}' must be one short sentence.")
+    check_words(text, f"Rule '{text}'")
 
 
 def check_agent(config: dict) -> None:

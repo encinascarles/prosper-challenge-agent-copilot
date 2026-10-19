@@ -18,3 +18,7 @@ Each answer becomes at least one rule, on the step it is about (`step`: its
 exact name): "Patient's full name and date of birth" goes on the step that
 opens the chart, not on every step. `step` null only for what holds on every
 step, the greeting included.
+
+Rules, tasks and conditions are read by people too, in the editor: write
+them in the product's words (a step, "moves on to", "ends the call"), never
+edge, node, function or transition. The JSON keys keep their names.

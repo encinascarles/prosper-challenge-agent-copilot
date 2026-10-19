@@ -24,9 +24,9 @@ Draw what the guidelines describe, and nothing they do not:
   7 steps. Use the clinic's real details (times, addresses) in the tasks.
 - A task is at most 3 short sentences: what to do in this step, nothing else.
 - The agent moves on only by taking an edge, so say so where it matters: the
-  persona tells it to take an edge as soon as its condition holds, never to
-  answer a later step's question in the current one, and to end a call only
-  by taking the edge to the step that ends it, never by saying goodbye itself.
+  persona tells it to move on as soon as a condition holds, never to answer
+  a later step's question in the current one, and to end a call only by
+  moving on to the step that ends it, never by saying goodbye itself.
 - Every step that does not end the call ends its task with when to move on
   ("Once you know what they want, move on."). Each edge's `description` is
   that condition, plainly: "Call this as soon as the caller has said what they
@@ -44,3 +44,7 @@ Draw what the guidelines describe, and nothing they do not:
 - What the agent must always or never do (never give medical advice, how to
   address people) will be written separately as rules. Leave it out of the
   persona and the tasks, unless a step exists for it.
+
+Rules, tasks and conditions are read by people too, in the editor: write
+them in the product's words (a step, "moves on to", "ends the call"), never
+edge, node, function or transition. The JSON keys keep their names.

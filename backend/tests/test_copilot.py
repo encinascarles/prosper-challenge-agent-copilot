@@ -250,6 +250,35 @@ def test_a_task_is_three_short_sentences_and_a_rule_one():
         artifacts.check_rule_text("Be kind. Be quick.")
 
 
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "Ask whether it is their first visit before taking any outgoing edge.",
+        "Never skip the confirm node.",
+        "Call the go_to_goodbye function only once they are done.",
+        "Make the transition to Nurse callback when symptoms come up.",
+    ],
+)
+def test_a_rule_says_steps_and_moving_on_never_the_graph(rule):
+    with pytest.raises(ValueError, match="say it in the product's words"):
+        artifacts.check_rule_text(rule)
+
+
+def test_a_task_or_condition_that_changes_is_held_to_the_product_words():
+    config = _config()
+    config["nodes"][0]["task_messages"][0]["content"] = "Greet them, then take the edge."
+    with pytest.raises(ValueError, match="task of step 'greeting' says \"edge\""):
+        artifacts.check_concise(config)
+    config = _config()
+    config["nodes"][0]["edges"][0]["description"] = "Take this edge once they said why."
+    with pytest.raises(ValueError, match="A condition of step 'greeting' says \"edge\""):
+        artifacts.check_concise(config)
+    # What it does not change is left as it is.
+    artifacts.check_concise(config, before=config)
+    # The product's own words pass.
+    artifacts.check_rule_text("Ask whether it is their first visit before moving on.")
+
+
 def test_at_most_two_questions_each_with_two_or_three_options():
     option = {"label": "Waitlist", "rule": {"step": None, "text": "Offer the waitlist."}}
     question = {"text": "What if no time works?", "options": [option, option]}

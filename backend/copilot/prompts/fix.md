@@ -29,3 +29,7 @@ If the person said something, follow it.
 
 Name steps as words wherever a person or the agent reads them (the reply, an
 edge's description, a task): "Nurse callback", never "nurse_callback".
+
+Rules, tasks and conditions are read by people too, in the editor: write
+them in the product's words (a step, "moves on to", "ends the call"), never
+edge, node, function or transition. The JSON keys keep their names.

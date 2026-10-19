@@ -29,3 +29,7 @@ Answer with:
 - `reply`: one or two sentences to the person on what you changed, starting
   with a verb ("Shortened the greeting in Greeting."). If the request is a
   question, answer it here and change nothing.
+
+Rules, tasks and conditions are read by people too, in the editor: write
+them in the product's words (a step, "moves on to", "ends the call"), never
+edge, node, function or transition. The JSON keys keep their names.
