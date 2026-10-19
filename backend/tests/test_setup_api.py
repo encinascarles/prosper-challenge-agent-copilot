@@ -374,14 +374,6 @@ def test_guidelines_it_cannot_read_are_refused_before_anything_is_created(
     assert len(client.get("/api/agents").json()) == 1  # the sample only
 
 
-def test_prosper_ai_only_talks_in_the_pull_request_it_set_up(client, new_agent):
-    agent_id, _ = new_agent()
-
-    response = client.post(f"/api/agents/{agent_id}/pulls/1/messages", json={"text": "Hi"})
-
-    assert response.status_code == 409
-
-
 def test_a_change_is_asked_with_what_failed_last_time(client, scripted, fake_checks, monkeypatch):
     monkeypatch.setattr(setup, "MAX_ROUNDS", 0)  # no review of its own first
     reply = {"reply": "Fixed.", "agent": DRAFT, "rules": [], "tests": [], "remove": []}

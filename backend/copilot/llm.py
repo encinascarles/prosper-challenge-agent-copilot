@@ -165,6 +165,11 @@ class LLM:
             raise CutOff("The model ran out of room before it finished its answer.")
         return response.output_text or ""
 
+    def add_cost(self, usd: float) -> None:
+        """Count what something else this work paid for cost: the simulated calls it made."""
+        with self._lock:
+            self.usage["usd"] = round(self.usage["usd"] + usd, 4)
+
     def count(self, usage) -> None:
         if usage is None:
             return

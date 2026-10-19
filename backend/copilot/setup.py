@@ -82,6 +82,16 @@ def change(agent_id: str, number: int, text: str, answers: Optional[dict] = None
     return _submit(job, agent_id, number)
 
 
+def fix(agent_id: str, number: int) -> Future:
+    """Fix the issue pull request `number` was opened for (fix.py)."""
+    return _submit({"kind": "fix"}, agent_id, number)
+
+
+def go_on(agent_id: str, number: int, go: bool, hint: Optional[str] = None) -> Future:
+    """Go on with a fix that could not reproduce its issue, or stop, as the person answered."""
+    return _submit({"kind": "go_on", "go": go, "hint": hint}, agent_id, number)
+
+
 def retry(agent_id: str, number: int, job: dict, said: str) -> Future:
     """Run again the job that failed; `said` is what the person wrote to ask for it."""
     return _submit({**job, "said": said}, agent_id, number)
@@ -139,16 +149,24 @@ def after_checks(agent_id: str, number: int) -> None:
     Only after a change of Prosper AI's own (its setup, an answer it turned
     into a rule, its last fix), not after the person's edits, and at most
     MAX_ROUNDS times; then it says what still fails and leaves it to them.
+    On a fix whose checks pass, it says so, with the test that reproduced
+    the issue before and after.
     """
     pull = store.get_pull(agent_id, number)
     if pull is None or pull["state"] != "open" or pull["prosper"] is None:
         return
     work = store.prosper.work_of(agent_id, number)
     checks = pull["checks"]
-    if work.get("state") != "done" or not checks or checks["state"] != "failed":
+    if work.get("state") != "done" or not checks:
         return
     last = next((e for e in reversed(pull["events"]) if e["type"] != "checks"), None)
     if last is None or last["by"] != PROSPER:
+        return
+    if checks["state"] == "passed" and pull["fixes"]:
+        from . import fix
+
+        return fix.proved(agent_id, number)
+    if checks["state"] != "failed":
         return
     rounds = work.get("rounds", 0)
     if rounds >= MAX_ROUNDS:
@@ -169,6 +187,10 @@ def after_checks(agent_id: str, number: int) -> None:
 def _run(llm: LLM, agent_id: str, number: int, job: dict) -> None:
     if job["kind"] == "review":
         return _review(llm, agent_id, number)
+    if job["kind"] in ("fix", "go_on"):
+        from . import fix  # it builds on this module's helpers
+
+        return fix.run(llm, agent_id, number, job)
     # A change asked for before the agent was ever drawn is a setup to finish first.
     if job["kind"] == "build" or not store.get_pull(agent_id, number)["config"]["nodes"]:
         return _build(llm, agent_id, number)
@@ -181,10 +203,35 @@ def _run(llm: LLM, agent_id: str, number: int, job: dict) -> None:
     return _change(llm, agent_id, number, job["text"], answers, extra)
 
 
-def _sources(work: dict) -> str:
-    names = ", ".join(f'"{source["name"]}"' for source in work["sources"])
-    texts = "\n\n".join(f"=== {s['name']} ===\n{s['text']}" for s in work["sources"])
-    return f"The guidelines, from {len(work['sources'])} sources: {names}.\n\n{texts}"
+def _sources(work: dict, agent_id: Optional[str] = None) -> str:
+    """The guidelines as a request reads them: the setup's own, or (`agent_id`) the agent's."""
+    sources = work.get("sources") or (store.prosper.guidelines(agent_id)[0] if agent_id else [])
+    if not sources:
+        return "No written guidelines: the agent's steps and rules are what the clinic asked."
+    names = ", ".join(f'"{source["name"]}"' for source in sources)
+    texts = "\n\n".join(f"=== {s['name']} ===\n{s['text']}" for s in sources)
+    return f"The guidelines, from {len(sources)} sources: {names}.\n\n{texts}"
+
+
+def _answered(agent_id: str, work: dict) -> str:
+    """The clinic's answers to Prosper AI's questions: in this pull request, and in the setup."""
+    asked = [q for q in work.get("questions", []) if q["answer"]]
+    if not work.get("sources"):
+        asked = store.prosper.guidelines(agent_id)[1] + asked
+    return "\n".join(f'- "{q["text"]}" → "{q["answer"]}"' for q in asked) or "(none)"
+
+
+def _fixes(agent_id: str, pull: dict) -> str:
+    """What a fix is for, for any request on it: the issue, as it was found in calls."""
+    if not pull.get("fixes"):
+        return ""
+    issue = store.issues.get_issue(agent_id, pull["fixes"])
+    if issue is None:
+        return ""
+    return (
+        f"\n\nThis pull request fixes Issue #{issue['number']}, found in {issue['calls']} calls: "
+        f"{issue['title']}. {issue['description']}"
+    )
 
 
 def _agent(config: dict) -> str:
@@ -318,9 +365,10 @@ def _change(
     if extra:
         request += f'\nThey then wrote: "{extra}"'
     content = (
-        f"{_sources(work)}\n\n{_agent(pull['config'])}\n\nIts rules:\n{rules or '(none)'}"
+        f"{_sources(work, agent_id)}\n\nThe clinic's answers:\n{_answered(agent_id, work)}"
+        f"\n\n{_agent(pull['config'])}\n\nIts rules:\n{rules or '(none)'}"
         f"\n\nIts tests:\n{tests or '(none)'}{_failing(agent_id, number)}"
-        f"\n\nThe request: {request}"
+        f"{_fixes(agent_id, pull)}\n\nThe request: {request}"
     )
     changed: dict = {}
 
@@ -398,22 +446,23 @@ def _review(llm: LLM, agent_id: str, number: int) -> None:
             f"  caller: {test.get('caller', '')}\n  checks: {'; '.join(test.get('checks', []))}\n"
             f"{_the_call(bad[0])}"
         )
-    answered = "\n".join(
-        f'- "{q["text"]}" → "{q["answer"]}"' for q in work.get("questions", []) if q["answer"]
-    )
     rules = "\n".join(
         f"- [{rule['id']}] {rule['step'] or 'every step'}: {rule['text']}" for rule in pull["rules"]
     )
     content = (
-        f"{_sources(work)}\n\nThe clinic's answers:\n{answered or '(none)'}\n\n"
-        f"{_agent(pull['config'])}\n\nIts rules:\n{rules or '(none)'}\n\n"
-        "The failing tests:\n" + "\n\n".join(calls)
+        f"{_sources(work, agent_id)}\n\nThe clinic's answers:\n{_answered(agent_id, work)}\n\n"
+        f"{_agent(pull['config'])}\n\nIts rules:\n{rules or '(none)'}{_fixes(agent_id, pull)}"
+        "\n\nThe failing tests:\n" + "\n\n".join(calls)
     )
     removable = {rule["id"] for rule in pull["rules"] if added_in(rule, number)}
+    # The test that reproduces the issue a fix is for says what the agent must do.
+    kept = {test["id"] for test in pull["tests"] if test["source"]["kind"] == "issue"}
     reviewed: dict = {}
 
     def review_ok(answer: dict) -> None:
-        reviewed["config"] = artifacts.check_review(answer, failing, pull["config"], removable)
+        reviewed["config"] = artifacts.check_review(
+            answer, failing, pull["config"], removable, kept
+        )
 
     answer = llm.ask("review", content, artifacts.REVIEW, review_ok)
     config = reviewed["config"]
