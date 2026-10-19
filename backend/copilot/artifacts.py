@@ -68,12 +68,16 @@ def _list(items: dict) -> dict:
     return {"type": "array", "items": items}
 
 
+# `options` last. With `required` after it, the model wanted to close the
+# field there; strict mode refuses that, and the only thing left it could
+# write was blank space, until the answer ran out of room (real changes cut
+# off at 12,000 tokens). Ending on `options` lets it close where it wants to.
 _FIELD = _object(
     name=_TEXT,
     description=_TEXT,
     type={"type": "string", "enum": ["string", "number", "boolean", "choice"]},
-    options=_list(_TEXT),
     required={"type": "boolean"},
+    options=_list(_TEXT),
 )
 _EDGE = _object(description=_TEXT, target=_TEXT, fields=_list(_FIELD))
 _NODE = _object(name=_TEXT, task=_TEXT, end={"type": "boolean"}, edges=_list(_EDGE))
@@ -220,8 +224,8 @@ def from_config(config: dict) -> dict:
                         "name": key,
                         "description": prop.get("description", ""),
                         "type": "choice" if choice else prop.get("type", "string"),
-                        "options": prop.get("enum", []),
                         "required": key in required,
+                        "options": prop.get("enum", []),
                     }
                 )
             edges.append(
