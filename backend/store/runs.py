@@ -176,6 +176,8 @@ def rerun_test(run_id: int, test_id: str) -> dict:
         for test in tests:
             if test["id"] == test_id:
                 test["runs"] = []
+                # Skipped when another test ran alone in this run: it runs now.
+                test.pop("skipped", None)
         conn.execute(
             "UPDATE runs SET tests = ?, state = 'running', finished_at = NULL WHERE id = ?",
             (json.dumps(tests), run_id),

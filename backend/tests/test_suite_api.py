@@ -334,6 +334,23 @@ def test_one_test_of_a_version_with_no_run_runs_alone_and_the_run_is_not_done(cl
     assert [test["skipped"] for test in run["tests"]] == [True, True, False, True, True]
 
 
+def test_a_second_test_run_alone_goes_into_the_first_ones_run_and_counts(client):
+    (sample,) = client.get("/api/agents").json()
+    url = f"/api/agents/{sample['id']}/versions/1/checks"
+    tests = client.get(f"/api/agents/{sample['id']}/versions/1").json()["tests"]
+
+    first = client.post(f"{url}/{tests[0]['id']}").json()
+    checks.wait()
+    second = client.post(f"{url}/{tests[1]['id']}").json()
+    checks.wait()
+
+    assert (second["id"], second["alone"]) == (first["id"], None)
+    run = client.get(url).json()
+    assert [len(test["runs"]) for test in run["tests"]] == [3, 3, 0, 0, 0]
+    assert [test["skipped"] for test in run["tests"]] == [False, False, True, True, True]
+    assert run["state"] == "stopped"  # three tests never ran
+
+
 def test_one_test_waits_for_a_run_going_and_must_be_in_the_copy(client, on_pull, monkeypatch):
     monkeypatch.setattr(checks, "_run", _never_runs)
     pull = _add_test(client, on_pull, ["Reaches Confirm"])
