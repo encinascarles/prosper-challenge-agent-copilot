@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest'
 
-import { arriving, around, byStep, callMeta, duration, eventText, fixText, issueMeta, outcomeText, snoozeText, stateText, tabOf } from './model'
-import type { CallSummary, IssueSummary, Play } from './types'
+import {
+  arriving,
+  around,
+  byStep,
+  callMeta,
+  duration,
+  eventText,
+  fixText,
+  issueMeta,
+  outcomeText,
+  playCostText,
+  snoozeText,
+  stateText,
+  tabOf,
+  testCallMeta,
+  testCallTitle,
+} from './model'
+import type { CallSummary, IssueSummary, Play, TestCallSummary } from './types'
 
 const NOW = new Date('2026-10-19T10:50:00')
 
@@ -109,5 +125,50 @@ describe('fixing an issue', () => {
     expect(eventText({ type: 'fix_merged', by: 'you', at, pull: 5, version: 2, text: 'ignored' })).toBe('PR #5 merged as v2 · issue left ignored')
     expect(eventText({ type: 'fix_merged', by: 'you', at, pull: 5, version: 2, text: 'resolved' })).toBe('PR #5 merged as v2 · issue already resolved')
     expect(eventText({ type: 'came_back', by: 'Prosper AI', at, text: 'v2', caller: 'Ana' })).toBe('Came back in v2: Ana’s call')
+  })
+})
+
+describe('test calls', () => {
+  const test: TestCallSummary = {
+    id: 4,
+    pull: 3,
+    version: null,
+    by: 'you',
+    at: new Date('2026-10-19T10:45:00').toISOString(),
+    seconds: 42,
+    ended: 'caller_hung_up',
+    review: 'none',
+    outcome: null,
+    flagged: 0,
+  }
+
+  it('says what it ran on: a pull request, or the live version', () => {
+    expect(testCallTitle(test)).toBe('Test call · PR #3')
+    expect(testCallTitle({ pull: null, version: 2 })).toBe('Test call · v2')
+  })
+
+  it('says who placed it, its real length, how it ended and, once reviewed, what was flagged', () => {
+    expect(testCallMeta(test, NOW)).toBe('by you · 10:45 AM · 0:42 · Hung up')
+    expect(testCallMeta({ ...test, ended: 'agent_ended', review: 'done', flagged: 2 }, NOW)).toBe(
+      'by you · 10:45 AM · 0:42 · The agent ended it · 2 flagged',
+    )
+  })
+})
+
+describe('the cost of a batch', () => {
+  const play: Play = {
+    id: 7,
+    version: 2,
+    state: 'done',
+    callers: 11,
+    usage: { callers: 0.02, calls: 0.31, reviews: 0.15 },
+    error: null,
+    started_at: '',
+    finished_at: '',
+  }
+
+  it('is said whole, with its calls, and "so far" while it comes in', () => {
+    expect(playCostText(play)).toBe('Last batch: 11 calls · USD 0.48')
+    expect(playCostText({ ...play, state: 'working' })).toBe('This batch so far: USD 0.48')
   })
 })

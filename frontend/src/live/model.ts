@@ -4,7 +4,7 @@
 import { humanize } from '@/draft/names'
 import { when } from '@/pulls/model'
 
-import type { CallLine, CallSummary, IssueEvent, IssueState, IssueSummary, Outcome, Play, Severity } from './types'
+import type { CallLine, CallSummary, IssueEvent, IssueState, IssueSummary, Outcome, Play, Severity, TestCallSummary } from './types'
 
 export const issueLabel = (number: number) => `Issue #${number}`
 
@@ -47,6 +47,30 @@ export function arriving(play: Play | null, calls: CallSummary[]): { done: numbe
 
 /** What a batch cost, in USD, from what each part spent. */
 export const playCost = (play: Play) => Object.values(play.usage).reduce((sum, usd) => sum + usd, 0)
+
+/** What a batch cost, said under the Calls banner: never cut, never a pill. */
+export function playCostText(play: Play): string {
+  const usd = `USD ${playCost(play).toFixed(2)}`
+  if (play.state === 'working') return `This batch so far: ${usd}`
+  const calls = play.callers ? `${play.callers} ${play.callers === 1 ? 'call' : 'calls'} · ` : ''
+  return `Last batch: ${calls}${usd}`
+}
+
+/** What a test call ran on: "Test call · PR #3", or "Test call · v2" on live. */
+export function testCallTitle(call: Pick<TestCallSummary, 'pull' | 'version'>): string {
+  return `Test call · ${call.pull !== null ? `PR #${call.pull}` : `v${call.version}`}`
+}
+
+/** How a test call ended, in words. */
+export const endedText = (call: Pick<TestCallSummary, 'ended'>) =>
+  call.ended === 'agent_ended' ? 'The agent ended it' : 'Hung up'
+
+/** The muted line under a test call: who · when · length · how it ended · what Prosper AI found. */
+export function testCallMeta(call: TestCallSummary, now = new Date()): string {
+  const parts = [`by ${call.by}`, when(call.at, now), duration(call.seconds), endedText(call)]
+  if (call.review === 'done' && call.flagged) parts.push(`${call.flagged} flagged`)
+  return parts.join(' · ')
+}
 
 /** A transcript cut where the step changes, each line with its index in the whole call. */
 export function byStep(lines: CallLine[]): { step: string | null; lines: (CallLine & { index: number })[] }[] {

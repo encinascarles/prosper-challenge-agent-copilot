@@ -7,7 +7,7 @@
 // does what the editor is on (&pr=<n>): the live version, or one open pull
 // request. An agent that is not live yet opens on its PR #1. The section is in
 // it too: &view=pulls, calls or issues for a list, and &pull=<n>, &call=<id> or
-// &issue=<n> for one page of it.
+// &issue=<n> for one page of it; &tab=test is the Calls section's Test calls.
 //
 // While Prosper AI works on the pull request Build is on, it is followed:
 // whenever Prosper AI has changed the copy (drawn the graph, added rules or
@@ -39,7 +39,7 @@ import { TopBar } from '@/components/TopBar'
 import { useToast } from '@/components/useToast'
 import { VersionPill } from '@/components/VersionPill'
 import { Button } from '@/components/ui/button'
-import { CallsView } from '@/live/CallsView'
+import { CallsView, type CallsTab } from '@/live/CallsView'
 import { IssuesView } from '@/live/IssuesView'
 import { EDITS_TITLE, openedForEdits, pullLabel, versionLabel, type On } from '@/pulls/model'
 import { PullsView } from '@/pulls/PullsView'
@@ -51,6 +51,7 @@ const PULL_PARAM = 'pr'
 const VIEW_PARAM = 'view'
 // The page of each section that has pages, by its parameter.
 const PAGE_PARAMS: Partial<Record<Section, string>> = { pulls: 'pull', calls: 'call', issues: 'issue' }
+const TAB_PARAM = 'tab'
 
 /** The open agent and the copy of it the editor is on. */
 type Opened = {
@@ -96,22 +97,26 @@ function writeUrl(id: string | null, on: On) {
   history.replaceState(null, '', url)
 }
 
+type View = { section: Section; page: number | null; tab: CallsTab }
+
 /** The section and, in one with pages, the page shown. */
-function writeView(section: Section, page: number | null) {
+function writeView({ section, page, tab }: View) {
   const url = new URL(location.href)
   setParam(url, VIEW_PARAM, section === 'build' ? null : section)
+  setParam(url, TAB_PARAM, section === 'calls' && tab === 'test' ? 'test' : null)
   for (const [of, param] of Object.entries(PAGE_PARAMS)) {
     setParam(url, param, of === section && page !== null ? String(page) : null)
   }
   history.replaceState(null, '', url)
 }
 
-function readView(): { section: Section; page: number | null } {
+function readView(): View {
   const params = new URLSearchParams(location.search)
   const wanted = params.get(VIEW_PARAM) as Section | null
   const section = wanted && wanted in PAGE_PARAMS ? wanted : 'build'
   const param = PAGE_PARAMS[section]
-  return { section, page: param ? Number(params.get(param)) || null : null }
+  const tab = params.get(TAB_PARAM) === 'test' ? 'test' : 'calls'
+  return { section, page: param ? Number(params.get(param)) || null : null, tab }
 }
 
 export default function App() {
@@ -183,9 +188,9 @@ export default function App() {
     showView(settings ? 'build' : view.section, null)
   }
 
-  const showView = (section: Section, page: number | null) => {
-    setView({ section, page })
-    writeView(section, page)
+  const showView = (section: Section, page: number | null, tab: CallsTab = 'calls') => {
+    setView({ section, page, tab })
+    writeView({ section, page, tab })
   }
   const pick = (id: string, settings = false) => {
     if (id !== agentId && leave()) go(id, settings)
@@ -254,9 +259,9 @@ export default function App() {
   }
 
   // A section other than Build: its list, or one of its pages.
-  const showPage = (section: Section, page: number | null) => {
+  const showPage = (section: Section, page: number | null, tab: CallsTab = 'calls') => {
     if (view.section === 'build' && !leave()) return
-    showView(section, page)
+    showView(section, page, tab)
   }
   const showPulls = (page: number | null) => showPage('pulls', page)
 
@@ -381,7 +386,8 @@ export default function App() {
                 <CallsView
                   agent={shown.agent}
                   page={view.page}
-                  onPage={(call) => showPage('calls', call)}
+                  tab={view.tab}
+                  onPage={(call, tab) => showPage('calls', call, tab)}
                   onIssue={(number) => showPage('issues', number)}
                   onChanged={reload}
                   onToast={toast.show}
