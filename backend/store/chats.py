@@ -50,7 +50,7 @@ def _to_record(row: sqlite3.Row, full: bool) -> dict:
         "title": row["title"],
         # The pull requests its offers opened, in order: what a list says of it.
         "pulls": [offer["pull"] for offer in offers if offer.get("pull")],
-        "messages": len(messages),
+        "count": len(messages),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -152,7 +152,5 @@ def open_offer(agent_id: str, chat_id: int, index: int, work: dict) -> tuple[dic
             chat=chat,
         )
         offer["pull"] = pull["number"]
-        conn.execute(
-            "UPDATE chats SET messages = ? WHERE id = ?", (json.dumps(messages), chat_id)
-        )
+        conn.execute("UPDATE chats SET messages = ? WHERE id = ?", (json.dumps(messages), chat_id))
         return pull, _to_record(_row(conn, agent_id, chat_id), full=True)
