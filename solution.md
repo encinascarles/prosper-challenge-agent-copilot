@@ -787,6 +787,19 @@ Three places learned to read a reported issue:
   Nothing is written: the before and after are shown side by side and kept
   as a whole or discarded. The person's description always stays.
 
+The title is optional: "What happened" is all a new issue needs, because a
+pasted email has no title and making one up is the same chore. Left empty,
+Prosper AI writes it when the issue opens: one small request with what
+happened only, a line of at most 60 characters held like its other words (no
+stored names, no graph words, refused and asked again with the reason), and
+"Wrote the title from what happened" in the activity. The issue is stored
+first under the first line of what happened, then retitled: a report the
+store refuses (no such step, not live) costs no request, and a request that
+fails still leaves the report, under that first line. It is done while the
+person waits (a few seconds, "Saving…") rather than in the background, so
+the page they land on already has its title. Tidy is unchanged: it can still
+propose a plainer title along with the step, severity and calls.
+
 **What the real run showed.** On the Prosper Scheduler agent (v1 live, 12
 calls): a pasted front-desk email ("we could not find them in our system …
 Anna never asked them for their date of birth"), flagged by the clinic.
@@ -800,6 +813,9 @@ calls ("offers Thursday at 2 PM, we close at noon on Thursdays"):
 reproduced from the description alone, 0/3 on v2, a rule in Offer times,
 6/7 with one flaky, new test 0/3 → 3/3. Real spend for both: about USD 1.3,
 nearly all of it the suites.
+Later, with the title left empty, the clinic's "booked the appointment
+under HER name, not the child's" email opened as "Books child's appointment
+under the parent's name", first try, 4.2 s.
 
 **Trade-offs and what is next.** Tidy reads calls in one line each, so it
 finds what shows in the path and the recorded values (a missing date of
