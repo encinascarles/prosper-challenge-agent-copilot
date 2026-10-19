@@ -20,7 +20,7 @@ import pytest
 import store
 from copilot import artifacts, audit
 from tests.conftest import settle
-from tests.test_live import CALLERS, CLEAN, REVIEW
+from tests.test_live import CALLERS, REVIEW
 
 EXAMPLE = json.loads((Path(__file__).parent.parent / "example_flow.json").read_text())
 ISSUE = 2  # PR #1 took number 1; the first issue is #2
@@ -65,7 +65,9 @@ def with_issue(client, live_agent, prosper_model):
         agent_id = live_agent()
         prosper_model.script = {
             "callers": [CALLERS],
-            "audit": [copy.deepcopy(REVIEW), copy.deepcopy(CLEAN)],
+            # Both callers hit the same problem: one issue, two calls.
+            "audit": [copy.deepcopy(REVIEW), copy.deepcopy(REVIEW)],
+            "grouping": [{"placements": [{"finding": 0, "issue": ISSUE}]}],
         }
         client.post(f"/api/agents/{agent_id}/calls/play")
         settle()
@@ -107,7 +109,9 @@ def test_prosper_ai_reproduces_the_issue_proposes_a_fix_and_proves_it(
     assert pull["title"] == "Fix: Offers Thursday afternoons"
     assert _types(pull) == ["opened", "reproduced", "proposed", "rule", "checks", "proved"]
     reproduced = pull["events"][1]
-    assert reproduced["text"] == "Reproduced it: a test that calls like Ana Ruiz fails on v1 · 0/3"
+    assert reproduced["text"] == (
+        "Reproduced it: a test that calls like these 2 callers fails on v1 · 0/3"
+    )
     assert (reproduced["passed"], reproduced["total"], reproduced["version"]) == (0, 3, 1)
     [test] = pull["tests"]
     assert test["id"] == reproduced["test"]
@@ -132,6 +136,7 @@ def test_prosper_ai_reproduces_the_issue_proposes_a_fix_and_proves_it(
     [asked] = prosper_model.asked["reproduce"]
     assert "Offers Thursday afternoons" in asked[1]["content"]
     assert "Ana Ruiz, on v1" in asked[1]["content"]
+    assert "Tom Lee, on v1" in asked[1]["content"]
     [proposal] = prosper_model.asked["fix"]
     assert "on v1: passed 0 of 3 calls" in proposal[1]["content"]
 
