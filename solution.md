@@ -630,16 +630,35 @@ and the suite passed 8/8, new test 3/3. 3 min 7 s from the click; Prosper AI's
 requests USD 0.19, each suite about USD 0.65–0.77 (the agent's own gpt-4o).
 A refine ("if they don't want to give a callback number…") first failed: the
 model wrote a test with 5 checks, then one with two judged lines, and the
-change prompt never stated those limits (it does now); twice more its answer
-ran past the token limit. Once through, it added a rule in Nurse callback and
-a test, which failed and was handed back after one round, because rounds were
-counted over the whole pull request (now per request).
+change prompt never stated those limits (it does now). Then its answers ran
+past the token limit. Replayed, each one wrote a few hundred characters of
+the agent and then blank space to the limit, right after a choice field's
+`options`: the model wanted to close the field there, strict mode required
+`required` next, and blank space was all it could still write. With
+`required` before `options`, the same request finished 3 times out of 3, in
+about 2,600 tokens. Once through, the refine added a rule in Nurse callback
+and a test, which was handed back after one round because rounds were
+counted over the whole pull request (now per request). Asked to fix it, the
+two rounds made the agent route symptoms more firmly but the test still
+failed: its judged check wanted the number on file said again after the
+caller declined, though the agent had already offered it. One more message
+saying so, and Prosper AI rewrote the test: 6/9 passed, 3 flaky, the new
+test 3/3. Merged as v2, the issue resolved itself ("Fixed in v2 by
+PR #12"). A batch of 12 calls on v2 (USD 0.48) left it resolved: the one
+caller who mentioned a symptom mid-booking went to Nurse callback. It filed
+one new issue (a call left open after the caller was done) and added a call
+to an existing one.
+
+All of it, real spend: about USD 8. Prosper AI's requests were 1.07 (the
+reproduction's calls included), 8 suite runs on the pull request about 5.9,
+replaying the cut-off request about 0.6, the v2 batch 0.48.
 
 **Trade-offs and what is next.** A suite is most of the cost (gpt-4o, every
 test 3 times on every change): running only the new and the failing tests
 while Prosper AI iterates, and the whole suite once before merge, would cut
-it by half or more. A cut-off answer is asked for again once as it was;
-asking for less (only the steps that change, not the whole agent) is next.
+it by half or more. Asking for less (only the steps that change, not the
+whole agent) would make each change cheaper and leave less room to go wrong.
+Prosper AI sometimes still names steps in snake case in its own replies.
 
 ### A test call runs the saved agent, and says where it is
 
