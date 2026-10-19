@@ -228,3 +228,14 @@ def test_a_reported_issue_is_edited_after_its_step_left_the_live_version(client,
     assert (edited.json()["title"], edited.json()["step"]) == ("Offers Sunday slots", "old_times")
     # Naming a step is still checked.
     assert "no step" in client.patch(path, json={"step": "nowhere"}).json()["detail"]
+
+
+def test_a_reported_issue_keeps_its_title_and_description(client, live_agent):
+    agent_id = live_agent()
+    number = _report(client, agent_id)["number"]
+    path = f"/api/agents/{agent_id}/issues/{number}"
+    for blank in ({"title": None}, {"description": None}):
+        response = client.patch(path, json=blank)
+        assert response.status_code == 422, response.text
+        assert "leave it out" in response.text
+    assert client.get(path).json()["title"] == COMPLAINT["title"]

@@ -17,7 +17,7 @@
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import simulate
 import store
@@ -253,6 +253,14 @@ class IssueEdit(BaseModel):
     severity: Severity | None = None
     calls: list[int] = Field(default=[], max_length=10)
     tidied: bool = Field(default=False, description="These are Prosper AI's words, kept.")
+
+    @field_validator("title", "description")
+    @classmethod
+    def _words(cls, text: str | None) -> str:
+        # Left out keeps them; null would blank an issue that must say something.
+        if text is None:
+            raise ValueError("An issue keeps a title and what happened: leave it out to keep it.")
+        return text
 
 
 class Tidied(BaseModel):
