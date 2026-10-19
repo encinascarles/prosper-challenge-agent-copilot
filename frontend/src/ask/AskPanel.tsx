@@ -5,22 +5,48 @@
 //
 // Prosper AI answers from the copy the top bar is on: live, or the pull
 // request. What an answer names (an issue, a pull request, a call) is a chip
-// that opens it. A chat never changes the agent: asked for a change, Prosper
-// AI answers with a "Create pull request" card, and the change is made there,
-// where it is tested before it can go live.
+// that opens it; what it read to answer is a muted line each. It can also do
+// what the person can (open an issue, run a test, merge), but only on a
+// click: it proposes the act as a card with Do it and Cancel, and the card
+// then says what happened, with a link. A change to the agent itself is a
+// pull request, where it is tested before it can go live.
 
-import { ArrowRight, ArrowUp, ChevronDown, ChevronUp, CircleDot, GitPullRequestArrow, Loader2, MessageCircle, Phone, Plus, X } from 'lucide-react'
+import {
+  ArrowRight,
+  ArrowUp,
+  ChevronDown,
+  ChevronUp,
+  CircleAlert,
+  CircleCheck,
+  CircleDot,
+  CircleSlash,
+  FlaskConical,
+  GitMerge,
+  GitPullRequestArrow,
+  GitPullRequestClosed,
+  ListPlus,
+  Loader2,
+  MessageCircle,
+  PenLine,
+  Phone,
+  PhoneCall,
+  Plus,
+  Search,
+  Wrench,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { askProsper, getChat, listCalls, listChats, listIssues, listPulls, openOffer } from '@/agents/api'
+import { askProsper, decideAction, getChat, listCalls, listChats, listIssues, listPulls, openOffer } from '@/agents/api'
 import type { Agent, Pull } from '@/agents/types'
 import { Mark } from '@/components/Mark'
 import { cn } from '@/lib/utils'
 import { Turn } from '@/prosper/parts'
 import { pullLabel, versionLabel } from '@/pulls/model'
 
-import { chatMeta, linkText, offerWhere, suggestions, withQuestion, type Known } from './model'
-import type { Chat, ChatMessage, ChatSummary, Link } from './types'
+import { actionOutcome, chatMeta, linkText, offerWhere, suggestions, withQuestion, type Known } from './model'
+import type { Action, Chat, ChatMessage, ChatSummary, Link } from './types'
 
 type Props = {
   agent: Agent
@@ -33,11 +59,13 @@ type Props = {
   onLink: (link: Link) => void
   /** An offer opened this pull request. */
   onOpened: (pull: Pull) => void
+  /** Prosper AI did something the person said to: what the sections show may have changed. */
+  onActed: () => void
 }
 
 const NONE: Known = { issues: [], pulls: [], calls: [] }
 
-export function AskPanel({ agent, on, chatId, onChat, onClose, onLink, onOpened }: Props) {
+export function AskPanel({ agent, on, chatId, onChat, onClose, onLink, onOpened, onActed }: Props) {
   const [chats, setChats] = useState<ChatSummary[]>([])
   const [chat, setChat] = useState<Chat | null>(null)
   const [known, setKnown] = useState<Known>(NONE)
@@ -45,6 +73,8 @@ export function AskPanel({ agent, on, chatId, onChat, onClose, onLink, onOpened 
   const [asking, setAsking] = useState<{ chat: number | null; text: string } | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [listOpen, setListOpen] = useState(false)
+  // The card being done (or cancelled), until the chat comes back.
+  const [deciding, setDeciding] = useState<{ chat: number; index: number; run: boolean } | null>(null)
 
   const refresh = useCallback(() => {
     listChats(agent.id).then(setChats, () => {})
@@ -108,9 +138,27 @@ export function AskPanel({ agent, on, chatId, onChat, onClose, onLink, onOpened 
     }
   }
 
+  const decide = async (index: number, run: boolean) => {
+    if (!chat) return
+    setDeciding({ chat: chat.id, index, run })
+    setProblem(null)
+    try {
+      setChat(await decideAction(agent.id, chat.id, index, run))
+      refresh()
+      if (run) onActed()
+    } catch (failure) {
+      setProblem((failure as Error).message)
+    } finally {
+      setDeciding(null)
+    }
+  }
+
   const shown = chat && chat.id === chatId ? chat : null
-  const waiting = asking !== null && asking.chat === (shown?.id ?? null)
-  const messages = waiting ? withQuestion(shown, asking.text) : (shown?.messages ?? [])
+  const doing = deciding !== null && deciding.chat === shown?.id ? deciding : null
+  const asked = asking !== null && asking.chat === (shown?.id ?? null) ? asking.text : null
+  // Prosper AI answers a question, and goes on after a card it was told to do.
+  const waiting = asked !== null || doing?.run === true
+  const messages = asked !== null ? withQuestion(shown, asked) : (shown?.messages ?? [])
 
   return (
     <aside aria-label="Ask Prosper AI" className="flex w-[400px] shrink-0 flex-col border-l bg-card">
@@ -142,12 +190,14 @@ export function AskPanel({ agent, on, chatId, onChat, onClose, onLink, onOpened 
             known={known}
             live={agent.live_version}
             on={on}
+            doing={doing?.index ?? null}
             onLink={onLink}
             onCreate={(index) => create(index)}
+            onDecide={(index, run) => void decide(index, run)}
           />
         )}
       </div>
-      <Composer name={agent.name} busy={asking !== null} problem={problem} on={on} live={agent.live_version} onSend={send} />
+      <Composer name={agent.name} busy={asking !== null || deciding !== null} problem={problem} on={on} live={agent.live_version} onSend={send} />
     </aside>
   )
 }
@@ -196,9 +246,9 @@ function Empty({ name, live, onAsk }: { name: string; live: boolean; onAsk: (tex
   return (
     <div className="px-4 pt-8">
       <p className="text-center text-[12.5px] text-muted-foreground">
-        Ask about {name || 'the agent'}, its tests and its calls.
+        Ask about {name || 'the agent'}, its tests and its calls,
         <br />
-        To change it, Prosper AI opens a pull request.
+        or ask Prosper AI to do something: it asks before it acts.
       </p>
       <div className="mt-5 space-y-1.5">
         {suggestions(name, live).map((text) => (
@@ -219,11 +269,14 @@ type ThreadProps = {
   waiting: boolean
   known: Known
   live: number
+  /** The message whose card is being done or cancelled. */
+  doing: number | null
   onLink: (link: Link) => void
   onCreate: (index: number) => Promise<void>
+  onDecide: (index: number, run: boolean) => void
 }
 
-function Thread({ messages, waiting, known, live, on, onLink, onCreate }: ThreadProps) {
+function Thread({ messages, waiting, known, live, on, doing, onLink, onCreate, onDecide }: ThreadProps) {
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' })
@@ -232,13 +285,17 @@ function Thread({ messages, waiting, known, live, on, onLink, onCreate }: Thread
     <div className="space-y-4 px-4 pt-4">
       {messages.map((message, i) => (
         <Turn key={i} who={message.by} at={message.at} title={message.about ? `on ${message.about}` : undefined}>
-          <p className={cn('text-[13px] leading-relaxed whitespace-pre-wrap', message.failed && 'text-bad')}>{message.text}</p>
+          {message.reads.length > 0 && <Reads reads={message.reads} />}
+          {message.text && <p className={cn('text-[13px] leading-relaxed whitespace-pre-wrap', message.failed && 'text-bad')}>{message.text}</p>}
           {message.links.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {message.links.map((link) => (
                 <LinkChip key={`${link.kind}${link.number}`} link={link} known={known} onOpen={() => onLink(link)} />
               ))}
             </div>
+          )}
+          {message.action && (
+            <ActionCard action={message.action} busy={doing === i} disabled={doing !== null} onDecide={(run) => onDecide(i, run)} onOpen={onLink} />
           )}
           {message.offer && <OfferCard offer={message.offer} live={live} on={on} onCreate={() => onCreate(i)} onOpen={(n) => onLink({ kind: 'pull', number: n })} />}
         </Turn>
@@ -253,6 +310,104 @@ function Thread({ messages, waiting, known, live, on, onLink, onCreate }: Thread
         </Turn>
       )}
       <div ref={end} className="h-3" />
+    </div>
+  )
+}
+
+/** What Prosper AI read to answer, a muted line each: "Read Issue #5 and its 3 calls". */
+function Reads({ reads }: { reads: string[] }) {
+  return (
+    <div className="space-y-0.5">
+      {reads.map((line, i) => (
+        <div key={i} className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          <Search className="size-3 shrink-0" />
+          <span className="min-w-0 truncate">{line}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const ACTION_ICONS: Record<string, LucideIcon> = {
+  open_issue: CircleDot,
+  tidy_issue: PenLine,
+  fix_issue: Wrench,
+  open_pull_request: GitPullRequestArrow,
+  run_tests: FlaskConical,
+  play_calls: PhoneCall,
+  change_issues: CircleDot,
+  change_pull: GitPullRequestClosed,
+  merge_pull: GitMerge,
+  add_rule: ListPlus,
+  add_test: FlaskConical,
+}
+
+/**
+ * Something Prosper AI proposes to do: what, and what follows from it, with
+ * Do it and Cancel. Nothing happens before the click. Decided, it is one line:
+ * what happened, with a link to it, or why it was not done.
+ */
+function ActionCard({ action, busy, disabled, onDecide, onOpen }: { action: Action; busy: boolean; disabled: boolean; onDecide: (run: boolean) => void; onOpen: (link: Link) => void }) {
+  const outcome = actionOutcome(action)
+  if (outcome !== null) {
+    const link = action.state === 'done' ? action.result?.link : null
+    const Icon = action.state === 'done' ? CircleCheck : action.state === 'failed' ? CircleAlert : CircleSlash
+    const row = (
+      <>
+        <Icon className={cn('size-4 shrink-0', action.state === 'done' ? 'text-emerald-600' : action.state === 'failed' ? 'text-bad' : 'text-muted-foreground')} />
+        <span className="min-w-0 flex-1">
+          {action.state === 'done' ? (
+            <>
+              <span className="font-medium">{outcome}</span>
+              {action.what && <span className="block truncate text-[12px] text-muted-foreground">{action.what}</span>}
+            </>
+          ) : (
+            <>
+              <span className={cn('font-medium', action.state !== 'failed' && 'text-muted-foreground line-through')}>{action.title}</span>
+              <span className={cn('block text-[12px]', action.state === 'failed' ? 'text-bad' : 'text-muted-foreground')}>{outcome}</span>
+            </>
+          )}
+        </span>
+        {link && <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />}
+      </>
+    )
+    const box = 'flex w-full items-center gap-2 rounded-lg border bg-card px-3 py-2 text-left text-[13px]'
+    return link ? (
+      <button onClick={() => onOpen(link)} className={cn(box, 'hover:border-foreground/30')}>
+        {row}
+      </button>
+    ) : (
+      <div className={box}>{row}</div>
+    )
+  }
+  const Icon = ACTION_ICONS[action.tool] ?? CircleDot
+  const running = busy || action.state === 'running'
+  return (
+    <div className="overflow-hidden rounded-xl border border-brand/40 bg-card">
+      <div className="flex items-start gap-2.5 px-3.5 py-3">
+        <Icon className="mt-px size-4 shrink-0 text-brand" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[13.5px] font-semibold">{action.title}</div>
+          {action.what && <div className="mt-0.5 text-[13px] leading-snug">{action.what}</div>}
+          {action.meta.length > 0 && <div className="mt-1 text-[12px] leading-snug text-muted-foreground">{action.meta.join(' · ')}</div>}
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-2 border-t bg-muted/30 px-3.5 py-2.5">
+        <button
+          disabled={disabled || running}
+          onClick={() => onDecide(false)}
+          className="flex h-8 items-center rounded-lg px-3 text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          disabled={disabled || running}
+          onClick={() => onDecide(true)}
+          className="flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3.5 text-[13px] font-medium text-background disabled:opacity-60"
+        >
+          {running && <Loader2 className="size-3.5 animate-spin" />} {running ? 'Doing it' : 'Do it'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -343,7 +498,7 @@ function Composer({ name, busy, problem, on, live, onSend }: { name: string; bus
               }
             }}
             rows={2}
-            placeholder={`Ask anything about ${name || 'the agent'} or its calls…`}
+            placeholder={`Ask about ${name || 'the agent'}, or ask Prosper AI to do something…`}
             className="field-sizing-content max-h-32 min-h-[40px] min-w-0 flex-1 resize-none bg-transparent py-0.5 text-[13px] leading-relaxed outline-none placeholder:text-muted-foreground"
           />
           <button onClick={send} disabled={!ready} aria-label="Send" className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-foreground text-background disabled:opacity-25">
@@ -352,7 +507,7 @@ function Composer({ name, busy, problem, on, live, onSend }: { name: string; bus
         </div>
       </div>
       <p className={cn('mt-1.5 text-[11.5px]', problem ? 'text-bad' : 'text-muted-foreground')}>
-        {problem ?? `Answers from ${on !== null ? pullLabel(on) : live ? versionLabel(live) : 'PR #1'} · nothing changes from a chat`}
+        {problem ?? `Answers from ${on !== null ? pullLabel(on) : live ? versionLabel(live) : 'PR #1'} · nothing changes until you click Do it`}
       </p>
     </div>
   )

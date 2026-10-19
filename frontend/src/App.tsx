@@ -141,6 +141,8 @@ export default function App() {
   const [callIn, setCallIn] = useState<number | null>(null)
   const [asking, setAsking] = useState(false)
   const [chat, setChat] = useState<{ agent: string; id: number } | null>(null)
+  // Bumped when Prosper AI acted from a chat: the section on show loads again.
+  const [revision, setRevision] = useState(0)
   const toggleAsk = useCallback(() => setAsking((now) => !now), [])
   useAskShortcut(toggleAsk)
   const toast = useToast()
@@ -360,7 +362,18 @@ export default function App() {
   const openLink = (link: Link) => {
     if (link.kind === 'issue') showPage('issues', link.number)
     else if (link.kind === 'pull') showPulls(link.number)
+    else if (link.kind === 'tests') switchTo(link.number || null)
+    else if (link.kind === 'issues') showPage('issues', null)
+    else if (link.kind === 'calls') showPage('calls', null)
     else showPage('calls', link.number)
+  }
+  // Prosper AI did something from a chat: the top bar, and the section on
+  // show, are read again. Not Build with edits not saved yet: they would go.
+  const acted = () => {
+    if (!shown) return
+    if (view.section === 'build' && dirty.current) return loadAgents()
+    reload()
+    setRevision((n) => n + 1)
   }
   const openedFromChat = (pull: Pull) => {
     if (!shown) return
@@ -384,6 +397,7 @@ export default function App() {
       onClose={() => setAsking(false)}
       onLink={openLink}
       onOpened={openedFromChat}
+      onActed={acted}
     />
   )
 
@@ -427,7 +441,7 @@ export default function App() {
             {askButton}
           </TopBar>
           <main className="flex min-h-0 flex-1">
-            <ErrorBoundary>
+            <ErrorBoundary key={revision}>
               {view.section === 'calls' ? (
                 <CallsView
                   agent={shown.agent}

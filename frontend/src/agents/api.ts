@@ -341,7 +341,15 @@ export function askProsper(id: string, text: string, chat: number | null, pull: 
   return request(path, 'POST', { text, pull })
 }
 
-/** Open the pull request message `index` of the chat offers; Prosper AI starts on it. */
+/**
+ * Do (or cancel) what message `index` of the chat proposes. Resolves with the
+ * chat once it is done and Prosper AI has said what is next.
+ */
+export function decideAction(id: string, chat: number, index: number, run: boolean): Promise<Chat> {
+  return request(`${agentPath(id)}/chats/${chat}/messages/${index}/action`, 'POST', { do: run })
+}
+
+/** Open the pull request message `index` of an older chat offers; Prosper AI starts on it. */
 export function openOffer(id: string, chat: number, index: number): Promise<{ pull: Pull; chat: Chat }> {
   return request(`${agentPath(id)}/chats/${chat}/messages/${index}/pull`, 'POST')
 }

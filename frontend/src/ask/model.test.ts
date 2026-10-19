@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import type { PullSummary } from '@/agents/types'
 import type { CallSummary, IssueSummary } from '@/live/types'
 
-import { chatMeta, linkText, offerWhere, suggestions, withQuestion } from './model'
+import { actionOutcome, chatMeta, linkText, offerWhere, suggestions, withQuestion } from './model'
+import type { Action } from './types'
 
 const NOW = new Date('2026-10-19T12:00:00')
 
@@ -18,7 +19,7 @@ describe('withQuestion', () => {
   it('adds the question being answered after what the chat said', () => {
     const messages = withQuestion(null, 'Can Anna book for a child?', 'now')
     expect(messages).toEqual([
-      { by: 'you', at: 'now', text: 'Can Anna book for a child?', about: null, links: [], offer: null, failed: false },
+      { by: 'you', at: 'now', text: 'Can Anna book for a child?', about: null, links: [], reads: [], action: null, offer: null, failed: false },
     ])
   })
 })
@@ -42,9 +43,26 @@ describe('linkText', () => {
 })
 
 describe('suggestions', () => {
-  it('asks about calls only once the agent is live', () => {
-    expect(suggestions('Anna', true)[2]).toBe('Which calls went wrong today?')
-    expect(suggestions('Anna', false)[2]).toBe('What is left before Anna can go live?')
+  it('asks about calls, and offers to play some, only once the agent is live', () => {
+    expect(suggestions('Anna', true).slice(1)).toEqual(['Which calls went wrong today?', 'Play a batch of calls'])
+    expect(suggestions('Anna', false).slice(1)).toEqual(['What is left before Anna can go live?', 'Run all the tests again'])
+  })
+})
+
+describe('actionOutcome', () => {
+  const card: Action = { tool: 'merge_pull', title: 'Merge PR #5 as v3', what: 'Fix', meta: [], state: 'pending', result: null, error: null }
+  it('says nothing while the card waits or runs', () => {
+    expect(actionOutcome(card)).toBeNull()
+    expect(actionOutcome({ ...card, state: 'running' })).toBeNull()
+  })
+  it('says what happened, why it was refused, or that it was not done', () => {
+    const result = { text: 'Merged PR #5 · v3 is live', link: { kind: 'pull' as const, number: 5 } }
+    expect(actionOutcome({ ...card, state: 'done', result })).toBe('Merged PR #5 · v3 is live')
+    expect(actionOutcome({ ...card, state: 'failed', error: 'PR #5 cannot merge: its checks are still running.' })).toBe(
+      'PR #5 cannot merge: its checks are still running.',
+    )
+    expect(actionOutcome({ ...card, state: 'declined' })).toBe('Cancelled · nothing changed')
+    expect(actionOutcome({ ...card, state: 'skipped' })).toBe('Not done · you asked something else')
   })
 })
 
