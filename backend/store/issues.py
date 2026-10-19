@@ -433,14 +433,16 @@ def log_fix(conn: sqlite3.Connection, agent_id: str, number: int, kind: str, pul
     )
 
 
-def resolve_by_fix(conn: sqlite3.Connection, agent_id: str, number: int, pull: int, version: int):
-    """The pull request fixing the issue merged as `version`: the issue is resolved there."""
+def resolve_by_fix(
+    conn: sqlite3.Connection, agent_id: str, number: int, pull: int, version: int, by: str
+):
+    """The pull request fixing the issue merged as `version`, by `by`: the issue is resolved there."""
     row = conn.execute(
         "SELECT events FROM issues WHERE agent_id = ? AND number = ?", (agent_id, number)
     ).fetchone()
     if row is None:
         return
-    event = _event("fixed", "you", pull=pull, version=version)
+    event = _event("fixed", by, pull=pull, version=version)
     conn.execute(
         "UPDATE issues SET state = 'resolved', snooze = NULL, fixed = ?, events = ?, updated_at = ?"
         " WHERE agent_id = ? AND number = ?",

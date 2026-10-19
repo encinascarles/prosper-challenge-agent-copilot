@@ -354,7 +354,7 @@ def merge_pull(agent_id: str, number: int, by: str) -> dict:
         # The name lists show is the live one.
         conn.execute("UPDATE agents SET name = ? WHERE id = ?", (pull["config"]["name"], agent_id))
         if pull["fixes"]:
-            issues.resolve_by_fix(conn, agent_id, pull["fixes"], number, version)
+            issues.resolve_by_fix(conn, agent_id, pull["fixes"], number, version, by)
         return _select(conn, agent_id, number)
 
 

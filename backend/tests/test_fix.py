@@ -241,9 +241,19 @@ def test_merging_the_fix_resolves_the_issue_in_the_new_version(
     assert issue["state"] == "resolved"
     assert issue["fixed"] == {"pull": number, "version": 2}
     assert (issue["events"][-1]["type"], issue["events"][-1]["version"]) == ("fixed", 2)
+    assert issue["events"][-1]["by"] == "you"  # who merged it, as merge_pull was told
+
     assert issue["pulls"][0]["merged_version"] == 2
     # Its test stays in the suite.
     assert store.get_version(agent_id, 2)["tests"][0]["source"]["issue"] == ISSUE
+
+
+def test_whoever_merges_the_fix_is_who_resolved_the_issue(client, with_issue):
+    agent_id = with_issue()
+    number = _fix(client, agent_id, prosper=False)["number"]
+    with store.db.connect() as conn:
+        store.issues.resolve_by_fix(conn, agent_id, ISSUE, number, 2, "Ana")
+    assert _issue(client, agent_id)["events"][-1]["by"] == "Ana"
 
 
 def test_closing_the_fix_unlinks_it_and_reopening_links_it_again(client, with_issue):
