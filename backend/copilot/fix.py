@@ -60,6 +60,15 @@ def run(llm: LLM, agent_id: str, number: int, job: dict) -> None:
             store.prosper.write(agent_id, number, _event("message", text=text), state="done")
             return
         if "reproduced" not in built:
+            if not work.get("candidate"):
+                # Nothing to go on with (a retry after the record was lost, say):
+                # said in words, and the job ends here rather than on a KeyError.
+                text = (
+                    f"I no longer have the test I wrote on {_v(version)}, so there is "
+                    "nothing to go on with. Tell me what to change, or close this pull request."
+                )
+                store.prosper.write(agent_id, number, _event("message", text=text), state="done")
+                return
             _keep_anyway(agent_id, number, version, work["candidate"])
             built.add("reproduced")
     if "reproduced" not in built and not _reproduce(llm, agent_id, number, issue, version):

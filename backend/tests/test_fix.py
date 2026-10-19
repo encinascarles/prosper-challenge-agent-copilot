@@ -432,3 +432,20 @@ def test_merging_a_fix_leaves_an_issue_the_person_closed_as_they_left_it(
     merged = issue["events"][-1]
     assert (merged["type"], merged["pull"], merged["version"]) == ("fix_merged", number, 2)
     assert merged["text"] == left["state"]
+
+
+def test_going_on_without_the_test_it_wrote_says_so_and_stops(client, with_issue, prosper_model):
+    agent_id = with_issue()
+    prosper_model.script = {"reproduce": [TEST, TEST]}
+    number = _fix(client, agent_id)["number"]
+    question = _pull(client, agent_id, number)["events"][-1]["question"]
+    store.prosper.update(agent_id, number, candidate=None)  # the record lost it
+
+    answer = {"question": question, "option": 0}
+    client.post(f"/api/agents/{agent_id}/pulls/{number}/answers", json=answer)
+    settle()
+
+    pull = _pull(client, agent_id, number)
+    assert pull["events"][-1]["text"].startswith("I no longer have the test I wrote on v1")
+    assert pull["prosper"]["state"] == "done"
+    assert pull["tests"] == []
