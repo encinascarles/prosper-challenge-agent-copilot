@@ -191,12 +191,14 @@ class IssueEvent(BaseModel):
     # relinked (reopened), fixed (merged: resolved in `version`), and
     # came_back: a call on the fixed version had the problem again.
     # reported: a person opened it (`text`: "you" or "clinic"), then edited
-    # it, or kept what Prosper AI tidied.
+    # it, or kept what Prosper AI tidied; titled: Prosper AI wrote the title
+    # it was reported without.
     type: Literal[
         "opened",
         "reported",
         "edited",
         "tidied",
+        "titled",
         "seen",
         "snoozed",
         "woke",
@@ -234,7 +236,9 @@ class Fix(BaseModel):
 class IssueReport(BaseModel):
     """An issue a person reports: what they or the clinic saw go wrong."""
 
-    title: str = Field(min_length=1, max_length=120)
+    title: str = Field(
+        default="", max_length=120, description="Empty: Prosper AI writes it from what happened."
+    )
     description: str = Field(min_length=1, max_length=4000, description="What happened.")
     step: str = Field(default="", description="The step it happens in; empty when not sure.")
     severity: Severity | None = None
@@ -242,6 +246,14 @@ class IssueReport(BaseModel):
         default="you", description="Who flagged it: you, or the clinic."
     )
     calls: list[int] = Field(default=[], max_length=10, description="Calls that show it.")
+
+    @field_validator("description")
+    @classmethod
+    def _said(cls, text: str) -> str:
+        # The title may be left to Prosper AI; what happened is the report itself.
+        if not text.strip():
+            raise ValueError("Say what happened: it is what the issue is about.")
+        return text
 
 
 class IssueEdit(BaseModel):
@@ -335,9 +347,12 @@ def list_issues(agent_id: str) -> list[dict]:
 
 @router.post("/issues", status_code=201, response_model=Issue, responses=_MISSING | _REFUSED)
 def report_issue(agent_id: str, body: IssueReport) -> dict:
-    """Report an issue by hand, numbered like the rest: "Issue #14"."""
+    """Report an issue by hand, numbered like the rest: "Issue #14".
+
+    Left without a title, it gets one Prosper AI writes from what happened.
+    """
     return _answer(
-        store.issues.report,
+        tidy.report,
         agent_id,
         body.title.strip(),
         body.description.strip(),

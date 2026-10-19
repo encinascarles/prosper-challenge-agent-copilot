@@ -38,7 +38,8 @@
 # bad turn (-1): the whole call shows it. From there it is like any other: a
 # finding from calls may join it, and it is fixed, snoozed or resolved the
 # same way. `reported` says who flagged it: "you" or "clinic"; NULL for an
-# issue Prosper AI found in calls.
+# issue Prosper AI found in calls. Left without a title, it opens with the
+# first line of what happened and Prosper AI then writes one (`titled`).
 #
 
 import json
@@ -433,6 +434,29 @@ def report(
             ),
         )
         _link(conn, agent_id, number, step, calls)
+        return _select(conn, agent_id, number)
+
+
+def titled(agent_id: str, number: int, title: str) -> dict:
+    """Give a reported issue the title Prosper AI wrote from what happened. Returns it."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT events FROM issues WHERE agent_id = ? AND number = ?", (agent_id, number)
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"The agent has no {label(number)}.")
+        event = _event("titled", PROSPER)
+        conn.execute(
+            "UPDATE issues SET title = ?, events = ?, updated_at = ?"
+            " WHERE agent_id = ? AND number = ?",
+            (
+                title,
+                json.dumps([*json.loads(row["events"]), event]),
+                event["at"],
+                agent_id,
+                number,
+            ),
+        )
         return _select(conn, agent_id, number)
 
 

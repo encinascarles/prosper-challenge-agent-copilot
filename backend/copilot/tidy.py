@@ -10,17 +10,27 @@
 # the person sees the before and after, and keeps it (a PATCH of the issue)
 # or not. The answer is checked in code: a step that exists, calls that exist.
 #
+# A report left without a title gets one from Prosper AI when it is opened:
+# a smaller request, what happened only, checked like any words of Prosper
+# AI's. If it fails, the report keeps the first line of what happened as its
+# title: a report is never lost to a request.
+#
 
 import json
+
+from loguru import logger
+from openai import OpenAIError
 
 import store
 
 from . import setup
-from .artifacts import _list, _object
+from .artifacts import _list, _object, check_words
 from .ask import _STORED_NAME, _when
 from .calls import _ENDED
+from .llm import Failed
 
 MAX_TITLE_CHARS = 80
+WRITTEN_TITLE_CHARS = 60  # a title Prosper AI writes from nothing: one short line
 MAX_CALLS = 3
 CALLS_LISTED = 40  # the latest, one line each
 SEVERITIES = ("safety", "booking", "experience")
@@ -32,6 +42,43 @@ TIDY = _object(
     severity={"type": "string", "enum": list(SEVERITIES)},
     calls=_list({"type": "integer"}),
 )
+
+TITLE = _object(title=_TEXT)
+
+
+def report(agent_id: str, title: str, description: str, *args) -> dict:
+    """Open a reported issue (store.issues.report's arguments); without a title, Prosper AI's.
+
+    The issue is opened first, under the first line of what happened, so a
+    refused report costs no request and a failed request loses no report.
+    """
+    issue = store.issues.report(agent_id, title or first_line(description), description, *args)
+    if title:
+        return issue
+    try:
+        written = setup.new_llm().ask("title", description, TITLE, check_title)["title"]
+    except (Failed, OpenAIError) as error:
+        logger.warning(f"Prosper AI · title · {store.issues.label(issue['number'])}: {error}")
+        return issue
+    return store.issues.titled(agent_id, issue["number"], written.strip())
+
+
+def check_title(answer: dict) -> None:
+    """Raise ValueError if a written title is long, or uses stored names or the graph's words."""
+    title = answer["title"].strip()
+    if not title or "\n" in title or len(title) > WRITTEN_TITLE_CHARS:
+        raise ValueError(f"The title is one line of at most {WRITTEN_TITLE_CHARS} characters.")
+    if found := _STORED_NAME.search(title):
+        raise ValueError(f'Name steps as words in the title, never "{found.group()}".')
+    check_words(title, "The title")
+
+
+def first_line(text: str) -> str:
+    """The first line of what happened, cut at a word to fit a title."""
+    line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    if len(line) <= MAX_TITLE_CHARS:
+        return line
+    return line[: MAX_TITLE_CHARS - 1].rsplit(" ", 1)[0].rstrip(" ,.;:") + "…"
 
 
 def tidy(agent_id: str, number: int) -> dict:

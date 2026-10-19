@@ -252,3 +252,54 @@ def test_a_linked_call_follows_the_step_of_its_reported_issue(client, live_agent
     client.patch(f"/api/agents/{agent_id}/issues/{number}", json={"step": "offer_times"})
     [found] = client.get(f"/api/agents/{agent_id}/calls/{call_id}").json()["findings"]
     assert (found["issue"], found["step"]) == (number, "offer_times")
+
+
+EMAIL = (
+    "Yesterday a mother called to book a check-up for her 8-year-old son. The assistant took"
+    " her name and date of birth and booked the appointment under HER name, not the child's."
+    "\nThis has happened twice this week."
+)
+
+
+def test_prosper_ai_writes_the_title_a_report_leaves_empty(client, live_agent, prosper_model):
+    agent_id = live_agent()
+    title = "Books a child's visit under the parent's name"
+    # Stored names and the graph's words are refused, and asked again.
+    refused = [{"title": "Wrong patient in collect_details"}, {"title": "Wrong node"}]
+    prosper_model.script = {"title": [*refused, {"title": title}]}
+
+    issue = _report(client, agent_id, title="", description=EMAIL)
+    assert (issue["title"], issue["description"]) == (title, EMAIL)
+    assert [(e["type"], e["by"]) for e in issue["events"]] == [
+        ("reported", "you"),
+        ("titled", "Prosper AI"),
+    ]
+    [first, *_] = prosper_model.asked["title"]
+    assert first[1]["content"] == EMAIL
+    sent_back = prosper_model.asked["title"][2][-1]["content"]
+    assert '"node"' in sent_back
+    # Like any title, the person can change it.
+    path = f"/api/agents/{agent_id}/issues/{issue['number']}"
+    assert client.patch(path, json={"title": "Mine"}).json()["title"] == "Mine"
+
+
+def test_a_report_keeps_the_first_line_when_prosper_ai_cannot_title_it(
+    client, live_agent, prosper_model
+):
+    agent_id = live_agent()
+    prosper_model.script = {"title": [{"title": "x" * 61}] * 3}  # refused three times
+
+    issue = _report(client, agent_id, title="", description=EMAIL)
+    assert issue["title"].startswith("Yesterday a mother called to book a check-up")
+    assert issue["title"].endswith("…") and len(issue["title"]) <= 80
+    assert [e["type"] for e in issue["events"]] == ["reported"]
+
+
+def test_a_titled_report_asks_prosper_ai_nothing(client, live_agent, prosper_model):
+    agent_id = live_agent()
+    assert _report(client, agent_id)["title"] == COMPLAINT["title"]
+    assert "title" not in prosper_model.asked
+    # A refused report costs no request either.
+    _report(client, agent_id, 409, title="", step="nowhere")
+    assert "title" not in prosper_model.asked
+    assert "what happened" in _report(client, agent_id, 422, description="  ")["detail"][0]["msg"]
