@@ -44,7 +44,9 @@ export function PullChecks({ pull, run, onRerun }: Props) {
           ? "Didn't finish"
           : checks.failing
             ? `${checks.failing} of ${checks.total} failing`
-            : 'All checks passed'
+            : checks.flaky
+              ? `Checks pass · ${checks.flaky} flaky, not blocking`
+              : 'All checks passed'
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
       <div className="flex items-center gap-2 border-b bg-muted/30 px-4 py-2.5">

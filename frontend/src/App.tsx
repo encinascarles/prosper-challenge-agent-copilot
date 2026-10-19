@@ -6,11 +6,17 @@
 // does what the editor is on (&pr=<n>): the live version, or one open pull
 // request. An agent that is not live yet opens on its PR #1. The section is in
 // it too: &view=pulls for the list, and &pull=<n> for a pull request's page.
+//
+// While Prosper AI works on the pull request Build is on, it is followed:
+// whenever Prosper AI has changed the copy (drawn the graph, added rules or
+// tests), the editor opens it again, so the graph shows up as soon as it is
+// drawn. The editor is read-only meanwhile, so there is nothing to lose.
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AgentEditor } from '@/AgentEditor'
 import {
   ApiError,
+  buildAgent,
   createAgent,
   deleteAgent,
   getAgent,
@@ -24,7 +30,7 @@ import {
 import { NEW_AGENT } from '@/agents/template'
 import type { Agent, AgentCopy, Pull, PullSummary, Suite, VersionSummary } from '@/agents/types'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
-import { NewAgentDialog } from '@/components/NewAgentDialog'
+import { NewAgentDialog, type NewAgent } from '@/components/NewAgentDialog'
 import { Sections, type Section } from '@/components/Sections'
 import { Toast } from '@/components/Toast'
 import { TopBar } from '@/components/TopBar'
@@ -33,6 +39,8 @@ import { VersionPill } from '@/components/VersionPill'
 import { Button } from '@/components/ui/button'
 import { EDITS_TITLE, openedForEdits, pullLabel, versionLabel, type On } from '@/pulls/model'
 import { PullsView } from '@/pulls/PullsView'
+import { sameCopy } from '@/prosper/model'
+import { useFollow } from '@/prosper/useFollow'
 
 const AGENT_PARAM = 'agent'
 const PULL_PARAM = 'pr'
@@ -175,11 +183,15 @@ export default function App() {
     if (id !== agentId && leave()) go(id, settings)
   }
 
-  // A new agent is named, stored with its PR #1 and opened on it.
+  // A new agent is named, stored with its PR #1 and opened on it: from the
+  // template, or empty for Prosper AI to build from the guidelines.
   const [naming, setNaming] = useState(false)
-  const create = async (name: string) => {
+  const create = async (agent: NewAgent) => {
     if (!leave()) return
-    const created = await createAgent({ ...NEW_AGENT, name })
+    const created =
+      agent.mode === 'scratch'
+        ? await createAgent({ ...NEW_AGENT, name: agent.name })
+        : await buildAgent(agent.name, agent.guidelines, agent.files)
     setNaming(false)
     loadAgents()
     go(created.agent.id)
@@ -200,6 +212,26 @@ export default function App() {
   }
 
   const shown = opened?.agent.id === agentId ? opened : null
+
+  // The pull request Build is on, followed while Prosper AI has a part in it.
+  const onSummary = shown && shown.on !== null ? shown.pulls.find((pull) => pull.number === shown.on) : undefined
+  const followed = useFollow(shown?.agent.id ?? '', shown?.on ?? null, view.section === 'build' && Boolean(onSummary?.prosper))
+  const fresh = followed.pull
+  useEffect(() => {
+    if (!shown || !fresh || shown.on !== fresh.number) return
+    if (!sameCopy(fresh, { ...shown.copy, ...shown.suite })) {
+      open(shown.agent.id, shown.on)
+      return
+    }
+    // The same copy: only what the bars say of it (Prosper AI's state, its checks).
+    setOpened((now) =>
+      now && now.agent.id === shown.agent.id
+        ? { ...now, pulls: now.pulls.map((pull) => (pull.number === fresh.number ? fresh : pull)) }
+        : now,
+    )
+    // Only a new read of the pull request is news here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fresh])
 
   // Build on another copy of the same agent: live, or one of its open PRs.
   // From Pull requests it is loaded again, whatever it was on: pull requests
@@ -361,6 +393,8 @@ export default function App() {
               onOpenPage={showPulls}
               sections={sections}
               autoCall={callIn === shown.session}
+              prosper={fresh?.number === shown.on ? fresh : null}
+              onProsper={followed.put}
             />
           </ErrorBoundary>
         </div>

@@ -54,7 +54,8 @@ from pipecat.workers.runner import WorkerRunner
 from agent_builder import AgentBuilder
 from agent_builder.runtime import start_flow
 
-MAX_TURNS = 16  # caller lines before a call that goes nowhere is cut
+# Caller lines before a call that goes nowhere is cut: room for a caller who corrects themselves.
+MAX_TURNS = 20
 TURN_TIMEOUT = 60  # seconds for one agent turn before the call is called stuck
 END_TIMEOUT = 10  # seconds for the pipeline to finish once the end step has spoken
 

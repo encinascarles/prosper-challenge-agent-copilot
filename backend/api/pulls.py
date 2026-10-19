@@ -33,8 +33,13 @@ router = APIRouter(prefix="/api/agents/{agent_id}", tags=["versions and pull req
 
 
 class Source(BaseModel):
-    kind: Literal["manual"]  # written by hand; Prosper AI's will say what they came from
+    # manual: written by hand. Prosper AI's: from a line of the guidelines, from
+    # the person's answer to its question, or from something they asked for.
+    # check: added by Prosper AI when it checked its own draft against a failing test.
+    kind: Literal["manual", "guidelines", "answer", "request", "check"]
     pull: int | None = None  # the pull request it was added in
+    file: str | None = None  # guidelines: the file it quotes, or "your notes"
+    quote: str | None = None  # the line it comes from, or the answer or request, word for word
 
 
 class Rule(BaseModel):
@@ -57,7 +62,8 @@ class Checks(BaseModel):
 
     state: Literal["running", "passed", "failed", "stopped"]
     passed: int  # tests that passed every one of their runs
-    failing: int  # tests that failed at least one
+    flaky: int  # tests that passed all their runs but one: shown, not in the way of a merge
+    failing: int  # tests that failed more than one run: these block a merge
     total: int
 
 
@@ -78,11 +84,33 @@ class Version(BaseModel):
     created_at: str
 
 
+class FileRead(BaseModel):
+    name: str
+    kind: str  # PDF, DOCX, TXT, MD
+    pages: int | None  # a PDF's
+
+
 class PullEvent(BaseModel):
     type: Literal[
-        "opened", "saved", "merged", "closed", "reopened", "updated", "rule", "test", "checks"
+        "opened",
+        "saved",
+        "merged",
+        "closed",
+        "reopened",
+        "updated",
+        "rule",
+        "test",
+        "checks",
+        # Prosper AI's conversation: what it was asked (notes and files), each
+        # step it finished, its questions and their answers, and messages.
+        "request",
+        "step",
+        "question",
+        "answer",
+        "message",
+        "interrupted",  # Prosper AI's work stopped with the server; a message retries it
     ]
-    by: str  # "you" for now; Prosper AI's changes will carry its name; "checks" for checks
+    by: str  # "you", "Prosper AI", or "checks" for a run of the tests
     at: str
     # "opened": the version it was copied from; "merged": the version it became;
     # "updated": its new base.
@@ -93,7 +121,25 @@ class PullEvent(BaseModel):
     text: str | None = None
     removed: bool | None = None  # the rule or test was taken out
     passed: int | None = None  # "checks": the tests that passed, of `total`
+    flaky: int | None = None  # "checks": the tests that passed all their runs but one
     total: int | None = None
+    # "request": the pasted notes and the files read. "step", "message": `text`.
+    notes: str | None = None
+    files: list[FileRead] | None = None
+    question: str | None = None  # "question", "answer": the question's id
+    options: list[str] | None = None  # "question": what can be picked
+    changed: bool | None = None  # "message": Prosper AI changed the agent with it
+    details: list[str] | None = None  # "message": one line per thing it decided, folded under it
+    rewritten: bool | None = None  # "test": Prosper AI rewrote it, `why` says why
+    why: str | None = None
+
+
+class Prosper(BaseModel):
+    """What Prosper AI is up to on a pull request it works on."""
+
+    state: Literal["working", "waiting", "done", "failed"]  # waiting: for an answer
+    doing: str | None  # while working: the step under way
+    usage: dict[str, float] | None  # requests, tokens and USD spent so far
 
 
 class PullSummary(BaseModel):
@@ -106,6 +152,7 @@ class PullSummary(BaseModel):
     created_at: str
     updated_at: str
     checks: Checks | None  # its latest run of the tests; None if none ran
+    prosper: Prosper | None  # Prosper AI's work on it; None if it has no part in it
 
 
 class Pull(PullSummary):
@@ -236,6 +283,10 @@ def merge_pull(agent_id: str, number: int) -> Any:
     # The copy was valid when it was saved; it is checked again because what
     # goes live must pass the rules as they are now, not as they were then.
     pull = get_pull(agent_id, number)
+    # Prosper AI first: before its answers are in there may be no agent at all,
+    # and "the agent has no nodes" would not say why.
+    if reason := store.busy(pull, merging=True):
+        raise HTTPException(status_code=409, detail=reason)
     if found := problem(pull["config"]):
         return found
     return _answer(store.merge_pull, agent_id, number, YOU)

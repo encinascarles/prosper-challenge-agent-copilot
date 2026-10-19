@@ -59,7 +59,7 @@ export function TestCard({ test, names, result, repeats, on, removable, selected
       ? `Not run on ${on} yet`
       : shown === 'running'
         ? `Running on ${on} · ${s.done} of ${s.of} runs`
-        : `${shown === 'fail' ? 'Fails' : 'Passes'} ${s.passed}/${s.of} runs on ${on}`
+        : `${shown === 'fail' ? 'Fails' : shown === 'flaky' ? 'Flaky' : 'Passes'} · ${s.passed}/${s.of} runs on ${on}`
   return (
     <section aria-label="Test" className={card}>
       <Header icon={<TestIcon score={s} className="mt-px" />} title={test.name} sub={`${sub} · simulated, in text`} onClose={onClose} />

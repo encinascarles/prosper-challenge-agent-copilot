@@ -167,23 +167,39 @@ def stop_unfinished(conn: sqlite3.Connection) -> None:
 
 
 def summary(run: Optional[dict]) -> Optional[dict]:
-    """What a list shows of a run: its state and how many tests pass or fail so far.
+    """What a list shows of a run: its state and how many tests pass, are flaky or fail so far.
 
     `state` is "running", "passed", "failed" or "stopped". A test passes when
-    all of its repeats did, and fails as soon as one of them did not.
+    every one of its repeats did; it is flaky when all but one did (2 of 3);
+    it fails as soon as more than one did not, and only failing tests make
+    the run fail. A voice agent on an LLM does not answer the same way every
+    time: 2 of 3 shows that without letting one unlucky call block a merge.
     """
     if run is None:
         return None
-    passed = sum(
-        1
-        for test in run["tests"]
-        if len(test["runs"]) == run["repeats"] and all(r["passed"] for r in test["runs"])
-    )
-    failing = sum(1 for test in run["tests"] if any(not r["passed"] for r in test["runs"]))
+    counts = {"passed": 0, "flaky": 0, "failing": 0}
+    for test in run["tests"]:
+        kind = verdict(test, run["repeats"])
+        if kind in counts:
+            counts[kind] += 1
     state = run["state"]
     if state == "done":
-        state = "failed" if failing else "passed"
-    return {"state": state, "passed": passed, "failing": failing, "total": len(run["tests"])}
+        state = "failed" if counts["failing"] else "passed"
+    return {"state": state, **counts, "total": len(run["tests"])}
+
+
+def verdict(test: dict, repeats: int) -> str:
+    """A test's runs so far: "passed", "flaky" (all but one passed), "failing" or "running"."""
+    failed = sum(1 for r in test["runs"] if not r["passed"])
+    if failed > ALLOWED_MISSES:
+        return "failing"
+    if len(test["runs"]) < repeats:
+        return "running"
+    return "flaky" if failed else "passed"
+
+
+# How many of a test's runs may fail before the test does: one, of three.
+ALLOWED_MISSES = 1
 
 
 def is_of(run: Optional[dict], fingerprint: str) -> bool:

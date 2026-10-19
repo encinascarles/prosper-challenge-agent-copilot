@@ -3,11 +3,14 @@
 # callers import the functions from here and never touch SQLite themselves.
 #
 
+from . import prosper
 from .agents import create_agent, delete_agent, get_agent, init_db, list_agents
 from .db import Conflict, NotFound
 from .pulls import (
+    PROSPER,
     add_rule,
     add_test,
+    busy,
     close_pull,
     get_pull,
     label,
@@ -25,6 +28,9 @@ from .runs import add_result, finish_run, get_run, merge_blocker, start_run, sum
 from .versions import get_version, list_versions
 
 __all__ = [
+    "PROSPER",
+    "busy",
+    "prosper",
     "Conflict",
     "add_result",
     "add_rule",

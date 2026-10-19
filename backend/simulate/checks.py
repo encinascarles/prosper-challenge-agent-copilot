@@ -69,6 +69,24 @@ def parse(line: str, steps: Iterable[str], fields: Iterable[str]) -> dict:
     return {"text": text, "kind": "judged"}
 
 
+def unknown_name(line: str, steps: Iterable[str], fields: Iterable[str]) -> Optional[str]:
+    """Why `line` reads like a path check but names no step or field of the agent, or None.
+
+    Such a line is judged rather than failing every run (see `parse`); this is
+    for whoever writes tests and wants a path check that cannot be misread.
+    """
+    bare = line.strip().rstrip(".").strip()
+    steps, fields = list(steps), list(fields)
+    match = _REACHES.fullmatch(bare)
+    if match and key(match["name"]) not in {key(step) for step in steps}:
+        return f"'{line}' names no step. The steps are: {', '.join(steps)}."
+    match = _RECORDED.fullmatch(bare)
+    if match and key(match["name"]) not in {key(field) for field in fields}:
+        listed = ", ".join(fields) or "none"
+        return f"'{line}' names no field. The fields collected are: {listed}."
+    return None
+
+
 def names(config: AgentConfig) -> tuple[list[str], list[str]]:
     """The agent's steps, and the fields its edges collect: what a path check can name."""
     steps = [node.name for node in config.nodes]

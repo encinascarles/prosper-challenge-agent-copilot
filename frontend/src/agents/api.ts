@@ -63,11 +63,13 @@ async function failure(response: Response): Promise<ApiError> {
 
 async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   let response: Response
+  // A form goes as it is (the browser sets its multipart type); anything else as JSON.
+  const form = body instanceof FormData
   try {
     response = await fetch(`/api/agents${path}`, {
       method,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: body === undefined || form ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : form ? body : JSON.stringify(body),
     })
   } catch {
     // No answer at all (offline, server stopped): the browser's own message,
@@ -93,6 +95,28 @@ export function getAgent(id: string): Promise<Agent> {
 /** Stores a new agent with its PR #1 holding `config`. It is not live until that PR is merged. */
 export function createAgent(config: AgentConfig): Promise<{ agent: Agent; pull: Pull }> {
   return request('', 'POST', { config })
+}
+
+/**
+ * Stores a new agent that Prosper AI builds in its PR #1 from `guidelines`
+ * and `files`, in the background. A file it cannot read is refused here.
+ */
+export function buildAgent(name: string, guidelines: string, files: File[]): Promise<{ agent: Agent; pull: Pull }> {
+  const form = new FormData()
+  form.append('name', name)
+  form.append('guidelines', guidelines)
+  for (const file of files) form.append('files', file)
+  return request('/from-guidelines', 'POST', form)
+}
+
+/** Picks option `option` (from 0) of Prosper AI's question: its rule goes into the copy. */
+export function answerQuestion(id: string, number: number, question: string, option: number): Promise<Pull> {
+  return request(`${pullPath(id, number)}/answers`, 'POST', { question, option })
+}
+
+/** Writes to Prosper AI in the pull request: an answer in your words, or a change to make. */
+export function sendMessage(id: string, number: number, text: string): Promise<Pull> {
+  return request(`${pullPath(id, number)}/messages`, 'POST', { text })
 }
 
 /** Removes the agent for good, its versions and pull requests included. */

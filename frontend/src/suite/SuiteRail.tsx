@@ -6,13 +6,16 @@
 // opens its card over the graph. Both are added here, to the pull request the
 // editor is on, or (on live) to the one the first addition opens, like an
 // edit. Those added in this pull request say so and can be taken out again.
+// A rule Prosper AI wrote says where it came from: the line of the guidelines
+// it quotes, word for word, or the answer or request it was made from.
 
-import { Globe, Plus, RotateCw, Trash2 } from 'lucide-react'
+import { BookOpen, Globe, Plus, RotateCw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
 import type { Rule, Suite, SuiteRun, Test } from '@/agents/types'
 import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
+import { sourceText } from '@/prosper/model'
 import { pullLabel } from '@/pulls/model'
 
 import { ScoreText, TestIcon } from './bits'
@@ -92,6 +95,28 @@ function RuleForm({ steps, into, onAdd, onDone }: {
   )
 }
 
+/** The line a rule came from, under it: a quote of the guidelines, or your answer. */
+function Quote({ rule }: { rule: Rule }) {
+  const { source } = rule
+  if (!source.quote || source.kind === 'manual') return null
+  if (source.kind === 'guidelines') {
+    return (
+      <p
+        title={`From ${sourceText(source)}`}
+        className="mt-1 rounded-sm border-l-2 border-foreground/20 bg-background/70 px-2 py-1 text-[11.5px] leading-snug text-foreground/75"
+      >
+        <BookOpen className="mr-1 inline size-3 align-[-2px] text-muted-foreground" />“{source.quote}”
+        <span className="text-muted-foreground"> · {sourceText(source)}</span>
+      </p>
+    )
+  }
+  return (
+    <p className="mt-1 text-[11.5px] leading-snug text-muted-foreground">
+      {sourceText(source)}: <span className="text-foreground/75">“{source.quote}”</span>
+    </p>
+  )
+}
+
 /** Where a rule or test came from, when it says something: added here, or by an earlier pull request. */
 function origin(item: Rule | Test, on: number | null): React.ReactNode {
   if (addedIn(item, on)) return <span className="font-medium text-brand">Added in {pullLabel(on ?? 0)}</span>
@@ -167,6 +192,7 @@ export function SuiteRail(props: Props) {
                   )}
                 >
                   <div className={cn('text-[12.5px] leading-snug', mine && 'pr-5')}>{rule.text}</div>
+                  <Quote rule={rule} />
                   {from && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{from}</div>}
                   {mine && blocked === null && (
                     <button
@@ -187,7 +213,7 @@ export function SuiteRail(props: Props) {
         <div className={cn(heading, 'mt-3 border-t')}>
           Tests
           <span className="ml-auto font-normal tracking-normal normal-case tabular-nums">
-            {done ? `Running ${done.done}/${done.of}` : checks && checks.total > 0 ? `${checks.passed}/${checks.total} pass` : ''}
+            {done ? `Running ${done.done}/${done.of}` : checks && checks.total > 0 ? `${checks.passed}/${checks.total} pass${checks.flaky ? ` · ${checks.flaky} flaky` : ''}` : ''}
           </span>
           {suite.tests.length > 0 && (
             <button

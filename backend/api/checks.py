@@ -26,6 +26,7 @@ from loguru import logger
 
 import simulate
 import store
+from copilot import setup
 from store.suite import fingerprint
 
 services: Optional[simulate.Services] = None
@@ -98,9 +99,22 @@ async def _run(agent_id: str, run: dict, copy: dict) -> None:
         logger.exception(f"Checks of agent {agent_id} did not finish")
         store.finish_run(run["id"], "stopped")
         return
-    finished = store.finish_run(run["id"])
-    if run["pull"] is not None and finished is not None:
-        store.record_checks(agent_id, run["pull"], finished)
+    # Logged before the run is marked done, so whoever reads the pull request
+    # as soon as its checks are done finds how they went in its log too. The
+    # run is marked done whatever happens to the log: left "running", it would
+    # keep the merge waiting until the next restart.
+    try:
+        if run["pull"] is not None:
+            latest = store.get_run(agent_id, pull=run["pull"])
+            if latest is not None and latest["id"] == run["id"]:
+                store.record_checks(agent_id, run["pull"], latest)
+    finally:
+        store.finish_run(run["id"])
+    if run["pull"] is not None:
+        try:
+            setup.after_checks(agent_id, run["pull"])
+        except Exception:  # noqa: BLE001 - the run is over either way
+            logger.exception(f"Prosper AI could not look at the checks of agent {agent_id}")
 
 
 def wait(timeout: float = 30) -> None:

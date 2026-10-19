@@ -17,11 +17,13 @@ type Props = {
   warnings: Warning[]
   /** A call is on screen, running or ended. */
   open: boolean
+  /** Something else that stands in the way, said as it is: Prosper AI at work. */
+  waitFor?: string | null
   onStart: () => void
 }
 
-export function TestCallButton({ label, dirty, warnings, open, onStart }: Props) {
-  const blocker = open ? null : callBlocker(dirty, warnings)
+export function TestCallButton({ label, dirty, warnings, open, waitFor = null, onStart }: Props) {
+  const blocker = open ? null : (waitFor ?? callBlocker(dirty, warnings))
   return (
     // The reason is on a wrapper: a disabled button takes no pointer, so no tooltip.
     <span title={blocker ?? undefined} className="ml-2 flex">

@@ -32,7 +32,7 @@ from agent_builder import AgentBuilder
 
 from . import runs
 from .db import BACKEND_DIR, connect, db_path, now
-from .pulls import insert_pull
+from .pulls import insert_pull, stop_prosper
 from .suite import manual, new_id
 from .versions import insert_version
 
@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS pulls (
     rules TEXT NOT NULL DEFAULT '[]',
     tests TEXT NOT NULL DEFAULT '[]',
     events TEXT NOT NULL,
+    -- Prosper AI's work on it, as JSON: its state, what it read, what it asked.
+    -- NULL for a pull request Prosper AI has no part in.
+    prosper TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (agent_id, number)
@@ -117,6 +120,7 @@ def init_db() -> None:
         _migrate_untested(conn)
         runs.migrate(conn)
         runs.stop_unfinished(conn)
+        stop_prosper(conn)
         if seed is not None:
             # The example is live from the start, as v1: it is there to be called.
             agent_id = _insert_agent(conn, seed["name"])
@@ -160,12 +164,14 @@ def _migrate_unversioned(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_untested(conn: sqlite3.Connection) -> None:
-    """Give copies from before rules and tests none of either."""
+    """Give copies from before rules and tests none of either, and pull requests no Prosper AI."""
     for table in ("versions", "pulls"):
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         for column in ("rules", "tests"):
             if column not in columns:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT '[]'")
+        if table == "pulls" and "prosper" not in columns:
+            conn.execute("ALTER TABLE pulls ADD COLUMN prosper TEXT")
 
 
 def _insert_agent(conn: sqlite3.Connection, name: str) -> str:

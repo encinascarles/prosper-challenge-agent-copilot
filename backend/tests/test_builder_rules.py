@@ -8,6 +8,7 @@ import copy
 import pytest
 
 from agent_builder import AgentBuilder
+from agent_builder.builder import STEP_GUIDE
 
 EVERY = {"step": None, "text": "Never give medical advice."}
 CONFIRM = {"step": "confirm", "text": "Read the date back before saying goodbye."}
@@ -37,8 +38,20 @@ def test_a_steps_rules_are_one_more_task_message_of_that_step_only(agent):
         "role": "developer",
         "content": "Rules for this step:\n- Read the date back before saying goodbye.",
     }
-    assert _node(builder, "greeting")["task_messages"] == agent["nodes"][0]["task_messages"]
+    greeting = _node(builder, "greeting")["task_messages"]
+    assert greeting == [
+        *agent["nodes"][0]["task_messages"],
+        {"role": "developer", "content": STEP_GUIDE},
+    ]
     assert _node(builder, "greeting")["role_message"] == agent["persona"]
+
+
+def test_a_step_that_moves_on_is_told_to_call_its_functions(agent):
+    builder = AgentBuilder.from_dict(agent)
+
+    assert _node(builder, "greeting")["task_messages"][-1]["content"] == STEP_GUIDE
+    # The step that ends the call has no function to call.
+    assert _node(builder, "confirm")["task_messages"] == agent["nodes"][-1]["task_messages"]
 
 
 def test_rules_leave_the_agent_json_untouched(agent):
