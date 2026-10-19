@@ -301,3 +301,28 @@ def test_a_change_names_its_own_test_not_one_a_fix_left_in_live(
     assert pull["events"][-1]["text"].endswith("the new test 0/3 on v1 → 3/3")
     proposal = prosper_model.asked["fix"][0][1]["content"]
     assert "must make pass: Asks who the visit is for" in proposal
+
+
+def test_a_question_about_a_pull_request_that_does_not_exist_stores_nothing(
+    client, live_agent, prosper_model
+):
+    agent_id = live_agent()
+
+    missing = _ask(client, agent_id, "What does it ask first?", pull=99, status=404)
+
+    assert missing["detail"] == "The agent has no PR #99."
+    assert client.get(f"/api/agents/{agent_id}/chats").json() == []
+    assert "ask" not in prosper_model.asked
+
+
+def test_a_further_question_about_nothing_leaves_the_chat_as_it_was(
+    client, live_agent, prosper_model
+):
+    agent_id = live_agent()
+    prosper_model.script = {"ask": [ANSWER]}
+    chat = _ask(client, agent_id, "Can it book for a child?")
+
+    _ask(client, agent_id, "And on PR #99?", chat=chat["id"], pull=99, status=404)
+
+    after = client.get(f"/api/agents/{agent_id}/chats/{chat['id']}").json()
+    assert after["messages"] == chat["messages"]

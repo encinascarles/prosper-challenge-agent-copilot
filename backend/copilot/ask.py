@@ -58,14 +58,14 @@ ANSWER = _object(
 _STORED_NAME = re.compile(r"\b[a-z]+(?:_[a-z0-9]+)+\b")
 
 
-def answer(agent_id: str, chat_id: int, pull: Optional[int]) -> dict:
-    """Answer the chat's last question, about live or the open pull request `pull`.
+def answer(agent_id: str, chat_id: int, about: tuple[dict, str]) -> dict:
+    """Answer the chat's last question, about the copy `about` (from `copy_of`).
 
     Returns the chat with the answer added. A model that gives no answer
     that passes its check is said in the chat, as Prosper AI's message.
     """
     chat = store.chats.get_chat(agent_id, chat_id)
-    copy, name = _copy(agent_id, pull)
+    copy, name = about
     llm = setup.new_llm()
     facts = _facts(agent_id, copy, name, chat["messages"])
     try:
@@ -132,10 +132,11 @@ def _known(agent_id: str) -> dict:
     }
 
 
-def _copy(agent_id: str, pull: Optional[int]) -> tuple[dict, str]:
+def copy_of(agent_id: str, pull: Optional[int]) -> tuple[dict, str]:
     """The copy the person is looking at, and its name: live ("v2"), or "PR #5".
 
-    Before the agent is live, its PR #1. Raises NotFound.
+    Before the agent is live, its PR #1. Raises NotFound: resolved before the
+    question is stored, so a question about nothing leaves nothing behind.
     """
     agent = store.get_agent(agent_id)
     if agent is None:

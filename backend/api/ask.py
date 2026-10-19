@@ -3,8 +3,10 @@
 #
 # Asking is one request that waits for the answer: Prosper AI answers with one
 # request to the model, in seconds, so there is nothing to follow in the
-# background. The question is stored first, so it stays in the chat even if
-# answering fails; the answer says so then.
+# background. What it is asked about (live, or a pull request) is found
+# first: a question about nothing is a 404 that stores nothing. Then the
+# question is stored, so it stays in the chat even if the model fails; the
+# answer says so then.
 #
 # A chat only answers. When the person asks for a change, the answer offers a
 # pull request, and taking the offer opens it (kind "change"), with Prosper AI
@@ -88,8 +90,9 @@ def list_chats(agent_id: str) -> list[dict]:
 @router.post("", status_code=201, response_model=Chat, responses=_NO_CHAT)
 def new_chat(agent_id: str, body: Question) -> dict:
     """Start a chat with a question, and get Prosper AI's answer."""
+    about = _answer(ask.copy_of, agent_id, body.pull)
     chat = _answer(store.chats.create_chat, agent_id, body.text)
-    return _answer(ask.answer, agent_id, chat["id"], body.pull)
+    return _answer(ask.answer, agent_id, chat["id"], about)
 
 
 @router.get("/{chat_id}", response_model=Chat, responses=_NO_CHAT)
@@ -100,8 +103,9 @@ def get_chat(agent_id: str, chat_id: int) -> dict:
 @router.post("/{chat_id}/messages", response_model=Chat, responses=_NO_CHAT)
 def ask_more(agent_id: str, chat_id: int, body: Question) -> dict:
     """Ask Prosper AI something more in the chat, and get its answer."""
+    about = _answer(ask.copy_of, agent_id, body.pull)
     _answer(store.chats.add_message, agent_id, chat_id, {"by": "you", "text": body.text})
-    return _answer(ask.answer, agent_id, chat_id, body.pull)
+    return _answer(ask.answer, agent_id, chat_id, about)
 
 
 @router.post(
