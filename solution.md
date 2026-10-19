@@ -490,6 +490,77 @@ takes it out and adds another), it does not run tests itself to try a fix
 before proposing it, and a test whose check is flaky has to be judged by a
 person. Next: the same loop for issues found in calls, on PRs it opens.
 
+### Calls come from simulated callers, and Prosper AI reviews every one
+
+**Context.** The second manual job is reading production calls to find what
+goes wrong. There is no call data here, and the live agent is whatever a setup
+generated, so canned calls would not match it.
+
+**Options.**
+- *Seeded example calls and issues.* Rejected: they would describe some other
+  agent, and nothing would change when the agent does.
+- *Voice calls with a synthetic caller.* Rejected for the same reasons as for
+  tests: slow, paid per second, and STT noise.
+- *Simulated callers on the live version, through the tests' text pipeline.*
+  Chosen. "Play calls" asks Prosper AI for a morning's mix of 10–12 callers
+  from the clinic's guidelines and agent (mostly routine, 2+ edge cases: a
+  symptom mid-booking, a time the clinic does not offer, a relative calling,
+  everything said in one breath), then phones live with them, all at once and
+  1.5 s apart. The UI says they are simulated wherever calls are listed.
+
+**How a call is read.** As each call ends it is stored with the version that
+answered, path, transcript and a length estimated from its words (there is no
+audio to time), and Prosper AI reviews it in one structured request: the
+checks it applied (3–8, taken from the rules first, then a guideline line or
+a clinic answer), pass or fail, and one finding per failed check. A finding
+names the agent's turn by its index and quotes it; the quote is checked word
+for word, so the call and issue pages highlight a real line. Its step is read
+from the transcript, not asked for. As for tests, a refused answer goes back
+with the reason.
+
+**Grouping.** A finding joins a tracked issue (open, snoozed or ignored) with
+the same problem, or opens one. That is a second, small request, made only
+when there is something to join, and grouping takes one call at a time while
+reviews run in parallel, so two calls with the same new problem cannot both
+open it. Issues take numbers from the counter pull requests use, so "Issue #3"
+and "PR #4" never clash and the PR that fixes an issue can name it. An issue
+is open, snoozed (a day, a week, or until the next version: checked when
+issues are read, so nothing has to wake it), resolved (stops collecting;
+if the problem comes back it is a new issue) or ignored (leaves the open list
+but keeps counting calls).
+
+**What the real runs showed.** A setup from the sample files, first option
+everywhere, reached green on its first suite (6 passing, 1 flaky) and was
+merged as v1 184 s after the click, USD 0.70 (0.11 Prosper AI, 0.59 the
+suite). Three batches of 12 calls on that v1, about 80 s each:
+- *Batch 1* filed 5 calls under "Presents unverified appointment times as
+  available", a duty no guideline states. The audit prompt now says every
+  check must come from a rule, a guideline line or an answer; batch 2 filed
+  nothing more there.
+- The real problems it found: symptoms mentioned mid-booking get "contact a
+  healthcare provider" and more booking instead of the nurse callback the
+  guidelines promise (Safety, 3 calls across batches); a relative's
+  cancellation accepted without the chart check the clinic's answer requires;
+  a cancellation claimed as done; date, time and place not read back.
+- *Batch 3* opened a second issue for a problem already tracked, because it
+  was said in another step. Grouping first only offered issues of the same
+  step; it now offers every tracked issue, and a real grouping request put
+  both findings where they belonged.
+
+**What it costs.** A batch is USD 0.46–0.49: the calls 0.32–0.34 (almost all
+the agent's own gpt-4o, which resends its context every turn; the prompt
+cache barely helps), reviews 0.13 (about a cent each), the caller mix 0.02.
+A call that goes nowhere is cut at 12 caller turns: one stuck call in the
+first smoke run had cost USD 0.10 alone.
+
+**Trade-offs and what is next.** Simulated callers are not customers: they
+are cooperative and articulate, and they only hit what Prosper AI thought to
+send them. The review is a model's reading and can be wrong, which is why
+every finding shows the turn and why. Next: Fix with Prosper AI on an issue
+(a test that reproduces it, then the change, in a pull request); voice test
+calls stored as calls too; real call data in place of the simulated callers;
+an issue that comes back after its fix reopening with a link to that fix.
+
 ### A test call runs the saved agent, and says where it is
 
 **Context.** The editor holds a draft with unsaved changes, and a call has to run

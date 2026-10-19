@@ -31,9 +31,11 @@ Design decisions and their rationale live in `solution.md`.
 | `backend/bot.py` | Voice pipeline (WebRTC + ElevenLabs STT/TTS + OpenAI LLM). Generic: loads an agent JSON and runs it. No graph logic here. |
 | `backend/agent_builder/schema.py` | The agent contract: `AgentConfig` / `Node` / `Edge`. What the UI edits and the Copilot reads and writes. |
 | `backend/agent_builder/builder.py` | `AgentBuilder`: validates an agent and compiles it into a Pipecat Flows graph. |
-| `frontend/` | Agent Builder UI: Vite + React + TypeScript, Tailwind, shadcn/ui. `src/components/ui/` is shadcn-generated, add components with `npx shadcn@latest add <name>` rather than hand-editing. |
+| `frontend/` | Agent Builder UI (sections Build · Calls · Issues · Pull requests; `src/live/` is Calls and Issues): Vite + React + TypeScript, Tailwind, shadcn/ui. `src/components/ui/` is shadcn-generated, add components with `npx shadcn@latest add <name>` rather than hand-editing. |
+| `backend/store/` | SQLite persistence, one module per thing stored: agents, versions, pull requests, runs, Prosper AI's work, calls and issues. |
+| `backend/api/` | The HTTP API on the Pipecat runner's FastAPI app; `live.py` serves calls and issues. |
 | `backend/simulate/` | Tests as text calls on the same Pipecat pipeline as voice calls: simulated caller, checks, the suite (3 runs per test). Unit tests use a scripted LLM, never OpenAI. |
-| `backend/copilot/` | Prosper AI: builds a new agent from a clinic's guidelines inside its PR #1 (`setup.py`, a background job) and takes requests in that PR. One structured OpenAI request per artifact (`llm.py`), checked in code and retried with the error (`artifacts.py`); prompts in `prompts/*.md`; text from PDF/Word files (`files.py`). Tests script the model, never OpenAI. |
+| `backend/copilot/` | Prosper AI: builds a new agent from a clinic's guidelines inside its PR #1 (`setup.py`, a background job) and takes requests in that PR. One structured OpenAI request per artifact (`llm.py`), checked in code and retried with the error (`artifacts.py`); prompts in `prompts/*.md`; text from PDF/Word files (`files.py`). Also plays simulated calls on the live version and reviews each one into issues (`calls.py`, with its schemas and checks in `audit.py`). Tests script the model, never OpenAI. |
 | `backend/example_flow.json` | Sample agent (clinic scheduler), only to illustrate the format. |
 | `backend/example_tests.json` | The tests the sample agent is seeded with. |
 | `solution.md` | Overview and key architectural decisions (part of the deliverable). |
