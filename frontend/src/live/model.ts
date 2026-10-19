@@ -65,9 +65,13 @@ export function testCallTitle(call: Pick<TestCallSummary, 'pull' | 'version'>): 
 export const endedText = (call: Pick<TestCallSummary, 'ended'>) =>
   call.ended === 'agent_ended' ? 'The agent ended it' : 'Hung up'
 
-/** The muted line under a test call: who · when · length · how it ended · what Prosper AI found. */
+/**
+ * The muted line under a test call in the list: when · length · how it ended
+ * · what Prosper AI flagged. Short enough for the list; who placed it is in
+ * the page's title.
+ */
 export function testCallMeta(call: TestCallSummary, now = new Date()): string {
-  const parts = [`by ${call.by}`, when(call.at, now), duration(call.seconds), endedText(call)]
+  const parts = [when(call.at, now), duration(call.seconds), call.ended === 'agent_ended' ? 'Agent ended' : 'Hung up']
   if (call.review === 'done' && call.flagged) parts.push(`${call.flagged} flagged`)
   return parts.join(' · ')
 }

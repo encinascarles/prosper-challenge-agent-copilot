@@ -147,10 +147,10 @@ describe('test calls', () => {
     expect(testCallTitle({ pull: null, version: 2 })).toBe('Test call · v2')
   })
 
-  it('says who placed it, its real length, how it ended and, once reviewed, what was flagged', () => {
-    expect(testCallMeta(test, NOW)).toBe('by you · 10:45 AM · 0:42 · Hung up')
+  it('says its real length, how it ended and, once reviewed, what was flagged, short enough for the list', () => {
+    expect(testCallMeta(test, NOW)).toBe('10:45 AM · 0:42 · Hung up')
     expect(testCallMeta({ ...test, ended: 'agent_ended', review: 'done', flagged: 2 }, NOW)).toBe(
-      'by you · 10:45 AM · 0:42 · The agent ended it · 2 flagged',
+      '10:45 AM · 0:42 · Agent ended · 2 flagged',
     )
   })
 })
