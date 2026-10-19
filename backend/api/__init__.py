@@ -6,7 +6,7 @@
 from fastapi import FastAPI
 
 from . import agents, copilot, live, pulls, suite
-from .calls import CallError, agent_for_call, check_start, describe
+from .calls import CallError, TestCallRecord, agent_for_call, check_start, describe, record_for
 
 
 def mount(app: FastAPI) -> None:
@@ -20,4 +20,11 @@ def mount(app: FastAPI) -> None:
     app.middleware("http")(check_start)
 
 
-__all__ = ["CallError", "agent_for_call", "describe", "mount"]
+__all__ = [
+    "CallError",
+    "TestCallRecord",
+    "agent_for_call",
+    "describe",
+    "mount",
+    "record_for",
+]

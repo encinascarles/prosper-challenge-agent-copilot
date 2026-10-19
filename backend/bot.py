@@ -11,12 +11,15 @@
 # While the call runs, the browser is told each node the call enters, over the
 # RTVI channel its client already has, so the editor can draw the call's path.
 # That part is shared with the text calls the tests run (agent_builder/runtime.py).
+# A call to a saved agent is a test call, and is recorded: the record is handed
+# the nodes and both sides' turns, and stores the call when it ends (api/calls.py).
 #
 # Run:  python bot.py   then open http://localhost:7860/client (runs example_flow.json)
 #
 
 import os
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -51,7 +54,10 @@ transport_params = {
 
 
 async def run_bot(
-    transport: BaseTransport, runner_args: RunnerArguments, builder: AgentBuilder
+    transport: BaseTransport,
+    runner_args: RunnerArguments,
+    builder: AgentBuilder,
+    record: Optional[api.TestCallRecord] = None,
 ) -> None:
     config = builder.config
     logger.info(f"Starting '{config.name}' with {len(config.nodes)} nodes")
@@ -87,11 +93,16 @@ async def run_bot(
         idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
     )
 
-    start_agent = start_flow(builder, llm, context_aggregator, worker, transport)
+    if record:
+        record.listen(context_aggregator)
+    on_node = record.entered if record else None
+    start_agent = start_flow(builder, llm, context_aggregator, worker, transport, on_node)
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Client connected — starting flow at initial node")
+        if record:
+            record.started()
         await start_agent()
 
     @transport.event_handler("on_client_disconnected")
@@ -101,7 +112,11 @@ async def run_bot(
 
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
     await runner.add_workers(worker)
-    await runner.run()
+    try:
+        await runner.run()
+    finally:
+        if record:
+            record.save()
 
 
 async def bot(runner_args: RunnerArguments):
@@ -117,7 +132,7 @@ async def bot(runner_args: RunnerArguments):
             await connection.disconnect()
         return
     transport = await create_transport(runner_args, transport_params)
-    await run_bot(transport, runner_args, builder)
+    await run_bot(transport, runner_args, builder, api.record_for(runner_args.body, builder))
 
 
 if __name__ == "__main__":

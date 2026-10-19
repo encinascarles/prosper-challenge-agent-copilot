@@ -22,6 +22,10 @@
 # same problem (a detail never confirmed) showed up on the turn of whichever
 # step the agent was in, and keeping steps apart split it into two issues.
 #
+# A test call (a person trying the agent by voice from Build) is never
+# reviewed on its own and never files into issues. Asked to, Prosper AI
+# reviews it the same way, and what it found stays on the test call.
+#
 # A batch runs in a thread of its own with its own event loop, like the
 # checks: the voice calls on the server's loop never wait behind it. What each
 # part costs (the callers, the calls, the reviews) is added to the batch as it
@@ -181,22 +185,8 @@ def review(
 ) -> None:
     """Prosper AI reviews the call and files what went wrong into issues. Never raises."""
     llm = new_llm()
-    transcript = call["transcript"]
     try:
-        path = " > ".join(step["node"] for step in call["path"]) or "nowhere"
-        content = (
-            f"{context}\n\nThe call, from {caller}. How it ended: "
-            f"{_ENDED.get(call['ended'], call['ended'])}. Steps: {path}.\n\n"
-            f"Transcript:\n{audit.transcript_lines(transcript)}"
-        )
-        answer = llm.ask(
-            "audit", content, audit.AUDIT, lambda a: audit.check_audit(a, transcript, rules)
-        )
-        initial = version["config"]["initial_node"]
-        findings = [
-            {**finding, "step": audit.step_of_turn(transcript, finding["turn"], initial)}
-            for finding in answer["findings"]
-        ]
+        answer, findings = _audit(llm, caller, call, version, context, rules)
         with _grouping:
             placed = list(zip(findings, _group(llm, agent_id, findings), strict=True))
             review = {
@@ -211,6 +201,65 @@ def review(
     finally:
         if batch is not None:
             store.calls.spend(batch, "reviews", llm.usage["usd"])
+
+
+def _audit(
+    llm: LLM, caller: str, call: dict, copy: dict, context: str, rules: set
+) -> tuple[dict, list[dict]]:
+    """Prosper AI's review of one call: its answer, and its findings with their steps."""
+    transcript = call["transcript"]
+    path = " > ".join(step["node"] for step in call["path"]) or "nowhere"
+    content = (
+        f"{context}\n\nThe call, from {caller}. How it ended: "
+        f"{_ENDED.get(call['ended'], call['ended'])}. Steps: {path}.\n\n"
+        f"Transcript:\n{audit.transcript_lines(transcript)}"
+    )
+    answer = llm.ask(
+        "audit", content, audit.AUDIT, lambda a: audit.check_audit(a, transcript, rules)
+    )
+    initial = copy["config"]["initial_node"]
+    findings = [
+        {**finding, "step": audit.step_of_turn(transcript, finding["turn"], initial)}
+        for finding in answer["findings"]
+    ]
+    return answer, findings
+
+
+def review_test_call(agent_id: str, call_id: int) -> None:
+    """Have Prosper AI review the test call, in the background. Its findings stay on it.
+
+    Raises NotFound, or Conflict if it is being reviewed already.
+    """
+    call = store.test_calls.get_test_call(agent_id, call_id)
+    if call is None:
+        raise store.NotFound(f"The agent has no test call {call_id}.")
+    if call["pull"] is not None:
+        copy, name = store.get_pull(agent_id, call["pull"]), store.label(call["pull"])
+    else:
+        copy, name = store.get_version(agent_id, call["version"]), f"v{call['version']}"
+    if not store.test_calls.start_review(agent_id, call_id):
+        raise store.Conflict("Prosper AI is reviewing this call already.")
+    future = _pool.submit(_review_test_call, agent_id, call, copy, name)
+    with _lock:
+        _jobs[:] = [job for job in _jobs if not job.done()] + [future]
+
+
+def _review_test_call(agent_id: str, call: dict, copy: dict, name: str) -> None:
+    llm = new_llm()
+    try:
+        context = _context(agent_id, copy, name)
+        rules = {rule["id"] for rule in copy["rules"]}
+        answer, findings = _audit(
+            llm, "a person testing the agent by voice", call, copy, context, rules
+        )
+        store.test_calls.write_review(
+            call["id"], answer["outcome"], answer["checks"], findings, llm.usage["usd"]
+        )
+    except Exception:  # noqa: BLE001 - said on the call's page
+        logger.exception(f"Prosper AI could not review test call {call['id']}")
+        store.test_calls.review_failed(call["id"])
+    finally:
+        logger.info(f"Review of test call {call['id']} spent USD {llm.usage['usd']:.4f}")
 
 
 def _group(llm: LLM, agent_id: str, findings: list[dict]) -> list[Optional[int]]:
@@ -244,8 +293,10 @@ def _fixed(issue: dict) -> str:
     return f" (fixed in v{fixed['version']})" if fixed else ""
 
 
-def _context(agent_id: str, version: dict) -> str:
+def _context(agent_id: str, version: dict, name: Optional[str] = None) -> str:
     """What a request about this agent's calls reads first: its guidelines, agent and rules.
+
+    `version` is the copy the calls ran on, named `name` ("v3" by default, or "PR #4").
 
     The same for every call of a batch and written first, so the model's
     prompt cache serves it to every review after the first.
@@ -264,7 +315,8 @@ def _context(agent_id: str, version: dict) -> str:
     agent = json.dumps(artifacts.from_config(version["config"]), indent=1)
     return (
         f"{guidelines}\n\nThe clinic's answers to Prosper AI's questions:\n{given or '(none)'}"
-        f"\n\nThe agent, v{version['number']} (it has no calendar and no patient records):\n"
+        f"\n\nThe agent, {name or 'v' + str(version['number'])}"
+        " (it has no calendar and no patient records):\n"
         f"{agent}\n\nIts rules:\n{rules or '(none)'}"
     )
 
