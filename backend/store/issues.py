@@ -369,6 +369,12 @@ def _check_step(conn: sqlite3.Connection, agent_id: str, step: str) -> None:
         raise Conflict(f"v{live} has no step '{step}'.")
 
 
+def check_step(agent_id: str, step: str) -> None:
+    """Raise Conflict unless `step` is one of live's, or "" (not sure): as a report checks it."""
+    with connect() as conn:
+        _check_step(conn, agent_id, step)
+
+
 def _link(conn: sqlite3.Connection, agent_id: str, number: int, step: str, calls: list[int]):
     """Link calls of the agent to the issue as a whole; those already in it are skipped."""
     have = {
@@ -511,6 +517,22 @@ def edit(agent_id: str, number: int, changes: dict, calls: list[int], by: str) -
         return _select(conn, agent_id, number)
 
 
+# The states each change by hand starts from.
+ALLOWED = {
+    "snooze": ("open",),
+    "resolve": ("open", "snoozed"),
+    "ignore": ("open", "snoozed"),
+    "reopen": ("snoozed", "resolved", "ignored"),
+}
+
+
+def refusal(issue: dict, change: str) -> Optional[str]:
+    """Why `change` ("snooze", "resolve"…) cannot be made to `issue` now, or None."""
+    if issue["state"] not in ALLOWED[change]:
+        return f"{label(issue['number'])} is {issue['state']}."
+    return None
+
+
 def _change(conn, agent_id: str, number: int, allowed: tuple, state: str, event: dict, snooze=None):
     _require_agent(conn, agent_id)
     _wake(conn, agent_id)
@@ -548,27 +570,26 @@ def snooze(agent_id: str, number: int, until: str, by: str) -> dict:
             when = {"until": later.isoformat(timespec="milliseconds")}
             text = f"for a {until}"
         event = _event("snoozed", by, text=text, **when)
-        return _change(conn, agent_id, number, ("open",), "snoozed", event, when)
+        return _change(conn, agent_id, number, ALLOWED["snooze"], "snoozed", event, when)
 
 
 def resolve(agent_id: str, number: int, by: str) -> dict:
     with connect() as conn:
         event = _event("resolved", by)
-        return _change(conn, agent_id, number, ("open", "snoozed"), "resolved", event)
+        return _change(conn, agent_id, number, ALLOWED["resolve"], "resolved", event)
 
 
 def ignore(agent_id: str, number: int, by: str) -> dict:
     with connect() as conn:
         event = _event("ignored", by)
-        return _change(conn, agent_id, number, ("open", "snoozed"), "ignored", event)
+        return _change(conn, agent_id, number, ALLOWED["ignore"], "ignored", event)
 
 
 def reopen(agent_id: str, number: int, by: str) -> dict:
     """Open a snoozed, resolved or ignored issue again."""
     with connect() as conn:
         event = _event("reopened", by)
-        allowed = ("snoozed", "resolved", "ignored")
-        return _change(conn, agent_id, number, allowed, "open", event)
+        return _change(conn, agent_id, number, ALLOWED["reopen"], "open", event)
 
 
 def check_fixable(conn: sqlite3.Connection, agent_id: str, number: int) -> dict:
@@ -586,6 +607,12 @@ def check_fixable(conn: sqlite3.Connection, agent_id: str, number: int) -> dict:
     if fixing := [p for p in issue["pulls"] if p["state"] == "open"]:
         raise Conflict(f"PR #{fixing[0]['number']} is fixing {label(number)} already.")
     return issue
+
+
+def fixable(agent_id: str, number: int) -> dict:
+    """The issue, if a pull request may fix it; raises NotFound or Conflict as opening one would."""
+    with connect() as conn:
+        return check_fixable(conn, agent_id, number)
 
 
 def log_fix(conn: sqlite3.Connection, agent_id: str, number: int, kind: str, pull: int, by: str):
