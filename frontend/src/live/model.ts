@@ -136,6 +136,8 @@ export function eventText(event: IssueEvent): string {
       return `Reopened ${pull(event)} to fix it`
     case 'fixed':
       return `Resolved by ${pull(event)} in v${event.version}`
+    case 'fix_merged':
+      return `${pull(event)} merged as v${event.version} · issue ${event.text === 'ignored' ? 'left ignored' : 'already resolved'}`
     case 'came_back':
       return `Came back in ${event.text ?? 'the fixed version'}: ${from}`
   }

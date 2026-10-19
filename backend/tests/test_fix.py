@@ -413,3 +413,22 @@ def test_a_new_message_gets_its_own_rounds_of_checking(client, live_agent):
 
     work = store.prosper.work_of(agent_id, number)
     assert "rounds" not in work and "handed_over" not in work
+
+
+@pytest.mark.parametrize("state", ["ignore", "resolve"])
+def test_merging_a_fix_leaves_an_issue_the_person_closed_as_they_left_it(
+    client, with_issue, state
+):
+    agent_id = with_issue()
+    number = _fix(client, agent_id, prosper=False)["number"]
+    client.post(f"/api/agents/{agent_id}/issues/{ISSUE}/{state}")
+    left = _issue(client, agent_id)
+
+    with store.db.connect() as conn:
+        store.issues.resolve_by_fix(conn, agent_id, ISSUE, number, 2, "you")
+
+    issue = _issue(client, agent_id)
+    assert (issue["state"], issue["fixed"]) == (left["state"], None)
+    merged = issue["events"][-1]
+    assert (merged["type"], merged["pull"], merged["version"]) == ("fix_merged", number, 2)
+    assert merged["text"] == left["state"]

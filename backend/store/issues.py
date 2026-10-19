@@ -436,11 +436,24 @@ def log_fix(conn: sqlite3.Connection, agent_id: str, number: int, kind: str, pul
 def resolve_by_fix(
     conn: sqlite3.Connection, agent_id: str, number: int, pull: int, version: int, by: str
 ):
-    """The pull request fixing the issue merged as `version`, by `by`: the issue is resolved there."""
+    """The pull request fixing the issue merged as `version`, by `by`: it is resolved there.
+
+    Unless the person already decided what the issue is: one they ignored
+    stays ignored, and one already resolved keeps its first resolution. The
+    merge is logged on it either way.
+    """
     row = conn.execute(
-        "SELECT events FROM issues WHERE agent_id = ? AND number = ?", (agent_id, number)
+        "SELECT state, events FROM issues WHERE agent_id = ? AND number = ?", (agent_id, number)
     ).fetchone()
     if row is None:
+        return
+    events = json.loads(row["events"])
+    if row["state"] in ("ignored", "resolved"):
+        event = _event("fix_merged", by, pull=pull, version=version, text=row["state"])
+        conn.execute(
+            "UPDATE issues SET events = ?, updated_at = ? WHERE agent_id = ? AND number = ?",
+            (json.dumps([*events, event]), event["at"], agent_id, number),
+        )
         return
     event = _event("fixed", by, pull=pull, version=version)
     conn.execute(
@@ -448,7 +461,7 @@ def resolve_by_fix(
         " WHERE agent_id = ? AND number = ?",
         (
             json.dumps({"pull": pull, "version": version}),
-            json.dumps([*json.loads(row["events"]), event]),
+            json.dumps([*events, event]),
             event["at"],
             agent_id,
             number,

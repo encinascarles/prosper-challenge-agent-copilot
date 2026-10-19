@@ -112,6 +112,7 @@ export type IssueEvent = {
     | 'unlinked'
     | 'relinked'
     | 'fixed'
+    | 'fix_merged' // merged while it was ignored or resolved: `text` says which
     | 'came_back'
   by: string
   at: string

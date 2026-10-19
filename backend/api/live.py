@@ -164,6 +164,7 @@ class IssueEvent(BaseModel):
         "unlinked",
         "relinked",
         "fixed",
+        "fix_merged",  # merged while the issue was ignored or resolved: `text` says which
         "came_back",
     ]
     by: str
