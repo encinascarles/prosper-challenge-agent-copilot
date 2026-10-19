@@ -18,12 +18,14 @@ type Props = {
   onPage: (number: number | null) => void
   onOpenInBuild: (number: number) => void
   onTry: (number: number) => void
+  /** The page of the issue a fix is for. */
+  onIssue: (number: number) => void
   onNew: () => void
   onChanged: () => void
   onToast: (text: string) => void
 }
 
-export function PullsView({ agent, page, onPage, onOpenInBuild, onTry, onNew, onChanged, onToast }: Props) {
+export function PullsView({ agent, page, onPage, onOpenInBuild, onTry, onIssue, onNew, onChanged, onToast }: Props) {
   const [pulls, setPulls] = useState<{ agent: Agent; list: PullSummary[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -58,6 +60,7 @@ export function PullsView({ agent, page, onPage, onOpenInBuild, onTry, onNew, on
         onBack={() => onPage(null)}
         onOpenInBuild={onOpenInBuild}
         onTry={onTry}
+        onIssue={onIssue}
         onChanged={onChanged}
         onToast={onToast}
       />

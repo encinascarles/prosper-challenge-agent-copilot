@@ -11,8 +11,9 @@
 // pull request's text is kept, and its event says where.
 //
 // On a pull request Prosper AI works on, the page follows it while it works
-// and while its checks run, its questions are answered in the conversation,
-// and the composer under it writes to Prosper AI.
+// and while its checks run, and its questions are answered in the
+// conversation. The composer under the conversation of any open pull request
+// writes to Prosper AI. A fix says which issue it fixes, and links to it.
 
 import { ArrowLeft, GitMerge, GitPullRequestArrow, GitPullRequestClosed, MoreHorizontal, Phone, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -40,6 +41,7 @@ import { useFollow } from '@/prosper/useFollow'
 import { ChecksLine } from '@/suite/bits'
 import { progress, suiteChanges, summarize } from '@/suite/model'
 import { useChecks } from '@/suite/useChecks'
+import { issueLabel } from '@/live/model'
 
 import { Dot, StateBadge } from './bits'
 import { diffAgents, NOTHING, rebase, updateSummary } from './diff'
@@ -54,6 +56,7 @@ type Props = {
   onBack: () => void
   onOpenInBuild: (number: number) => void
   onTry: (number: number) => void
+  onIssue: (number: number) => void
   /** The pull request changed: what lists it, and the agent, may be out of date. */
   onChanged: () => void
   onToast: (text: string) => void
@@ -92,7 +95,7 @@ function TitleInput({ title, onRename }: { title: string; onRename: (title: stri
   )
 }
 
-export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChanged, onToast }: Props) {
+export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onIssue, onChanged, onToast }: Props) {
   const live = agent.live_version
   // Read again while Prosper AI works on it or its checks run.
   const followed = useFollow(agent.id, number, true)
@@ -235,6 +238,12 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
               </h1>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12.5px] text-muted-foreground tabular-nums">
                 <StateBadge pull={pull} />
+                {pull.fixes !== null && (
+                  <button onClick={() => onIssue(pull.fixes!)} className="ml-1 text-foreground hover:underline">
+                    Fixes {issueLabel(pull.fixes)}
+                  </button>
+                )}
+                {pull.fixes !== null && <Dot />}
                 {/* A merged setup was based on nothing; "not live yet" would read as now. */}
                 {!(pull.kind === 'setup' && pull.state === 'merged') && (
                   <span className={cn('ml-1', stale && 'font-medium text-warn')}>
@@ -363,7 +372,7 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
               picking={picking}
               running={checks.run?.state === 'running' ? progress(checks.run) : null}
             />
-            {open && pull.prosper && <Composer pull={pull} onSend={send} />}
+            {open && <Composer pull={pull} onSend={send} />}
           </div>
         ) : tab === 'checks' ? (
           <PullChecks
@@ -377,6 +386,7 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onChange
           <PullChanges
             changes={changes}
             suite={suite}
+            run={checks.run ?? null}
             base={pull.base_version ? versionLabel(pull.base_version) : null}
             open={open}
           />

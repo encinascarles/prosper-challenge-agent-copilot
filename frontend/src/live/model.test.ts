@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { arriving, around, byStep, callMeta, duration, eventText, issueMeta, outcomeText, snoozeText, stateText, tabOf } from './model'
+import { arriving, around, byStep, callMeta, duration, eventText, fixText, issueMeta, outcomeText, snoozeText, stateText, tabOf } from './model'
 import type { CallSummary, IssueSummary, Play } from './types'
 
 const NOW = new Date('2026-10-19T10:50:00')
@@ -26,6 +26,8 @@ const issue: IssueSummary = {
   description: '',
   state: 'open',
   snooze: null,
+  fixed: null,
+  pulls: [],
   calls: 3,
   first_seen: call.at,
   last_seen: call.at,
@@ -86,5 +88,26 @@ describe('issues', () => {
   it('tells its activity in plain words', () => {
     expect(eventText({ type: 'opened', by: 'Prosper AI', at: '', caller: 'Ana Ruiz' })).toBe('Found it in Ana Ruiz’s call')
     expect(eventText({ type: 'snoozed', by: 'you', at: '', text: 'for a week' })).toBe('Snoozed it for a week')
+  })
+})
+
+describe('fixing an issue', () => {
+  const fix = { number: 5, title: 'Fix: Opens the chart', state: 'open' as const, merged_version: null }
+
+  it('shows the pull request fixing it, then the version that did', () => {
+    expect(fixText({ pulls: [fix], fixed: null })).toBe('PR #5 open')
+    expect(fixText({ pulls: [{ ...fix, state: 'merged', merged_version: 2 }], fixed: { pull: 5, version: 2 } })).toBe('Fixed in v2 by PR #5')
+    expect(fixText({ pulls: [{ ...fix, state: 'closed' }], fixed: null })).toBeNull()
+    expect(issueMeta({ ...issue, pulls: [fix] }, NOW)).toBe('Collect details · 3 calls · last 10:42 AM · PR #5 open')
+  })
+
+  it('tells what happened to its fix', () => {
+    const at = ''
+    expect(eventText({ type: 'fixing', by: 'Prosper AI', at, pull: 5 })).toBe('Opened PR #5 to fix it')
+    expect(eventText({ type: 'unlinked', by: 'you', at, pull: 5 })).toBe('Closed PR #5 without merging · still open')
+    expect(eventText({ type: 'fixed', by: 'you', at, pull: 5, version: 2 })).toBe('Resolved by PR #5 in v2')
+    expect(eventText({ type: 'fix_merged', by: 'you', at, pull: 5, version: 2, text: 'ignored' })).toBe('PR #5 merged as v2 · issue left ignored')
+    expect(eventText({ type: 'fix_merged', by: 'you', at, pull: 5, version: 2, text: 'resolved' })).toBe('PR #5 merged as v2 · issue already resolved')
+    expect(eventText({ type: 'came_back', by: 'Prosper AI', at, text: 'v2', caller: 'Ana' })).toBe('Came back in v2: Ana’s call')
   })
 })

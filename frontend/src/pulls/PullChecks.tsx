@@ -9,7 +9,7 @@ import type { Pull, SuiteRun } from '@/agents/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ScoreText, TestIcon } from '@/suite/bits'
-import { addedIn, namesOf, orderTests, progress, score, summarize } from '@/suite/model'
+import { addedIn, beforeAfter, isFixTest, namesOf, orderTests, progress, score, summarize } from '@/suite/model'
 import { TestResults } from '@/suite/TestResults'
 
 import { pullLabel } from './model'
@@ -90,7 +90,9 @@ export function PullChecks({ pull, run, onRerun }: Props) {
               <TestIcon score={s} />
               <span className="text-[13px] font-medium">{test.name}</span>
               <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
-                {addedIn(test, pull.number) ? (
+                {isFixTest(test) ? (
+                  <span className="font-medium text-brand tabular-nums">new · {beforeAfter(test, null)}</span>
+                ) : addedIn(test, pull.number) ? (
                   <span className="font-medium text-brand">new · added in {pullLabel(pull.number)}</span>
                 ) : test.source.pull ? (
                   `from ${pullLabel(test.source.pull)}`

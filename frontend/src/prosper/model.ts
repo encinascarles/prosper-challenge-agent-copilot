@@ -9,6 +9,7 @@
 
 import type { AgentConfig, FileRead, PullEvent, PullSummary, Rule, Source, Test } from '@/agents/types'
 
+import { humanize } from '@/draft/names'
 import { pullLabel } from '@/pulls/model'
 
 /** Who Prosper AI is in a pull request's log. */
@@ -17,22 +18,26 @@ export const PROSPER = 'Prosper AI'
 export const isProsper = (event: PullEvent) => event.by === PROSPER
 
 /** What Prosper AI is doing on `pull` that the person has to know: building, or waiting for them. */
-export function prosperStatus(pull: PullSummary): 'building' | 'waiting' | null {
+export function prosperStatus(pull: PullSummary): 'building' | 'working' | 'waiting' | null {
   if (pull.state !== 'open' || pull.prosper === null) return null
-  if (pull.prosper.state === 'working') return 'building'
+  // Building is a new agent's setup; on anything else it works on a change.
+  if (pull.prosper.state === 'working') return pull.kind === 'setup' ? 'building' : 'working'
   if (pull.prosper.state === 'waiting') return 'waiting'
   return null
 }
 
+export type Status = NonNullable<ReturnType<typeof prosperStatus>>
+
 /** The status in words, as the top bar says it. */
-export function statusText(status: 'building' | 'waiting'): string {
-  return status === 'building' ? 'Prosper AI is building' : 'Waiting for your answer'
+export function statusText(status: Status): string {
+  if (status === 'building') return 'Prosper AI is building'
+  return status === 'working' ? 'Prosper AI is working' : 'Waiting for your answer'
 }
 
 /** Why Prosper AI's work keeps `pull` from merging, or null. */
 export function prosperBlocker(pull: PullSummary): string | null {
   const status = prosperStatus(pull)
-  if (status === 'building') return 'Prosper AI is still working on it.'
+  if (status === 'building' || status === 'working') return 'Prosper AI is still working on it.'
   if (status === 'waiting') return `Prosper AI needs your answer in ${pullLabel(pull.number)}.`
   return null
 }
@@ -60,6 +65,8 @@ export type Item =
   | { kind: 'batch'; by: string; changes: PullEvent[]; at: string }
 
 const isChange = (event: PullEvent) => event.type === 'rule' || event.type === 'test'
+// Turns whose changes (rules and tests added right after) are folded under them.
+const FOLDS = new Set<PullEvent['type']>(['message', 'proposed'])
 
 export function conversation(events: PullEvent[]): Item[] {
   const items: Item[] = []
@@ -68,7 +75,7 @@ export function conversation(events: PullEvent[]): Item[] {
     if (event.type === 'step') {
       if (last?.kind === 'steps') last.steps.push(event)
       else items.push({ kind: 'steps', steps: [event], at: event.at })
-    } else if (isChange(event) && last?.kind === 'event' && last.event.type === 'message' && last.event.by === event.by) {
+    } else if (isChange(event) && last?.kind === 'event' && FOLDS.has(last.event.type) && last.event.by === event.by) {
       last.changes.push(event)
     } else if (isChange(event) && last?.kind === 'batch' && last.by === event.by) {
       last.changes.push(event)
@@ -121,6 +128,7 @@ export function sourceText(source: Source): string | null {
   if (source.kind === 'answer') return `Your answer${where}`
   if (source.kind === 'request') return `Your request${where}`
   if (source.kind === 'check') return `A failing test${where}`
+  if (source.kind === 'issue') return `Issue #${source.issue}${where}`
   return null
 }
 
@@ -131,4 +139,37 @@ export function sameCopy(
 ): boolean {
   const key = (copy: typeof a) => JSON.stringify([copy.config, copy.rules, copy.tests])
   return key(a) === key(b)
+}
+
+/** The step and field names of an agent, as stored: what a text may name in snake case. */
+export function namesIn(config: AgentConfig): string[] {
+  const fields = config.nodes.flatMap((node) => (node.edges ?? []).flatMap((edge) => Object.keys(edge.properties ?? {})))
+  return [...new Set([...config.nodes.map((node) => node.name), ...fields])]
+}
+
+/**
+ * `text` with the stored names it mentions said as words, as the editor shows
+ * them: "go to nurse_callback" reads "go to Nurse callback". Only names with
+ * an underscore: a one-word name ("goodbye") is a word already, and changing
+ * its case mid-sentence would read worse.
+ */
+export function inWords(text: string, names: string[]): string {
+  const snake = names.filter((name) => name.includes('_')).sort((a, b) => b.length - a.length)
+  if (snake.length === 0) return text
+  const escaped = snake.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  return text.replace(new RegExp(`\\b(${escaped.join('|')})\\b`, 'g'), (name) => humanize(name))
+}
+
+/** Events with every text that may name a step or a field said in words. Read at display time. */
+export function eventsInWords(events: PullEvent[], config: AgentConfig): PullEvent[] {
+  const names = namesIn(config)
+  const words = (text: string | null | undefined) => (text ? inWords(text, names) : text)
+  return events.map((event) => ({
+    ...event,
+    text: words(event.text),
+    summary: words(event.summary),
+    why: words(event.why),
+    details: event.details?.map((line) => inWords(line, names)),
+    options: event.options?.map((line) => inWords(line, names)),
+  }))
 }

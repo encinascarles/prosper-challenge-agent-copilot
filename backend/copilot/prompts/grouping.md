@@ -11,5 +11,8 @@ cancellation without confirming the date", if both break the same line of
 the guidelines). Two different things that go wrong, even in the same step,
 are two issues.
 
+An issue marked "(fixed in vN)" was fixed: if a finding is that same problem,
+it still joins it (the fix did not hold, and the issue opens again).
+
 Answer with one placement per finding: the finding's number and the issue's
 number, or 0 for a new issue.

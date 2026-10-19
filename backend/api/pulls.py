@@ -22,7 +22,7 @@
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_serializer
 
 import store
 
@@ -32,14 +32,35 @@ from .models import INVALID, YOU, AgentSave, Position, Problem, not_found, probl
 router = APIRouter(prefix="/api/agents/{agent_id}", tags=["versions and pull requests"])
 
 
+class Before(BaseModel):
+    """How the test that reproduces an issue went on the version that had it."""
+
+    version: int
+    passed: int  # of `runs` calls
+    runs: int
+
+
 class Source(BaseModel):
     # manual: written by hand. Prosper AI's: from a line of the guidelines, from
     # the person's answer to its question, or from something they asked for.
     # check: added by Prosper AI when it checked its own draft against a failing test.
-    kind: Literal["manual", "guidelines", "answer", "request", "check"]
+    # issue: added by Prosper AI fixing an issue: the test that reproduces it,
+    # or the rule that fixes it.
+    kind: Literal["manual", "guidelines", "answer", "request", "check", "issue"]
     pull: int | None = None  # the pull request it was added in
     file: str | None = None  # guidelines: the file it quotes, or "your notes"
     quote: str | None = None  # the line it comes from, or the answer or request, word for word
+    issue: int | None = None  # issue: the issue's number
+    before: Before | None = None  # issue, a test: how it went on the version with the issue
+
+    @model_serializer(mode="wrap")
+    def _only_for_issues(self, handler):
+        # Left out rather than null where they mean nothing: every other source.
+        data = handler(self)
+        for key in ("issue", "before"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
 
 
 class Rule(BaseModel):
@@ -109,6 +130,11 @@ class PullEvent(BaseModel):
         "answer",
         "message",
         "interrupted",  # Prosper AI's work stopped with the server; a message retries it
+        # Fixing an issue: the test that reproduces it, the change it proposes,
+        # and the checks passing with it.
+        "reproduced",
+        "proposed",
+        "proved",
     ]
     by: str  # "you", "Prosper AI", or "checks" for a run of the tests
     at: str
@@ -132,6 +158,8 @@ class PullEvent(BaseModel):
     details: list[str] | None = None  # "message": one line per thing it decided, folded under it
     rewritten: bool | None = None  # "test": Prosper AI rewrote it, `why` says why
     why: str | None = None
+    issue: int | None = None  # "opened": the issue a fix is for
+    test: str | None = None  # "reproduced", "proved": the id of the test that reproduces it
 
 
 class Prosper(BaseModel):
@@ -145,10 +173,12 @@ class Prosper(BaseModel):
 class PullSummary(BaseModel):
     number: int  # per agent: shown as "PR #3"
     title: str
-    kind: Literal["setup", "edit"]  # setup: pull request #1 of a new agent
+    # setup: pull request #1 of a new agent; fix: opened from an issue, to fix it
+    kind: Literal["setup", "edit", "fix"]
     state: Literal["open", "merged", "closed"]
     base_version: int  # the live version it was copied from; 0 for a setup
     merged_version: int | None  # the version it became, once merged
+    fixes: int | None  # a fix: the number of the issue it fixes
     created_at: str
     updated_at: str
     checks: Checks | None  # its latest run of the tests; None if none ran
@@ -165,8 +195,8 @@ class Pull(PullSummary):
 
 class PullOpen(BaseModel):
     title: str = Field(min_length=1, examples=["Your edits"])
-    # Only edits are opened this way: a setup comes with a new agent, and the
-    # kinds Prosper will open (fixes) come with it.
+    # Only edits are opened this way: a setup comes with a new agent, and a
+    # fix is opened from its issue.
     kind: Literal["edit"] = "edit"
 
 

@@ -1,6 +1,6 @@
-// Writing to Prosper AI, at the bottom of the conversation of the pull request
-// it works on: the answer to its question in your own words, or a change to
-// make ("make the greeting shorter"). Prosper AI changes the pull request's
+// Writing to Prosper AI, at the bottom of the conversation of any open pull
+// request: the answer to its question in your own words, or a change to make
+// ("make the greeting shorter", "if they don't know it, use their phone"). Prosper AI changes the pull request's
 // copy, says what it changed, and the checks run again. While it works on
 // something, it takes nothing new.
 

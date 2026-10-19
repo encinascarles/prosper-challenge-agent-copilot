@@ -158,12 +158,20 @@ class LLM:
         if response.status == "incomplete":
             details = getattr(response.usage, "output_tokens_details", None)
             thought = getattr(details, "reasoning_tokens", 0) or 0
+            text = response.output_text or ""
+            # Its end says why: a real answer that needed more room, or one
+            # that went round in circles (the same words, or blank space).
             logger.warning(
                 f"Prosper AI · {name} · cut off: {thought} tokens thinking, "
-                f"wrote {(response.output_text or '')[:120]!r}…"
+                f"wrote {len(text)} characters: {text[:120]!r} … {text[-300:]!r}"
             )
             raise CutOff("The model ran out of room before it finished its answer.")
         return response.output_text or ""
+
+    def add_cost(self, usd: float) -> None:
+        """Count what something else this work paid for cost: the simulated calls it made."""
+        with self._lock:
+            self.usage["usd"] = round(self.usage["usd"] + usd, 4)
 
     def count(self, usage) -> None:
         if usage is None:

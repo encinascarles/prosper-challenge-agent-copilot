@@ -68,12 +68,16 @@ def _list(items: dict) -> dict:
     return {"type": "array", "items": items}
 
 
+# `options` last. With `required` after it, the model wanted to close the
+# field there; strict mode refuses that, and the only thing left it could
+# write was blank space, until the answer ran out of room (real changes cut
+# off at 12,000 tokens). Ending on `options` lets it close where it wants to.
 _FIELD = _object(
     name=_TEXT,
     description=_TEXT,
     type={"type": "string", "enum": ["string", "number", "boolean", "choice"]},
-    options=_list(_TEXT),
     required={"type": "boolean"},
+    options=_list(_TEXT),
 )
 _EDGE = _object(description=_TEXT, target=_TEXT, fields=_list(_FIELD))
 _NODE = _object(name=_TEXT, task=_TEXT, end={"type": "boolean"}, edges=_list(_EDGE))
@@ -103,6 +107,15 @@ CHANGE = _object(
     remove=_list(_TEXT),
 )
 
+
+# A fix of an issue: the agent whole, as it should be after the smallest change
+# that fixes it, and rules to add. No tests: the test that reproduces the
+# issue is written first, on its own.
+FIX = _object(reply=_TEXT, agent=AGENT, rules=_list(_object(step=_STEP, text=_TEXT)))
+# A fix changes this many steps at most: more is a rewrite, not a fix.
+MAX_FIXED_STEPS = 2
+# The test that reproduces an issue, written from its calls.
+REPRODUCE = _object(name=_TEXT, caller=_TEXT, checks=_list(_TEXT))
 
 # Prosper AI checking its own draft after a run: a verdict per failing test,
 # and what it changes for each.
@@ -211,8 +224,8 @@ def from_config(config: dict) -> dict:
                         "name": key,
                         "description": prop.get("description", ""),
                         "type": "choice" if choice else prop.get("type", "string"),
-                        "options": prop.get("enum", []),
                         "required": key in required,
+                        "options": prop.get("enum", []),
                     }
                 )
             edges.append(
@@ -230,16 +243,42 @@ def keep_extras(config: dict, before: dict) -> dict:
     """`config` with what AGENT has no place for kept from `before`, step by step.
 
     A node's own role message and its actions are not in the shape the model
-    rewrites; a change should not drop them from the steps it leaves alone.
+    rewrites; a change should not drop them from the steps it leaves alone,
+    nor rename the functions of their edges.
     """
     old = {node["name"]: node for node in before.get("nodes", [])}
     nodes = []
     for node in config["nodes"]:
         was = old.get(node["name"], {})
         extras = {k: was[k] for k in ("role_message", "pre_actions", "post_actions") if k in was}
-        nodes.append({**node, **extras})
+        nodes.append({**node, **extras, **_functions_kept(node, was)})
     kept = {k: before[k] for k in ("voice_id", "model") if k in before}
     return {**config, **kept, "nodes": nodes}
+
+
+def _functions_kept(node: dict, was: dict) -> dict:
+    """The node's edges with the function names they had, for edges to the same target.
+
+    The shape the model writes has no function names, and `to_config` makes
+    them `go_to_<target>`; an agent drawn by hand may have named them
+    otherwise ("choose_intent"). A change to one step should not rename the
+    functions of every other.
+    """
+    if "edges" not in node:
+        return {}
+    old = [edge for edge in was.get("edges", [])]
+    names = {edge["function"] for edge in old}
+    edges, taken = [], set()
+    for edge in node["edges"]:
+        same = next(
+            (e for e in old if e["target"] == edge["target"] and e["function"] not in taken), None
+        )
+        function = same["function"] if same else edge["function"]
+        if same is None and function in names:
+            function = function_name(edge["target"], names | taken)
+        taken.add(function)
+        edges.append({**edge, "function": function})
+    return {"edges": edges}
 
 
 class Problems:
@@ -524,18 +563,26 @@ def check_change(answer: dict, name: str, before: dict, removable: set = frozens
 # ---- checking its own draft --------------------------------------------------
 
 
-def check_review(answer: dict, failing: dict, before: dict, removable: set) -> dict:
+def check_review(
+    answer: dict, failing: dict, before: dict, removable: set, kept: set = frozenset()
+) -> dict:
     """The agent JSON a review makes. Raises ValueError like the checks above.
 
     `failing` maps the failing tests' ids to their names: each gets exactly
     one verdict, and only a test judged too strict is rewritten. A test is
-    never taken out. `removable` are the rules the review may take out.
+    never taken out. `removable` are the rules the review may take out. `kept`
+    are tests never rewritten: the one that reproduces the issue a fix is for.
     """
     verdicts = {}
     for item in answer["verdicts"]:
         if item["test"] not in failing:
             raise ValueError(
                 f"'{item['test']}' is not a failing test. Failing: {', '.join(sorted(failing))}."
+            )
+        if item["test"] in kept and item["verdict"] == "test":
+            raise ValueError(
+                f"Test '{item['test']}' reproduces the issue this pull request fixes: it says "
+                "what the agent must do. The agent is what is wrong."
             )
         verdicts[item["test"]] = item["verdict"]
     if missing := set(failing) - set(verdicts):
@@ -568,3 +615,48 @@ def check_review(answer: dict, failing: dict, before: dict, removable: set) -> d
     if "gap" in verdicts.values() and not answer["questions"]:
         raise ValueError("A verdict says the guidelines leave a gap: ask about it.")
     return config
+
+
+# ---- a fix -------------------------------------------------------------------
+
+
+def changed_steps(before: dict, after: dict) -> list[tuple[str, str]]:
+    """The steps a change touches, each with what: "added", "removed", "task" or "edges"."""
+    old = {node["name"]: node for node in before["nodes"]}
+    new = {node["name"]: node for node in after["nodes"]}
+    changes = [(name, "removed") for name in old if name not in new]
+    for name, node in new.items():
+        if name not in old:
+            changes.append((name, "added"))
+        elif _task(node) != _task(old[name]):
+            changes.append((name, "task"))
+        elif (node.get("edges", []), node.get("end", False)) != (
+            old[name].get("edges", []),
+            old[name].get("end", False),
+        ):
+            changes.append((name, "edges"))
+    return changes
+
+
+def check_fix(answer: dict, before: dict) -> dict:
+    """The agent JSON a fix makes. Raises ValueError like a change, and if it is not small.
+
+    It must change something (a step or a rule), and at most MAX_FIXED_STEPS steps.
+    """
+    config = check_change({**answer, "tests": [], "remove": []}, before["name"], before)
+    touched = changed_steps(before, config)
+    persona = config.get("persona") != before.get("persona")
+    if not touched and not answer["rules"] and not persona:
+        raise ValueError("Nothing changed: the fix must change a step, an edge or add a rule.")
+    if len(touched) > MAX_FIXED_STEPS:
+        names = ", ".join(name for name, _ in touched)
+        raise ValueError(
+            f"The fix changes {len(touched)} steps ({names}): change the one where it goes "
+            f"wrong, {MAX_FIXED_STEPS} at most, or add a rule on that step instead."
+        )
+    return config
+
+
+def check_reproduction(answer: dict, config: dict) -> None:
+    """A test that reproduces an issue reads like any test, with a judged check or a path one."""
+    check_tests([answer], config)

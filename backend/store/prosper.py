@@ -178,19 +178,28 @@ def log(agent_id: str, number: int, event: dict) -> dict:
         return _select(conn, agent_id, number)
 
 
-def ask(agent_id: str, number: int, questions: list[dict], setup: bool = False) -> dict:
+def ask(
+    agent_id: str,
+    number: int,
+    questions: list[dict],
+    setup: bool = False,
+    kind: Optional[str] = None,
+) -> dict:
     """Ask the person `questions`, each { text, options: [{ label, rule }] }. Returns the PR.
 
     Each is logged as one event with its options; the rule each option becomes
     stays in the store until it is picked. Prosper AI then waits. A `setup`
     question is asked before anything is drawn: its options have no rule, and
-    once all of them have answers the setup goes on to draw the agent.
+    once all of them have answers the setup goes on to draw the agent. A
+    question of another `kind` asks what to do next (a fix it could not
+    reproduce: go on or stop); its options have no rule either, and the job
+    that asked it reads the answer.
     """
     with connect() as conn:
         _require(conn, agent_id, number)
         work = _work(conn, agent_id, number)
         for question in questions:
-            asked = {"id": new_id(), **question, "answer": None, "setup": setup}
+            asked = {"id": new_id(), **question, "answer": None, "setup": setup, "kind": kind}
             work["questions"] = [*work.get("questions", []), asked]
             event = _event(
                 "question",
@@ -219,12 +228,16 @@ def _open_question(work: dict, question: Optional[str]) -> dict:
     return found
 
 
-def pick(agent_id: str, number: int, question: str, option: int) -> tuple[dict, bool, bool]:
+def pick(
+    agent_id: str, number: int, question: str, option: int
+) -> tuple[dict, bool, Optional[str]]:
     """The person picks option `option` of `question`: its rule goes into the copy.
 
     Returns the pull request, whether every question has its answer now, and
-    whether it was a setup question (no rule yet: the answer is kept for the
-    drawing, and Prosper AI goes on with it once every one has its answer).
+    the question's kind: "setup" for a setup question (no rule yet: the answer
+    is kept for the drawing, and Prosper AI goes on with it once every one has
+    its answer), another kind for a question whose answer the job reads, or
+    None for one whose option was a rule.
     The rule's source is the answer, in this pull request. Refused while
     Prosper AI works (on an answer written to another question, say): the
     job would write over it, and checks could start halfway through.
@@ -245,7 +258,13 @@ def pick(agent_id: str, number: int, question: str, option: int) -> tuple[dict, 
             )
             _put(conn, agent_id, number, work)
             _record_event(conn, agent_id, pull, answered)
-            return _select(conn, agent_id, number), done, True
+            return _select(conn, agent_id, number), done, "setup"
+        if asked.get("kind"):
+            # The job goes on with the answer, or stops: either way it decides.
+            work.update(state="working", doing="Reading your answer")
+            _put(conn, agent_id, number, work)
+            _record_event(conn, agent_id, pull, answered)
+            return _select(conn, agent_id, number), done, asked["kind"]
         rule = {
             "id": new_id(),
             "step": chosen["rule"]["step"],
@@ -259,7 +278,7 @@ def pick(agent_id: str, number: int, question: str, option: int) -> tuple[dict, 
         added = _event("rule", PROSPER, step=rule["step"], text=rule["text"])
         rules = prune_rules([*pull["rules"], rule], pull["config"])
         _record_event(conn, agent_id, pull, added, rules=json.dumps(rules))
-        return _select(conn, agent_id, number), done, False
+        return _select(conn, agent_id, number), done, None
 
 
 def take_message(
@@ -288,6 +307,11 @@ def take_message(
                 doing = "Drawing the steps"
         else:
             event = _event("message", "you", text=text)
+        if retry is None:
+            # A new request gets its own rounds of checking: the ones spent on
+            # the last one (a fix's own) are not this one's.
+            work.pop("rounds", None)
+            work.pop("handed_over", None)
         open_left = [q for q in work.get("questions", []) if q["answer"] is None]
         if answers is not None and answers.get("setup") and open_left:
             work.update(state="waiting", doing=None)
@@ -296,6 +320,23 @@ def take_message(
         _put(conn, agent_id, number, work)
         _record_event(conn, agent_id, pull, event)
         return _select(conn, agent_id, number), answers, retry
+
+
+def guidelines(agent_id: str) -> tuple[list[dict], list[dict]]:
+    """What the agent was built from: the sources of its setup and the questions answered there.
+
+    Every later pull request reads these, so a fix or a change is held to the
+    same guidelines as the setup. Both empty for an agent drawn by hand.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT prosper FROM pulls WHERE agent_id = ? AND kind = 'setup'"
+            " AND prosper IS NOT NULL ORDER BY number DESC LIMIT 1",
+            (agent_id,),
+        ).fetchone()
+    work = json.loads(row["prosper"]) if row else {}
+    answered = [q for q in work.get("questions", []) if q["answer"]]
+    return work.get("sources", []), answered
 
 
 def waiting_for(agent_id: str, number: int) -> list[dict]:

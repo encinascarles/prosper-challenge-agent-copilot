@@ -17,6 +17,10 @@
 # change to a copy starts its checks again (runs.py), and a merge is refused
 # until they pass: what goes live has passed the agent's whole suite.
 #
+# A fix is a pull request that points at the issue it fixes (issues.py): it is
+# opened from the issue, closing or reopening it is logged there too, and
+# merging it resolves the issue in the same write as the new version.
+#
 # Prosper AI can work on a pull request (prosper.py): while it does, the
 # person's own changes to that copy are refused, or the two would write over
 # each other, and so is a merge, until Prosper AI is done and has its answers.
@@ -31,12 +35,12 @@ import json
 import sqlite3
 from typing import Optional
 
-from . import runs
+from . import issues, runs
 from .db import Conflict, NotFound, connect, now, prune
 from .suite import added_in, fingerprint, manual, new_id, prune_rules, rebase, rename_rules
 from .versions import insert_version, live_version
 
-KINDS = ("setup", "edit")
+KINDS = ("setup", "edit", "fix")
 # Who Prosper AI is in a pull request's log.
 PROSPER = "Prosper AI"
 
@@ -58,6 +62,7 @@ def _to_record(conn: sqlite3.Connection, row: sqlite3.Row, full: bool) -> dict:
         "state": row["state"],
         "base_version": row["base_version"],
         "merged_version": row["merged_version"],
+        "fixes": row["fixes"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "checks": _checks(conn, row),
@@ -154,22 +159,29 @@ def insert_pull(
     request: Optional[dict] = None,
     then: Optional[list] = None,
     prosper: Optional[dict] = None,
+    fixes: Optional[int] = None,
 ) -> dict:
     """Open a pull request holding `config`, numbered from the agent's counter. Returns it.
 
     When Prosper AI opens it: `request` is what it was asked, logged before it
-    opened it, `then` what it did next, and `prosper` its work on it.
+    opened it, `then` what it did next, and `prosper` its work on it. A fix
+    names the issue it `fixes`.
     """
     (number,) = conn.execute(
         "UPDATE agents SET next_number = next_number + 1 WHERE id = ? RETURNING next_number - 1",
         (agent_id,),
     ).fetchone()
     # The version it was opened on: its base may move later, with an update.
-    opened = _event("opened", by, **({"version": base_version} if base_version else {}))
+    opened = _event(
+        "opened",
+        by,
+        **({"version": base_version} if base_version else {}),
+        **({"issue": fixes} if fixes else {}),
+    )
     conn.execute(
         "INSERT INTO pulls (agent_id, number, title, kind, state, base_version, merged_version,"
-        " config, layout, rules, tests, events, prosper, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, 'open', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " config, layout, rules, tests, events, prosper, fixes, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, 'open', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             agent_id,
             number,
@@ -182,6 +194,7 @@ def insert_pull(
             json.dumps(tests or []),
             json.dumps([*([request] if request else []), opened, *(then or [])]),
             None if prosper is None else json.dumps(prosper),
+            fixes,
             opened["at"],
             opened["at"],
         ),
@@ -214,26 +227,47 @@ def open_pull(agent_id: str, title: str, kind: str, by: str) -> dict:
     then, its changes go to pull request #1.
     """
     with connect() as conn:
-        if not conn.execute("SELECT 1 FROM agents WHERE id = ?", (agent_id,)).fetchone():
-            raise NotFound(f"No agent with id '{agent_id}'.")
-        live = live_version(conn, agent_id)
-        if live == 0:
-            raise Conflict("The agent is not live yet: make changes on PR #1, then merge it.")
-        version = conn.execute(
-            "SELECT * FROM versions WHERE agent_id = ? AND number = ?", (agent_id, live)
-        ).fetchone()
-        return insert_pull(
-            conn,
-            agent_id,
-            title,
-            kind,
-            live,
-            json.loads(version["config"]),
-            json.loads(version["layout"]),
-            by,
-            json.loads(version["rules"]),
-            json.loads(version["tests"]),
+        return _open_on_live(conn, agent_id, title, kind, by)
+
+
+def _open_on_live(conn: sqlite3.Connection, agent_id: str, title: str, kind: str, by: str, **more):
+    if not conn.execute("SELECT 1 FROM agents WHERE id = ?", (agent_id,)).fetchone():
+        raise NotFound(f"No agent with id '{agent_id}'.")
+    live = live_version(conn, agent_id)
+    if live == 0:
+        raise Conflict("The agent is not live yet: make changes on PR #1, then merge it.")
+    version = conn.execute(
+        "SELECT * FROM versions WHERE agent_id = ? AND number = ?", (agent_id, live)
+    ).fetchone()
+    return insert_pull(
+        conn,
+        agent_id,
+        title,
+        kind,
+        live,
+        json.loads(version["config"]),
+        json.loads(version["layout"]),
+        by,
+        json.loads(version["rules"]),
+        json.loads(version["tests"]),
+        **more,
+    )
+
+
+def open_fix(agent_id: str, issue: int, by: str, prosper: Optional[dict] = None) -> dict:
+    """Open a pull request on a copy of live that fixes `issue`: "Fix: <its title>". Returns it.
+
+    With `prosper`, Prosper AI opens it and works on it. Raises NotFound, or
+    Conflict when the issue is resolved, ignored or already being fixed, or
+    the agent is not live.
+    """
+    with connect() as conn:
+        found = issues.check_fixable(conn, agent_id, issue)
+        pull = _open_on_live(
+            conn, agent_id, f"Fix: {found['title']}", "fix", by, prosper=prosper, fixes=issue
         )
+        issues.log_fix(conn, agent_id, issue, "fixing", pull["number"], by)
+        return pull
 
 
 def save_pull(
@@ -319,6 +353,8 @@ def merge_pull(agent_id: str, number: int, by: str) -> dict:
         )
         # The name lists show is the live one.
         conn.execute("UPDATE agents SET name = ? WHERE id = ?", (pull["config"]["name"], agent_id))
+        if pull["fixes"]:
+            issues.resolve_by_fix(conn, agent_id, pull["fixes"], number, version, by)
         return _select(conn, agent_id, number)
 
 
@@ -336,6 +372,8 @@ def close_pull(agent_id: str, number: int, by: str) -> dict:
                 "Delete the agent instead."
             )
         _record_event(conn, agent_id, pull, _event("closed", by), state="closed")
+        if pull["fixes"]:
+            issues.log_fix(conn, agent_id, pull["fixes"], "unlinked", number, by)
         return _select(conn, agent_id, number)
 
 
@@ -343,11 +381,17 @@ def reopen_pull(agent_id: str, number: int, by: str) -> dict:
     """Open a closed pull request again, as it was. Returns it.
 
     Its base stays what it was: if live moved on meanwhile, it needs an update
-    before it can merge, like any other pull request left behind.
+    before it can merge, like any other pull request left behind. A fix is
+    refused once its issue is resolved, ignored or fixed by another one.
     """
     with connect() as conn:
         pull = _require(conn, agent_id, number, state="closed")
+        if pull["fixes"]:
+            # One fix of an issue at a time, as when it is opened.
+            issues.check_fixable(conn, agent_id, pull["fixes"])
         _record_event(conn, agent_id, pull, _event("reopened", by), state="open")
+        if pull["fixes"]:
+            issues.log_fix(conn, agent_id, pull["fixes"], "relinked", number, by)
         return _select(conn, agent_id, number)
 
 

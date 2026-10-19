@@ -5,6 +5,7 @@ import { nodeView } from '@/call/path'
 
 import {
   asCall,
+  beforeAfter,
   checkKind,
   checksText,
   namesOf,
@@ -166,5 +167,37 @@ describe('how a check line will be decided', () => {
       ],
     }
     expect(namesOf(config)).toEqual({ steps: ['a', 'b'], fields: ['slot'] })
+  })
+})
+
+describe('the test that reproduces an issue', () => {
+  const fixTest: Test = {
+    id: 'r1',
+    name: 'Asks the date of birth first',
+    caller: 'Ana.',
+    checks: ['Ends the call'],
+    source: { kind: 'issue', pull: 5, issue: 3, before: { version: 1, passed: 0, runs: 3 } },
+  }
+  const runOf = (passed: boolean[]): SuiteRun => ({
+    id: 1,
+    pull: 5,
+    version: null,
+    state: 'done',
+    fingerprint: null,
+    repeats: 3,
+    tests: [{ id: 'r1', name: fixTest.name, runs: passed.map((p) => ({ passed: p }) as TestCall) }],
+    started_at: '',
+    finished_at: null,
+  })
+
+  it('says how it went before the fix and how it goes now', () => {
+    expect(beforeAfter(fixTest, null)).toBe('from Issue #3 · 0/3 on v1')
+    expect(beforeAfter(fixTest, runOf([true, true, true]))).toBe('from Issue #3 · 0/3 on v1 → 3/3')
+    expect(beforeAfter(fixTest, runOf([true]))).toBe('from Issue #3 · 0/3 on v1 → …')
+  })
+
+  it('comes first of the tests a pull request adds', () => {
+    const other: Test = { ...fixTest, id: 'o', source: { kind: 'request', pull: 5 } }
+    expect(orderTests([fixTest, other], 5).map((t) => t.id)).toEqual(['r1', 'o'])
   })
 })

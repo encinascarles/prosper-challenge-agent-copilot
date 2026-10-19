@@ -10,13 +10,14 @@
 # background (copilot/setup.py); the pull request's events say how it goes.
 #
 # Answering a question by picking an option needs no model: the option came
-# with the rule it becomes. Anything written in the conversation goes to
-# Prosper AI, as the answer to its open question or as a change to make.
+# with the rule it becomes. Anything written in the conversation of an open
+# pull request goes to Prosper AI, as the answer to its open question or as a
+# change to make; fixing an issue starts from the issue (live.py).
 #
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StringConstraints
 
@@ -87,10 +88,10 @@ def from_guidelines(
 def answer(agent_id: str, number: int, body: Answer) -> dict:
     """Pick an option of Prosper AI's question: its rule goes into the copy."""
     get_pull(agent_id, number)
-    pull, done, before_drawing = _answer(
-        store.prosper.pick, agent_id, number, body.question, body.option
-    )
-    if done and before_drawing:
+    pull, done, kind = _answer(store.prosper.pick, agent_id, number, body.question, body.option)
+    if kind == "go_on":
+        setup.go_on(agent_id, number, go=body.option == 0)
+    elif done and kind == "setup":
         setup.build(agent_id, number)  # every answer is in: it draws the agent with them
     elif done:
         checks.start(agent_id, pull=number)
@@ -101,15 +102,18 @@ def answer(agent_id: str, number: int, body: Answer) -> dict:
     "/{agent_id}/pulls/{number}/messages", response_model=Pull, responses=_MISSING | _REFUSED
 )
 def message(agent_id: str, number: int, body: Message) -> dict:
-    """Write to Prosper AI: the answer to its open question, or a change to make."""
-    if get_pull(agent_id, number)["prosper"] is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Prosper AI only works on the pull request it set up, for now.",
-        )
+    """Write to Prosper AI: the answer to its open question, or a change to make.
+
+    On any open pull request: one Prosper AI has no part in yet starts its
+    work with the message.
+    """
+    get_pull(agent_id, number)
     pull, answers, retry = _answer(store.prosper.take_message, agent_id, number, body.text)
     if retry is not None:
         setup.retry(agent_id, number, retry, body.text)
+    elif answers is not None and answers.get("kind") == "go_on":
+        # Their own words are a go-ahead, with what they said for the fix.
+        setup.go_on(agent_id, number, go=True, hint=body.text)
     elif answers is not None and answers.get("setup"):
         if not store.prosper.waiting_for(agent_id, number):
             setup.build(agent_id, number)

@@ -6,7 +6,8 @@
 # returns at once; the calls are stored as they end and reviewed a moment
 # later (copilot/calls.py), and the Calls page reads them from here while the
 # batch runs. Issues are read here too, and put aside or closed by hand:
-# snoozed, resolved, ignored or reopened. Fixing one is a pull request.
+# snoozed, resolved, ignored or reopened. Fixing one is a pull request opened
+# from it, by the person or by Prosper AI.
 #
 
 from typing import Any, Literal
@@ -17,10 +18,11 @@ from pydantic import BaseModel, Field
 import simulate
 import store
 from copilot import calls as playing
+from copilot import setup
 
 from . import checks
 from .models import YOU
-from .pulls import _MISSING, _REFUSED, _agent, _answer
+from .pulls import _MISSING, _REFUSED, Pull, _agent, _answer
 
 router = APIRouter(prefix="/api/agents/{agent_id}", tags=["calls and issues"])
 
@@ -98,6 +100,18 @@ class Call(CallSummary):
     usage: dict[str, float]  # USD: agent, caller, review
 
 
+class Fixed(BaseModel):
+    pull: int
+    version: int  # the version it was fixed in
+
+
+class FixPull(BaseModel):
+    number: int
+    title: str
+    state: Literal["open", "merged", "closed"]
+    merged_version: int | None
+
+
 class IssueSummary(BaseModel):
     number: int
     title: str
@@ -106,6 +120,8 @@ class IssueSummary(BaseModel):
     description: str
     state: IssueState
     snooze: dict[str, Any] | None  # { until: ISO time } or { version: n }
+    fixed: Fixed | None  # the fix that resolved it, while it stays resolved
+    pulls: list[FixPull]  # the pull requests that fix it, newest first
     calls: int
     first_seen: str | None
     last_seen: str | None
@@ -132,18 +148,44 @@ class IssueCall(BaseModel):
 
 
 class IssueEvent(BaseModel):
-    # opened and seen: by Prosper AI, from a call; woke: a snooze ended
-    type: Literal["opened", "seen", "snoozed", "woke", "resolved", "ignored", "reopened"]
+    # opened and seen: by Prosper AI, from a call; woke: a snooze ended.
+    # A pull request fixing it: fixing (opened for it), unlinked (closed),
+    # relinked (reopened), fixed (merged: resolved in `version`), and
+    # came_back: a call on the fixed version had the problem again.
+    type: Literal[
+        "opened",
+        "seen",
+        "snoozed",
+        "woke",
+        "resolved",
+        "ignored",
+        "reopened",
+        "fixing",
+        "unlinked",
+        "relinked",
+        "fixed",
+        "fix_merged",  # merged while the issue was ignored or resolved: `text` says which
+        "came_back",
+    ]
     by: str
     at: str
     call: int | None = None
     caller: str | None = None
     text: str | None = None
+    pull: int | None = None
+    version: int | None = None
 
 
 class Issue(IssueSummary):
     findings: list[IssueCall]  # its calls, latest first
     events: list[IssueEvent]
+
+
+class Fix(BaseModel):
+    prosper: bool = Field(
+        description="Prosper AI reproduces it with a test and proposes the change; "
+        "without it, the pull request is yours to edit in Build."
+    )
 
 
 class Snooze(BaseModel):
@@ -206,3 +248,19 @@ def ignore(agent_id: str, number: int) -> dict:
 @router.post("/issues/{number}/reopen", response_model=Issue, responses=_MISSING | _REFUSED)
 def reopen(agent_id: str, number: int) -> dict:
     return _answer(store.issues.reopen, agent_id, number, YOU)
+
+
+@router.post(
+    "/issues/{number}/fix", status_code=201, response_model=Pull, responses=_MISSING | _REFUSED
+)
+def fix(agent_id: str, number: int, body: Fix) -> dict:
+    """Open a pull request that fixes the issue, on a copy of live: "Fix: <its title>".
+
+    With Prosper AI, it opens it and starts on it at once (copilot/fix.py).
+    """
+    if not body.prosper:
+        return _answer(store.open_fix, agent_id, number, YOU)
+    work = {"state": "working", "doing": "Reading the issue and its calls", "questions": []}
+    pull = _answer(store.open_fix, agent_id, number, store.PROSPER, work)
+    setup.fix(agent_id, pull["number"])
+    return pull

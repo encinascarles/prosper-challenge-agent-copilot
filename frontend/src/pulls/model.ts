@@ -85,9 +85,10 @@ export function testCallLabel(on: On): string {
  * or what became of it. A stale one says first that it needs an update.
  */
 export function pullMeta(pull: PullSummary, live: number): string {
-  if (pull.state === 'merged') return `merged as ${versionLabel(pull.merged_version ?? 0)}`
-  if (pull.state === 'closed') return `closed · ${basedOn(pull)}`
-  return isStale(pull, live) ? `Needs update · ${basedOn(pull)}` : basedOn(pull)
+  const fixes = pull.fixes ? `Fixes Issue #${pull.fixes} · ` : ''
+  if (pull.state === 'merged') return `${fixes}merged as ${versionLabel(pull.merged_version ?? 0)}`
+  if (pull.state === 'closed') return `${fixes}closed · ${basedOn(pull)}`
+  return isStale(pull, live) ? `Needs update · ${fixes}${basedOn(pull)}` : `${fixes}${basedOn(pull)}`
 }
 
 /** What an open pull request means for calls, on its page. Null once it is merged or closed. */

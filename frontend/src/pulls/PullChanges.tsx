@@ -2,12 +2,14 @@
 // it is based on, one card per step, readable by someone who never saw the
 // agent JSON. Additions in the orange of a proposed change, removals struck
 // through, instructions compared word by word. Then the rules and tests it
-// adds or takes out, which travel with the copy like the steps do.
+// adds or takes out, which travel with the copy like the steps do. The test
+// that reproduces the issue a fix is for says how it went before and now.
 
-import type { Rule, Test } from '@/agents/types'
+import type { Rule, SuiteRun, Test } from '@/agents/types'
 import { humanize } from '@/draft/names'
 import { cn } from '@/lib/utils'
 import type { DiffLine, StepChange } from '@/pulls/diff'
+import { beforeAfter, isFixTest } from '@/suite/model'
 import type { suiteChanges } from '@/suite/model'
 
 const TAGS: Record<StepChange['kind'], string> = {
@@ -123,11 +125,13 @@ const ruleLine = (item: Rule | Test) => {
   )
 }
 
-const testLine = (item: Rule | Test) => {
+const testLine = (run: SuiteRun | null) => (item: Rule | Test) => {
   const test = item as Test
+  const fixing = beforeAfter(test, run)
   return (
     <>
       <span className="mr-1.5 font-semibold text-foreground/80">{test.name}</span>
+      {fixing && <span className="mr-1.5 font-medium text-brand tabular-nums">new · {fixing}</span>}
       <span className="text-muted-foreground">{test.checks.join(' · ')}</span>
     </>
   )
@@ -136,12 +140,14 @@ const testLine = (item: Rule | Test) => {
 type Props = {
   changes: StepChange[]
   suite: SuiteChanges
+  /** The latest run of its checks, for how the test that reproduces an issue goes now. */
+  run: SuiteRun | null
   /** What it is compared with: "v1", or null for a pull request based on nothing yet. */
   base: string | null
   open: boolean
 }
 
-export function PullChanges({ changes, suite, base, open }: Props) {
+export function PullChanges({ changes, suite, run, base, open }: Props) {
   const rules = suite.rulesAdded.length + suite.rulesRemoved.length
   const tests = suite.testsAdded.length + suite.testsRemoved.length
   if (changes.length === 0 && rules + tests === 0) {
@@ -169,7 +175,12 @@ export function PullChanges({ changes, suite, base, open }: Props) {
         <ChangeCard key={change.key} change={change} />
       ))}
       <SuiteCard title="Rules" added={suite.rulesAdded} removed={suite.rulesRemoved} line={ruleLine} />
-      <SuiteCard title="Tests" added={suite.testsAdded} removed={suite.testsRemoved} line={testLine} />
+      <SuiteCard
+        title="Tests"
+        added={[...suite.testsAdded].sort((a, b) => Number(isFixTest(b)) - Number(isFixTest(a)))}
+        removed={suite.testsRemoved}
+        line={testLine(run)}
+      />
     </div>
   )
 }

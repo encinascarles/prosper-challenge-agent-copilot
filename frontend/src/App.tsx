@@ -307,6 +307,21 @@ export default function App() {
     }
   }
 
+  // A fix opened from an issue: with Prosper AI, its page, to follow it work;
+  // yours, Build on it, to make the change.
+  const fixing = (pull: Pull, prosper: boolean) => {
+    if (!shown) return
+    toast.show(`Opened ${pullLabel(pull.number)} · live stays on ${versionLabel(shown.agent.live_version)}`)
+    if (prosper) {
+      reload()
+      showPulls(pull.number)
+      return
+    }
+    loadAgents()
+    showView('build', null)
+    open(shown.agent.id, pull.number)
+  }
+
   const saved = (pull: Pull) => {
     setOpened((now) =>
       now && now.agent.id === shown?.agent.id
@@ -377,11 +392,14 @@ export default function App() {
                   page={view.page}
                   onPage={(number) => showPage('issues', number)}
                   onCall={(call) => showPage('calls', call)}
+                  onPull={showPulls}
+                  onFixing={fixing}
                   onChanged={reload}
                   onToast={toast.show}
                 />
               ) : (
                 <PullsView
+                  onIssue={(number) => showPage('issues', number)}
                   agent={shown.agent}
                   page={view.page}
                   onPage={showPulls}
