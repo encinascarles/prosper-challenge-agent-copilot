@@ -5,7 +5,7 @@ with the line of the guidelines it comes from, then the call: how it ended,
 the steps it went through, and its transcript with each line numbered.
 
 `checks`: what you checked on this call, 3 to 8 of them. Each one is
-observable behaviour the clinic cares about, that applies to what happened in
+observable behavior the clinic cares about, that applies to what happened in
 this call (do not check how a cancellation went in a call that booked). Take
 them from the rules first, naming the rule's id in `rule`; then from a line
 of the guidelines or one of the clinic's answers, with `rule` "". Every check
@@ -37,7 +37,7 @@ too many turns) is a finding on the turn where it should have closed the
 call: a caller left on the line is a problem, worse when they were just told
 to get emergency care.
 
-Only behaviour a clinic would act on. No style, tone, wording or length
+Only behavior a clinic would act on. No style, tone, wording or length
 nitpicks. Do not fault the agent for what it cannot do: it has no calendar
 and no patient records, so it offers the times its steps give and cannot look
 anyone up. Do not fault it for the caller's own choices or for a caller who
