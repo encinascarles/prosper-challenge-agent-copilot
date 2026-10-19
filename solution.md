@@ -745,6 +745,69 @@ caller, outcome, issue) rather than "the latest 30". Test calls placed from
 Build are not in the facts yet. A chat answers about one copy at a time; it
 cannot compare two versions. Chats cannot be renamed or deleted.
 
+### Issues a person reports: the clinic's complaints in the same list
+
+**Context.** Issues only came from Prosper AI reviewing calls. Half of what a
+deployment person fixes arrives the other way: the clinic writes "a patient
+said Anna booked her on a Sunday", or someone listening to a call notices
+something. That had nowhere to go but a pull request opened by hand, with no
+record of the problem itself and nothing to join when calls hit it later.
+
+**Options.**
+- *A separate "feedback" inbox.* Rejected: two lists of the same thing, and
+  the fix, grouping and resolve-on-merge machinery would have to know both.
+- *Make the person describe it like a finding (step, turn, quote).* Rejected:
+  a complaint names none of those, and asking for them is the manual work
+  this product removes.
+- *An issue like any other, with a `reported` column ("you" or "clinic")
+  and whatever the person knows.* Chosen.
+
+**How it works.** "New issue" on the Issues page opens a small form: who
+flagged it, a title, what happened (the clinic's email pasted as it is), a
+step and a severity where "Not sure" is an answer (stored empty), and the
+latest calls to link, none required. It takes the agent's next number, the
+counter pull requests use, so "Issue #14" and "PR #15" never collide. A
+linked call is a finding with no bad turn (`turn = -1`): it counts as one of
+the issue's calls and is listed as the whole call. From there nothing is
+special: snooze, resolve, ignore, "Fix with Prosper AI", "Fix it yourself",
+merging resolves it, and Ask Prosper AI lists it with who found it.
+
+Three places learned to read a reported issue:
+- *Fix with Prosper AI* writes the reproducing test from the report when there
+  are no calls ("It has no calls: write the caller from what was reported"),
+  and gives a linked call whole. If the test passes, it says so and asks
+  whether to go on, as for any issue.
+- *Grouping* sees it marked "(reported by a person)" and "step not known", so
+  a finding joins it by what went wrong rather than by wording. The first
+  call that joins gives it its step.
+- *Tidy with Prosper AI* (one click, never automatic): one request with the
+  report, the live steps and the latest 40 calls in a line each (steps taken,
+  what was recorded) returns a plain title, the step, the severity and up to
+  three calls whose line shows it, checked in code (real step, listed calls).
+  Nothing is written: the before and after are shown side by side and kept
+  as a whole or discarded. The person's description always stays.
+
+**What the real run showed.** On the Prosper Scheduler agent (v1 live, 12
+calls): a pasted front-desk email ("we could not find them in our system …
+Anna never asked them for their date of birth"), flagged by the clinic.
+Tidy (USD 0.003): "Books appointments without asking for date of birth",
+Collect details, Booking, and linked three booked calls, which indeed never
+ask for it. Fix with Prosper AI: a test failing 0/3 on v1, a rule in Collect
+details, checks 4/6; the self-check rewrote two tests that booked without a
+date of birth, then 6/6, "the new test 0/3 on v1 → 3/3"; merged as v2, the
+issue resolved by PR #4 in v2. A second issue, reported by "you" with no
+calls ("offers Thursday at 2 PM, we close at noon on Thursdays"):
+reproduced from the description alone, 0/3 on v2, a rule in Offer times,
+6/7 with one flaky, new test 0/3 → 3/3. Real spend for both: about USD 1.3,
+nearly all of it the suites.
+
+**Trade-offs and what is next.** Tidy reads calls in one line each, so it
+finds what shows in the path and the recorded values (a missing date of
+birth, a Sunday slot) but not something only the words show ("talks too
+fast"); a search over transcripts would. Linked calls have no turn marked;
+Prosper AI could mark it when it tidies. A linked call cannot be unlinked.
+There is no inbox for the clinic itself: the deployment person pastes.
+
 ### Three kinds of calls, kept apart: calls, test calls and tests
 
 **Context.** People trying the product read "simulated calls" next to the
