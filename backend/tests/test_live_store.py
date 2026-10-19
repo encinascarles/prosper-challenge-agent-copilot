@@ -4,6 +4,7 @@
 #
 
 import json
+import sqlite3
 
 import pytest
 
@@ -62,13 +63,27 @@ def test_a_resolved_issue_takes_no_more_calls(client, live_agent):
     agent_id = live_agent()
     issue = store.issues.file_finding(agent_id, _call(agent_id), "Ana Ruiz", FINDING)
     store.issues.resolve(agent_id, issue, "you")
-    with pytest.raises(Conflict):
-        store.issues.file_finding(agent_id, _call(agent_id), "Tom Lee", FINDING, issue)
+    # The problem came back: a new issue, the resolved one left as it was.
+    again = store.issues.file_finding(agent_id, _call(agent_id), "Tom Lee", FINDING, issue)
+    assert again == issue + 1
+    assert store.issues.get_issue(agent_id, issue)["calls"] == 1
     # Ignored keeps counting.
     store.issues.reopen(agent_id, issue, "you")
     store.issues.ignore(agent_id, issue, "you")
     store.issues.file_finding(agent_id, _call(agent_id), "Tom Lee", FINDING, issue)
     assert store.issues.get_issue(agent_id, issue)["calls"] == 2
+
+
+def test_a_review_files_all_its_findings_or_none(client, live_agent):
+    agent_id = live_agent()
+    call = _call(agent_id)
+    broken = {**FINDING, "title": None}  # a new issue cannot be stored without a title
+    review = {"outcome": "booked", "checks": [{"text": "x", "passed": False, "rule": ""}], "usd": 0}
+    placed = [(FINDING, None), (broken, None)]
+    with pytest.raises(sqlite3.IntegrityError):
+        store.issues.file_review(agent_id, call, "Ana Ruiz", placed, review)
+    assert store.issues.list_issues(agent_id) == []
+    assert store.calls.get_call(agent_id, call)["review"] == "pending"
 
 
 def test_a_snooze_ends_on_its_own(client, live_agent):

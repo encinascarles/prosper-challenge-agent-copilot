@@ -522,7 +522,11 @@ with the reason.
 the same problem, or opens one. That is a second, small request, made only
 when there is something to join, and grouping takes one call at a time while
 reviews run in parallel, so two calls with the same new problem cannot both
-open it. Issues take numbers from the counter pull requests use, so "Issue #3"
+open it. A call's findings and its review are written in one transaction,
+so a call never shows half its findings; one whose issue was resolved since
+it was grouped opens a new issue, as a resolved problem that comes back
+does. A batch in which no call ran fails with the reason, rather than
+looking like a quiet morning. Issues take numbers from the counter pull requests use, so "Issue #3"
 and "PR #4" never clash and the PR that fixes an issue can name it. An issue
 is open, snoozed (a day, a week, or until the next version: checked when
 issues are read, so nothing has to wake it), resolved (stops collecting;
@@ -546,6 +550,10 @@ suite). Three batches of 12 calls on that v1, about 80 s each:
   was said in another step. Grouping first only offered issues of the same
   step; it now offers every tracked issue, and a real grouping request put
   both findings where they belonged.
+- *Batch 4*, after that change, on the same v1 with 9 issues tracked: 12
+  calls, 5 with findings, 6 findings. 5 joined existing issues (one of them
+  twice) and 1 opened a new one, for a rule no tracked issue was about
+  ("Gives medical advice about symptoms"). USD 0.43.
 
 **What it costs.** A batch is USD 0.46–0.49: the calls 0.32–0.34 (almost all
 the agent's own gpt-4o, which resends its context every turn; the prompt

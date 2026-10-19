@@ -128,21 +128,21 @@ export function CallsView({ agent, page, onPage, onIssue, onChanged, onToast }: 
         </div>
         <div className="flex shrink-0 items-center gap-3 border-b px-3 py-2">
           <PlayButton arriving={coming} blocker={blocker} onPlay={() => void play()} />
-          {last && (
+          {last && last.state !== 'failed' && (
             <span
-              className={cn('min-w-0 truncate text-[11.5px] text-muted-foreground tabular-nums', last.state === 'failed' && 'text-bad')}
-              title={
-                last.state === 'failed'
-                  ? (last.error ?? undefined)
-                  : "Simulated callers, picked by Prosper AI from the clinic's guidelines, phoning the live version in text"
-              }
+              className="min-w-0 truncate text-[11.5px] text-muted-foreground tabular-nums"
+              title="Simulated callers, picked by Prosper AI from the clinic's guidelines, phoning the live version in text"
             >
-              {last.state === 'failed'
-                ? 'The last batch stopped'
-                : `Simulated · USD ${playCost(last).toFixed(2)}${last.state === 'working' ? ' so far' : ' last batch'}`}
+              {`Simulated · USD ${playCost(last).toFixed(2)}${last.state === 'working' ? ' so far' : ' last batch'}`}
             </span>
           )}
         </div>
+        {last?.state === 'failed' && (
+          // Whole, not cut: it is the only place that says why no calls came in.
+          <p role="alert" className="border-b bg-bad/[0.04] px-4 py-2 text-[12px] leading-snug text-bad">
+            The last batch failed: {last.error ?? 'no reason given'}
+          </p>
+        )}
         <div className="min-h-0 flex-1 overflow-auto">
           {shown.map((call) => {
             const flagged = call.issues.length > 0
