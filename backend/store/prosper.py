@@ -307,6 +307,11 @@ def take_message(
                 doing = "Drawing the steps"
         else:
             event = _event("message", "you", text=text)
+        if retry is None:
+            # A new request gets its own rounds of checking: the ones spent on
+            # the last one (a fix's own) are not this one's.
+            work.pop("rounds", None)
+            work.pop("handed_over", None)
         open_left = [q for q in work.get("questions", []) if q["answer"] is None]
         if answers is not None and answers.get("setup") and open_left:
             work.update(state="waiting", doing=None)

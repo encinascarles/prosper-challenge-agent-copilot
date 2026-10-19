@@ -392,3 +392,14 @@ def test_the_test_that_reproduces_the_issue_is_never_rewritten():
     }
     with pytest.raises(ValueError, match="reproduces the issue"):
         artifacts.check_review(answer, {"t1": "Offers"}, EXAMPLE, set(), {"t1"})
+
+
+def test_a_new_message_gets_its_own_rounds_of_checking(client, live_agent):
+    agent_id = live_agent()
+    number = client.post(f"/api/agents/{agent_id}/pulls", json={"title": "Mine"}).json()["number"]
+    store.prosper.update(agent_id, number, state="done", rounds=2, handed_over=True)
+
+    store.prosper.take_message(agent_id, number, "Only Tuesdays")
+
+    work = store.prosper.work_of(agent_id, number)
+    assert "rounds" not in work and "handed_over" not in work
