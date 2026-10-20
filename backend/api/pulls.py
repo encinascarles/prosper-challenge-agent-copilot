@@ -195,6 +195,9 @@ class PullSummary(BaseModel):
     updated_at: str
     checks: Checks | None  # its latest run of the tests; None if none ran
     prosper: Prosper | None  # Prosper AI's work on it; None if it has no part in it
+    # An open fix that may not fix its issue, a line each: its test passes 2
+    # of 3, or it was never reproduced. A merge asks to confirm them.
+    warnings: list[str] = []
 
 
 class Pull(PullSummary):
@@ -203,9 +206,6 @@ class Pull(PullSummary):
     rules: list[Rule]
     tests: list[Test]
     events: list[PullEvent]
-    # An open fix that may not fix its issue, a line each: its test passes 2
-    # of 3, or it was never reproduced. A merge asks to confirm them.
-    warnings: list[str] = []
 
 
 class PullMerge(BaseModel):

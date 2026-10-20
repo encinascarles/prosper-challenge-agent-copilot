@@ -516,6 +516,8 @@ def test_a_fix_whose_test_stays_at_two_of_three_warns_and_asks_to_confirm(
         f"The test for Issue #{ISSUE} passes 2 of 3: the problem may still happen in some calls."
     )
     assert pull["warnings"] == [warning]
+    listed = client.get(f"/api/agents/{agent_id}/pulls").json()
+    assert next(p for p in listed if p["number"] == number)["warnings"] == [warning]
 
     refused = client.post(f"/api/agents/{agent_id}/pulls/{number}/merge")
     assert refused.status_code == 409

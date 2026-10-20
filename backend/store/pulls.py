@@ -77,13 +77,16 @@ def _to_record(conn: sqlite3.Connection, row: sqlite3.Row, full: bool) -> dict:
         "checks": runs.summary(run) if run is not None else None,
         "prosper": _public(row["prosper"]),
     }
+    # Lists show them too (Build's bar merges from one): they need its tests only.
+    record["warnings"] = [
+        warning for warning, _ in _doubts({**record, "tests": json.loads(row["tests"])}, run)
+    ]
     if full:
         record["config"] = json.loads(row["config"])
         record["layout"] = json.loads(row["layout"])
         record["rules"] = json.loads(row["rules"])
         record["tests"] = json.loads(row["tests"])
         record["events"] = json.loads(row["events"])
-        record["warnings"] = [warning for warning, _ in _doubts(record, run)]
     return record
 
 
