@@ -19,7 +19,12 @@ make the edge's description a plainer condition, or end the step's task with
 when to move on. Not a test rewrite.
 
 A test that failed some runs but passed 2 of 3 is flaky, not failing: you are
-only given failing ones; do not chase the others.
+only given failing ones; do not chase the others. On a fix, a test that was
+already flaky before it is not given either: it is not the fix's to change.
+One exception: when no test fails but the test that reproduces the issue
+passed only 2 of 3, you get that test alone. The fix works only sometimes:
+make it hold in every call (its verdict is `agent`), and touch nothing the
+issue is not about.
 
 Two things that look like the agent's fault and are not:
 - A test written before the clinic answered your questions can have a caller

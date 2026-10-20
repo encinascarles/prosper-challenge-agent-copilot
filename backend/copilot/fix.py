@@ -13,7 +13,10 @@
 #   prove       the whole suite plus the new test, on the pull request's copy;
 #               failing tests go to the same self-check as a setup's (setup.py),
 #               and once they pass Prosper AI says it with the new test's score
-#               before and after ("0/3 on v1 → 3/3")
+#               before and after ("0/3 on v1 → 3/3"). A new test at 2 of 3
+#               gets one more round to pass every call; if it still does
+#               not, Prosper AI says the problem may still happen, and the
+#               merge warns of it (store/pulls.py)
 #
 # An issue a person reported (a complaint from the clinic) may have no calls:
 # the caller is then written from what they said happened, and a call they
@@ -115,6 +118,17 @@ def is_test_of(test: dict, number: int) -> bool:
     Only one it added: a version keeps the first test of every fix merged into it.
     """
     return bool(test["source"].get("before")) and test["source"].get("pull") == number
+
+
+def shaky(agent_id: str, pull: dict) -> Optional[tuple[int, int]]:
+    """A fix's own test in its latest run, as (passed, runs), if it did not pass every run."""
+    test = store.first_test(pull) if pull["kind"] == "fix" else None
+    run = store.get_run(agent_id, pull=pull["number"]) or {"tests": []}
+    result = next((r for r in run["tests"] if test and r["id"] == test["id"]), None)
+    if result is None or not result["runs"]:
+        return None
+    passed = _passed(result["runs"])
+    return (passed, len(result["runs"])) if passed < len(result["runs"]) else None
 
 
 def run(llm: LLM, agent_id: str, number: int, job: dict) -> None:
@@ -460,3 +474,17 @@ def proved(agent_id: str, number: int) -> None:
         more = {"test": test["id"]}
     counts = {key: checks[key] for key in ("passed", "flaky", "total")}
     store.prosper.log(agent_id, number, _event("proved", text=text, **counts, **more))
+    if score := shaky(agent_id, pull):
+        # Green, but not fixed for sure: said, not left for the person to spot.
+        tried = store.prosper.work_of(agent_id, number).get("steadied")
+        text = (
+            f"The test for Issue #{pull['fixes']} passes {score[0]} of {score[1]}: the problem "
+            "may still happen in some calls. "
+            + (
+                "One more round did not make it pass every call."
+                if tried
+                else "I had no round left to make it pass every call."
+            )
+            + " You can still merge it, or tell me what to try."
+        )
+        store.prosper.log(agent_id, number, _event("message", text=text))

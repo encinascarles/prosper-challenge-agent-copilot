@@ -13,7 +13,14 @@ from api import live, pulls, suite, tools
 from copilot import ask
 from tests.conftest import settle
 from tests.fakes import tool
-from tests.test_fix import ISSUE, fixed_at, two_callers, verdicts, with_issue  # noqa: F401
+from tests.test_fix import (  # noqa: F401
+    ISSUE,
+    _steady,
+    fixed_at,
+    two_callers,
+    verdicts,
+    with_issue,
+)
 
 ANSWER = {"answer": "Issue #2 is about the times offered.", "links": []}
 NOTHING_MORE = {"answer": "", "links": []}
@@ -253,7 +260,7 @@ def test_a_merge_card_says_the_warnings_and_do_it_confirms_them(
     fixed_at,  # noqa: F811
     prosper_model,
 ):
-    agent_id, pull = fixed_at([False, True, True])
+    agent_id, pull = fixed_at([False, True, True], [False, True, True], steady=[_steady("repro")])
     number = pull["number"]
     prosper_model.script = {"ask": [tool("merge_pull", number=number), NOTHING_MORE]}
     chat = _ask(client, agent_id, "Merge the fix.")

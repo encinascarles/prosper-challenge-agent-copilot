@@ -97,6 +97,21 @@ def start_test(
     return run, alone
 
 
+def run_again(agent_id: str, pull: int, test_ids: list[str]) -> dict:
+    """Run some tests of the pull request's latest run again, into it, as its suite.
+
+    For Prosper AI: a test that was already flaky before its change gets one
+    more go before it counts against the change. When they are done, Prosper
+    AI looks at the checks again, as after a whole suite.
+    """
+    copy = _copy(agent_id, pull, None)
+    last = store.get_run(agent_id, pull=pull)
+    run = store.runs.rerun_tests(last["id"], test_ids)
+    tests = [test for test in copy["tests"] if test["id"] in test_ids]
+    _launch(agent_id, run, copy, tests, pull, None)
+    return run
+
+
 def _copy(agent_id: str, pull: Optional[int], version: Optional[int]) -> dict:
     if pull is not None:
         return store.get_pull(agent_id, pull)

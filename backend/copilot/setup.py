@@ -16,6 +16,12 @@
 #                           (rewrite it, saying why), or is it a gap (ask)
 #                           at most MAX_ROUNDS times, then it says what still fails
 #
+# On a fix or a change, a test that fails here but already passed only 2 of 3
+# on the version it is based on says nothing about this change: it is run
+# again once, rather than changed for, and Prosper AI says so. And a fix whose
+# own test passes 2 of 3 gets one more round, within the same limit, to make
+# it pass every call: green at 2 of 3 can mean the problem still happens.
+#
 # Questions come first because an answer changes what gets drawn and what gets
 # tested: asked after, an answer turned into a rule could contradict tests
 # already written (a date of birth the test callers never give) and steps
@@ -162,13 +168,24 @@ def after_checks(agent_id: str, number: int) -> None:
     last = next((e for e in reversed(pull["events"]) if e["type"] != "checks"), None)
     if last is None or last["by"] != PROSPER:
         return
+    rounds = work.get("rounds", 0)
     if checks["state"] == "passed" and pull["kind"] in ("fix", "change"):
         from . import fix
 
+        shaky = fix.shaky(agent_id, pull)
+        if shaky and rounds < MAX_ROUNDS and not work.get("steadied"):
+            store.prosper.update(agent_id, number, rounds=rounds + 1, steadied=True)
+            doing = f"Making the test for Issue #{pull['fixes']} pass every call"
+            store.prosper.set_state(agent_id, number, "working", doing)
+            _submit({"kind": "review", "steady": True}, agent_id, number)
+            return
         return fix.proved(agent_id, number)
     if checks["state"] != "failed":
         return
-    rounds = work.get("rounds", 0)
+    noisy = _flaky_before(agent_id, pull)
+    if noisy and noisy.keys() == _failing_tests(agent_id, number).keys():
+        # Only tests that were already flaky fail: once more, before any change.
+        return _run_again(agent_id, pull, noisy)
     if rounds >= MAX_ROUNDS:
         if not work.get("handed_over"):
             failing = ", ".join(_failing_tests(agent_id, number).values())
@@ -184,9 +201,43 @@ def after_checks(agent_id: str, number: int) -> None:
     _submit({"kind": "review"}, agent_id, number)
 
 
+def _flaky_before(agent_id: str, pull: dict) -> dict:
+    """The tests failing on a fix's or a change's copy that passed 2 of 3 on its base, by id:
+    their names. Empty once they were run again on this run: red twice is red.
+    """
+    if pull["kind"] not in ("fix", "change") or not pull["base_version"]:
+        return {}
+    run = store.get_run(agent_id, pull=pull["number"])
+    if run is None or store.prosper.work_of(agent_id, pull["number"]).get("rerun") == run["id"]:
+        return {}
+    base = store.get_run(agent_id, version=pull["base_version"]) or {"tests": [], "repeats": 0}
+    flaky = {test["id"] for test in base["tests"] if verdict(test, base["repeats"]) == "flaky"}
+    failing = _failing_tests(agent_id, pull["number"])
+    return {test: name for test, name in failing.items() if test in flaky}
+
+
+def _left(pull: dict, noisy: dict) -> str:
+    return f"Already flaky on v{pull['base_version']}: left as it is · {', '.join(noisy.values())}"
+
+
+def _run_again(agent_id: str, pull: dict, noisy: dict) -> None:
+    """Run the tests that were already flaky on the base again, into the run, saying why."""
+    number = pull["number"]
+    run = store.get_run(agent_id, pull=number)
+    text = f"{_left(pull, noisy)}. Running it again: one more unlucky call is not this change."
+    store.prosper.log(agent_id, number, _event("message", text=text))
+    store.prosper.update(agent_id, number, rerun=run["id"])
+    # From Prosper AI's pool, not from the checks' loop that is finishing this run.
+    _submit({"kind": "rerun", "tests": list(noisy)}, agent_id, number)
+
+
 def _run(llm: LLM, agent_id: str, number: int, job: dict) -> None:
+    if job["kind"] == "rerun":
+        from api import checks  # the API runs the checks; imported late, it also mounts this
+
+        return checks.run_again(agent_id, number, job["tests"])
     if job["kind"] == "review":
-        return _review(llm, agent_id, number)
+        return _review(llm, agent_id, number, job.get("steady", False))
     if job["kind"] in ("fix", "go_on"):
         from . import fix  # it builds on this module's helpers
 
@@ -434,14 +485,22 @@ def _the_call(result: dict) -> str:
     return f"  failed: {failed}\n  path: {path} · ended: {result['ended']}\n{lines}"
 
 
-def _review(llm: LLM, agent_id: str, number: int) -> None:
+def _review(llm: LLM, agent_id: str, number: int, steady: bool = False) -> None:
+    """Check why tests fail and fix what is wrong. `steady`: no test fails, but a fix's own
+    test passes 2 of 3, and the fix should hold in every call."""
     from . import fix  # it builds on this module's helpers
 
     pull = store.get_pull(agent_id, number)
     work = store.prosper.work_of(agent_id, number)
     run = store.get_run(agent_id, pull=number) or {"tests": []}
     tests = {test["id"]: test for test in pull["tests"]}
-    failing = _failing_tests(agent_id, number)
+    noisy = {} if steady else _flaky_before(agent_id, pull)
+    if steady:
+        own = store.first_test(pull)
+        failing = {own["id"]: own["name"]}
+    else:
+        # The ones already flaky on the base are not this change's to fix.
+        failing = {k: v for k, v in _failing_tests(agent_id, number).items() if k not in noisy}
     calls = []
     for result in run["tests"]:
         if result["id"] not in failing:
@@ -456,10 +515,16 @@ def _review(llm: LLM, agent_id: str, number: int) -> None:
     rules = "\n".join(
         f"- [{rule['id']}] {rule['step'] or 'every step'}: {rule['text']}" for rule in pull["rules"]
     )
+    heading = (
+        "No test fails, but the test that reproduces the issue passed only 2 of 3: the fix "
+        "works only sometimes. Make it hold in every call:"
+        if steady
+        else "The failing tests:"
+    )
     content = (
         f"{_sources(work, agent_id)}\n\nThe clinic's answers:\n{_answered(agent_id, work)}\n\n"
         f"{_agent(pull['config'])}\n\nIts rules:\n{rules or '(none)'}{_fixes(agent_id, pull)}"
-        "\n\nThe failing tests:\n" + "\n\n".join(calls)
+        f"\n\n{heading}\n" + "\n\n".join(calls)
     )
     removable = {rule["id"] for rule in pull["rules"] if added_in(rule, number)}
     # The test a fix or a change wrote first says what the agent must do.
@@ -478,6 +543,8 @@ def _review(llm: LLM, agent_id: str, number: int) -> None:
         f"{failing[v['test']]} · {VERDICT_WORDS[v['verdict']]}: {v['why']}"
         for v in answer["verdicts"]
     ]
+    if noisy:
+        details.append(_left(pull, noisy))
     said = _event(
         "message", text=answer["summary"], details=details, **({"changed": True} if moved else {})
     )
