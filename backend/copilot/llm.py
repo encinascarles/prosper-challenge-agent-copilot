@@ -3,16 +3,17 @@
 # answer, a check of what comes back, and the check's error fed back when it
 # fails.
 #
-# Ask Prosper AI also talks with tools (`turn`): one step of a conversation in
-# which the model may call a function instead of answering.
-#
-# Plain OpenAI SDK, no agent framework: each artifact (an agent, its rules,
-# its tests, its questions) is one request with Structured Outputs, so the
-# answer always parses into the shape asked for. What a schema cannot say
+# Plain OpenAI SDK, no agent framework, for the jobs: each artifact (an agent,
+# its rules, its tests, its questions) is one request with Structured
+# Outputs, so the answer always parses into the shape asked for. What a schema cannot say
 # (that an edge's target is a step that exists, that a quote is really in the
 # guidelines) is checked in code. A refused answer is sent back with the
 # sentence that says what is wrong, the same sentence a save would get, and the
 # model answers again: twice at most, then the job says it could not.
+#
+# Ask Prosper AI's chat is the one agent with tools, on the OpenAI Agents SDK
+# (copilot/ask.py): `agent_model` hands it this same model, and its requests
+# are counted here too.
 #
 # Every request's tokens are counted and priced, so a setup can say what it
 # cost. The model is ours, not the agent's: PROSPER_MODEL, as for the
@@ -25,8 +26,9 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from agents import Model, OpenAIResponsesModel
 from loguru import logger
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 from simulate.suite import prosper_model
 
@@ -171,56 +173,10 @@ class LLM:
             raise CutOff("The model ran out of room before it finished its answer.")
         return response.output_text or ""
 
-    def turn(
-        self, name: str, items: list, tools: list, schema: dict, use_tools: bool = True
-    ) -> dict:
-        """One step of a conversation where the model may call a tool: { output, call, text }.
-
-        `items` is the conversation so far, the way the Responses API takes
-        it; `output` is what this step adds to it. `call` is the one function
-        the model calls ({ call_id, name, arguments }), or None when it
-        answered: then `text` is the JSON `schema` asks for. Without
-        `use_tools`, it has to answer.
-
-        Kept on our side, the whole conversation, and sent again each step:
-        the organization's key keeps nothing at OpenAI (zero data retention),
-        so a response cannot be continued by its id. The model's reasoning
-        travels encrypted with it, so it picks up where it left off.
-        """
-        started = time.monotonic()
-        step = self._turn(name, items, tools, schema, use_tools)
-        took = time.monotonic() - started
-        did = f"calls {step['call']['name']}" if step["call"] else "answers"
-        logger.info(f"Prosper AI · {name} · {did} · {took:.1f}s")
-        return step
-
-    def _turn(self, name: str, items: list, tools: list, schema: dict, use_tools: bool) -> dict:
-        """One request of a conversation with tools. The tests replace this: never OpenAI."""
-        response = self.client.responses.create(
-            model=self.model,
-            instructions=prompt(name),
-            input=items,
-            tools=tools,
-            tool_choice="auto" if use_tools else "none",
-            # One at a time: a call that acts waits for the person, and
-            # whatever came with it would wait too.
-            parallel_tool_calls=False,
-            text={
-                "format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}
-            },
-            reasoning={"effort": EFFORT},
-            max_output_tokens=MAX_TOKENS,
-            store=False,
-            include=["reasoning.encrypted_content"],
-        )
-        self.count(response.usage)
-        if response.status == "incomplete":
-            raise CutOff("The model ran out of room before it finished its answer.")
-        output = [item.model_dump(exclude_none=True) for item in response.output]
-        call = next((item for item in output if item["type"] == "function_call"), None)
-        if call is not None:
-            call = {key: call[key] for key in ("call_id", "name", "arguments")}
-        return {"output": output, "call": call, "text": response.output_text or ""}
+    def agent_model(self) -> Model:
+        """This model as the Agents SDK runs it, for Ask Prosper AI's chat. The tests
+        replace this, and never reach OpenAI."""
+        return OpenAIResponsesModel(model=self.model, openai_client=AsyncOpenAI())
 
     def add_cost(self, usd: float) -> None:
         """Count what something else this work paid for cost: the simulated calls it made."""
@@ -235,8 +191,9 @@ class LLM:
             usage, "prompt_tokens_details", None
         )
         cached = getattr(details, "cached_tokens", 0) or 0
-        prompt_tokens = getattr(usage, "input_tokens", None) or usage.prompt_tokens
-        completion = getattr(usage, "output_tokens", None) or usage.completion_tokens
+        responses = hasattr(usage, "input_tokens")
+        prompt_tokens = usage.input_tokens if responses else usage.prompt_tokens
+        completion = usage.output_tokens if responses else usage.completion_tokens
         usd = price(self.model, prompt_tokens, completion, cached)
         with self._lock:
             self.usage["requests"] += 1
