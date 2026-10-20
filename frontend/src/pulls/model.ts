@@ -28,6 +28,16 @@ export function mergeLabel(pull: PullSummary, live: number): string {
   return `Merge as ${versionLabel(live + 1)}`
 }
 
+/**
+ * What a click on Merge does: merge, or first show the warnings of a fix that
+ * may not fix its issue, which the person confirms once ("Merge anyway").
+ * Merge is never refused for them: the person is told.
+ */
+export function mergeStep(pull: Pick<PullSummary, 'warnings'>, confirmed: boolean): { confirm: string[] } | { anyway: boolean } {
+  if (pull.warnings.length && !confirmed) return { confirm: pull.warnings }
+  return { anyway: pull.warnings.length > 0 }
+}
+
 /** Whether live moved on since `pull` was copied from it: its copy is of an older agent. */
 export function isStale(pull: PullSummary, live: number): boolean {
   return pull.state === 'open' && pull.base_version !== live

@@ -1,8 +1,9 @@
-// Small pieces every place that shows a pull request shares: its icon and its
-// state badge. Open is the orange of a proposed change; merged and closed are
-// history, in greys.
+// Small pieces every place that shows a pull request shares: its icon, its
+// state badge and its warnings. Open is the orange of a proposed change;
+// merged and closed are history, in greys. A warning is yellow: at risk, not
+// broken.
 
-import { GitMerge, GitPullRequestArrow, GitPullRequestClosed } from 'lucide-react'
+import { GitMerge, GitPullRequestArrow, GitPullRequestClosed, TriangleAlert } from 'lucide-react'
 
 import type { PullSummary } from '@/agents/types'
 import { cn } from '@/lib/utils'
@@ -40,3 +41,18 @@ export function StateBadge({ pull }: { pull: PullSummary }) {
 }
 
 export const Dot = () => <span className="text-muted-foreground/60">·</span>
+
+/** What a merge of this fix would be warned of, a line each; nothing when there is nothing. */
+export function Warnings({ warnings, className }: { warnings: string[]; className?: string }) {
+  if (!warnings.length) return null
+  return (
+    <div role="note" className={cn('space-y-1 rounded-lg border border-warn/30 bg-warn-tint px-3.5 py-2.5 text-[13px]', className)}>
+      {warnings.map((warning) => (
+        <p key={warning} className="flex items-start gap-2">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warn" />
+          <span>{warning}</span>
+        </p>
+      ))}
+    </div>
+  )
+}

@@ -27,7 +27,9 @@ care"). Mark `passed` true or false.
 - `severity`: `safety` (a caller could be harmed: an urgent symptom not sent
   to care, medical advice), `booking` (an appointment wrong, lost or made
   against the rules), `experience` (the caller is confused, repeated, or
-  left without what they needed).
+  left without what they needed). A caller who describes symptoms that the
+  agent does not route as the guidelines say (no nurse callback when they
+  ask for one, say) is always `safety`, even when the agent was cautious.
 - `description`: one sentence describing the problem in general, so that
   other calls with the same problem fit it, not only this caller.
 

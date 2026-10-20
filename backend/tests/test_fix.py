@@ -449,3 +449,159 @@ def test_going_on_without_the_test_it_wrote_says_so_and_stops(client, with_issue
     assert pull["events"][-1]["text"].startswith("I no longer have the test I wrote on v1")
     assert pull["prosper"]["state"] == "done"
     assert pull["tests"] == []
+
+
+# ---- A fix that may not fix its issue: warned of, never blocked ---------------------
+
+
+def _steady(test_id: str) -> dict:
+    """A review of the fix's own test at 2 of 3: a plainer rule."""
+    return {
+        "summary": "Made the rule in Offer times plainer.",
+        "verdicts": [{"test": test_id, "verdict": "agent", "why": "It offered Thursday once."}],
+        "agent": FIX["agent"],
+        "rules": [{"step": "Offer times", "text": "Never offer Thursday."}],
+        "remove_rules": [],
+        "tests": [],
+        "questions": [],
+    }
+
+
+@pytest.fixture
+def fixed_at(client, with_issue, prosper_model, verdicts, monkeypatch):
+    """A fix whose own test (id "repro") fails on v1, then scores `after` (one list per run
+    of the suite). Returns (agent id, pull)."""
+    from copilot import fix
+
+    monkeypatch.setattr(fix, "new_id", lambda: "repro")
+
+    def make(*after: list[bool], steady: list | None = None) -> tuple[str, dict]:
+        agent_id = with_issue()
+        prosper_model.script = {"reproduce": [TEST], "fix": [FIX], "review": steady or []}
+        verdicts.extend([False] * 3)
+        for run in after:
+            verdicts.extend(run)
+        number = _fix(client, agent_id)["number"]
+        return agent_id, _pull(client, agent_id, number)
+
+    return make
+
+
+def test_a_fix_whose_test_passes_three_of_three_merges_with_no_warning(client, fixed_at):
+    agent_id, pull = fixed_at([True] * 3)
+
+    assert pull["warnings"] == []
+    merged = client.post(f"/api/agents/{agent_id}/pulls/{pull['number']}/merge")
+    assert merged.status_code == 200, merged.text
+    assert _issue(client, agent_id)["events"][-1]["text"] is None
+
+
+def test_a_fix_whose_test_stays_at_two_of_three_warns_and_asks_to_confirm(
+    client, fixed_at, prosper_model
+):
+    agent_id, pull = fixed_at([False, True, True], [False, True, True], steady=[_steady("repro")])
+    number = pull["number"]
+
+    # One more round on the fix's own test, then it says it did not get there.
+    [asked] = prosper_model.asked["review"]
+    assert "passed only 2 of 3" in asked[1]["content"]
+    assert pull["rules"][-1]["text"] == "Never offer Thursday."
+    assert pull["checks"]["state"] == "passed"
+    assert pull["events"][-1]["text"] == (
+        f"The test for Issue #{ISSUE} passes 2 of 3: the problem may still happen in some calls. "
+        "One more round did not make it pass every call. You can still merge it, or tell me "
+        "what to try."
+    )
+    warning = (
+        f"The test for Issue #{ISSUE} passes 2 of 3: the problem may still happen in some calls."
+    )
+    assert pull["warnings"] == [warning]
+    listed = client.get(f"/api/agents/{agent_id}/pulls").json()
+    assert next(p for p in listed if p["number"] == number)["warnings"] == [warning]
+
+    refused = client.post(f"/api/agents/{agent_id}/pulls/{number}/merge")
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == f"{warning} Merge anyway to go on."
+    merged = client.post(f"/api/agents/{agent_id}/pulls/{number}/merge", json={"anyway": True})
+    assert merged.status_code == 200, merged.text
+
+    issue = _issue(client, agent_id)
+    assert issue["state"] == "resolved"
+    assert issue["events"][-1]["text"] == "merged with its test at 2/3"
+
+
+def test_one_more_round_can_bring_the_fix_to_three_of_three(client, fixed_at):
+    agent_id, pull = fixed_at([False, True, True], [True] * 3, steady=[_steady("repro")])
+
+    assert pull["events"][-1]["type"] == "proved"
+    assert pull["events"][-1]["text"].endswith("the new test 0/3 on v1 → 3/3")
+    assert pull["warnings"] == []
+
+
+def test_with_no_round_left_it_says_so(client, fixed_at, monkeypatch):
+    from copilot import setup
+
+    monkeypatch.setattr(setup, "MAX_ROUNDS", 0)
+    _, pull = fixed_at([False, True, True])
+
+    assert "I had no round left" in pull["events"][-1]["text"]
+    assert len(pull["warnings"]) == 1
+
+
+def test_a_fix_not_reproduced_warns_and_asks_to_confirm(client, with_issue, prosper_model):
+    agent_id = with_issue()
+    prosper_model.script = {"reproduce": [TEST, TEST], "fix": [FIX]}
+    number = _fix(client, agent_id)["number"]
+    question = _pull(client, agent_id, number)["events"][-1]["question"]
+    client.post(
+        f"/api/agents/{agent_id}/pulls/{number}/answers", json={"question": question, "option": 0}
+    )
+    settle()
+
+    pull = _pull(client, agent_id, number)
+    assert pull["checks"]["state"] == "passed"
+    assert pull["warnings"] == ["Not reproduced on v1: nothing shows this change fixes it."]
+    assert client.post(f"/api/agents/{agent_id}/pulls/{number}/merge").status_code == 409
+    merged = client.post(f"/api/agents/{agent_id}/pulls/{number}/merge", json={"anyway": True})
+    assert merged.status_code == 200
+    assert _issue(client, agent_id)["events"][-1]["text"] == "merged without reproducing it on v1"
+
+
+def test_a_test_already_flaky_on_the_base_is_run_again_not_fixed_for(
+    client, new_agent, prosper_model, fake_checks, monkeypatch
+):
+    """v1 has a test that passed 2 of 3; it fails on the fix: run again, the agent untouched."""
+    friendly = {"name": "Sounds friendly", "caller": "You are Ana.", "checks": ["Is friendly"]}
+    said = {"Is friendly": [False, True, True, False, False, True, True, True, True]}
+
+    async def judge(check, transcript):
+        verdict = said[check].pop(0) if said.get(check) else True
+        return {"pass": verdict, "detail": "Judged.", "tokens": {"prompt": 1, "completion": 1}}
+
+    fake_checks.judge = judge
+    agent_id, _ = new_agent()
+    client.post(f"/api/agents/{agent_id}/pulls/1/tests", json=friendly)
+    settle()
+    assert client.post(f"/api/agents/{agent_id}/pulls/1/merge").status_code == 200
+    prosper_model.script = {
+        "callers": [CALLERS],
+        "audit": [copy.deepcopy(REVIEW), copy.deepcopy(REVIEW)],
+        "grouping": [{"placements": [{"finding": 0, "issue": ISSUE}]}],
+    }
+    client.post(f"/api/agents/{agent_id}/calls/play")
+    settle()
+    said["Offers only times the clinic is open"] = [False] * 3  # reproduced; then it passes
+    prosper_model.script = {"reproduce": [TEST], "fix": [FIX]}
+
+    number = _fix(client, agent_id)["number"]
+    pull = _pull(client, agent_id, number)
+
+    assert "review" not in prosper_model.asked  # no round spent on it
+    again = next(e for e in pull["events"] if e["type"] == "message")
+    assert again["text"] == (
+        "Already flaky on v1: left as it is · Sounds friendly. "
+        "Running it again: one more unlucky call is not this change."
+    )
+    assert [r["text"] for r in pull["rules"]] == [RULE["text"]]  # only the fix's
+    assert pull["checks"]["state"] == "passed"
+    assert pull["events"][-1]["type"] == "proved"

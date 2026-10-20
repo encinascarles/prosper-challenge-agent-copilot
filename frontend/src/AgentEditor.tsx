@@ -291,12 +291,12 @@ export function AgentEditor(props: Props) {
 
   // A merge takes the saved copy, which is this draft: a refusal about a card
   // is shown on it, like a refused save.
-  const merge = async () => {
+  const merge = async (anyway: boolean) => {
     if (!pull || merging || dirty) return
     const sent = draft
     setMerging(true)
     try {
-      onMerged(await mergePull(agent.id, pull.number))
+      onMerged(await mergePull(agent.id, pull.number, anyway))
     } catch (error) {
       const located = locate(sent, error)
       if (located.node !== null) setRefused({ draft: sent, refusal: located })
@@ -456,7 +456,7 @@ export function AgentEditor(props: Props) {
                     : callBlocker(unsaved, warnings)
               }
               onTry={startCall}
-              onMerge={() => void merge()}
+              onMerge={(anyway) => void merge(anyway)}
               onBack={() => onSwitch(null)}
               onOpenPage={() => onOpenPage(pull.number)}
             />

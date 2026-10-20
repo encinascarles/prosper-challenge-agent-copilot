@@ -164,6 +164,11 @@ def rerun_test(run_id: int, test_id: str) -> dict:
     Raises NotFound if the run does not have the test, or Conflict if it is
     still running: two runs writing one row would mix their results.
     """
+    return rerun_tests(run_id, [test_id])
+
+
+def rerun_tests(run_id: int, test_ids: list[str]) -> dict:
+    """Like rerun_test, for several tests of the run at once."""
     with connect() as conn:
         row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
         if row is None:
@@ -171,10 +176,10 @@ def rerun_test(run_id: int, test_id: str) -> dict:
         if row["state"] == "running":
             raise Conflict("The tests are running: wait for them to finish.")
         tests = json.loads(row["tests"])
-        if not any(test["id"] == test_id for test in tests):
+        if not set(test_ids) <= {test["id"] for test in tests}:
             raise NotFound("That run does not have this test: run all the tests.")
         for test in tests:
-            if test["id"] == test_id:
+            if test["id"] in test_ids:
                 test["runs"] = []
                 # Skipped when another test ran alone in this run: it runs now.
                 test.pop("skipped", None)

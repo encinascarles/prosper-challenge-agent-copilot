@@ -181,7 +181,8 @@ export function eventText(event: IssueEvent): string {
     case 'relinked':
       return `Reopened ${pull(event)} to fix it`
     case 'fixed':
-      return `Resolved by ${pull(event)} in v${event.version}`
+      // A merge warned of something keeps it: "merged with its test at 2/3".
+      return `Resolved by ${pull(event)} in v${event.version}${event.text ? ` · ${event.text}` : ''}`
     case 'fix_merged':
       return `${pull(event)} merged as v${event.version} · issue ${event.text === 'ignored' ? 'left ignored' : 'already resolved'}`
     case 'came_back':

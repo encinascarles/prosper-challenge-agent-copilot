@@ -11,6 +11,7 @@ import {
   isStale,
   mergeBlocker,
   mergeLabel,
+  mergeStep,
   openedForEdits,
   pullMeta,
   testCallLabel,
@@ -30,6 +31,7 @@ const pull = (fields: Partial<PullSummary> = {}): PullSummary => ({
   updated_at: '',
   checks: { state: 'passed', passed: 1, flaky: 0, failing: 0, total: 1 },
   prosper: null,
+  warnings: [],
   ...fields,
 })
 const setup = pull({ number: 1, title: 'Set up Anna', kind: 'setup', base_version: 0 })
@@ -74,6 +76,23 @@ describe('merging', () => {
     )
     // Unsaved changes first: saving them runs the checks again anyway.
     expect(mergeBlocker(pull(), 1, true, failing)).toBe('Save your changes first.')
+  })
+})
+
+describe('merging a fix that may not fix its issue', () => {
+  const warned = pull({ kind: 'fix', fixes: 4, warnings: ['The test for Issue #4 passes 2 of 3: the problem may still happen in some calls.'] })
+
+  it('merges at once when there is nothing to warn of', () => {
+    expect(mergeStep(pull(), false)).toEqual({ anyway: false })
+  })
+
+  it('asks to confirm the warnings first, and is never refused for them', () => {
+    expect(mergeStep(warned, false)).toEqual({ confirm: warned.warnings })
+    expect(mergeBlocker(warned, 1, false)).toBeNull()
+  })
+
+  it('merges anyway once confirmed', () => {
+    expect(mergeStep(warned, true)).toEqual({ anyway: true })
   })
 })
 

@@ -27,6 +27,11 @@
 # person's own changes to that copy are refused, or the two would write over
 # each other, and so is a merge, until Prosper AI is done and has its answers.
 #
+# A fix that may not fix its issue merges all the same, once the person has
+# read why (its own test passes 2 of 3, or never failed before the change):
+# it is shown as a warning, a merge asks for it to be confirmed, and the
+# issue it resolves keeps what the merge was warned of.
+#
 # Merging is refused once live has moved past the version the pull request was
 # based on: its copy was made from an older agent, and merging it would quietly
 # undo whatever was merged in between. Updating it replaces its copy with its
@@ -57,6 +62,7 @@ def _event(kind: str, by: str, **more) -> dict:
 
 
 def _to_record(conn: sqlite3.Connection, row: sqlite3.Row, full: bool) -> dict:
+    run = _run_of(conn, row)
     record = {
         "number": row["number"],
         "title": row["title"],
@@ -68,9 +74,13 @@ def _to_record(conn: sqlite3.Connection, row: sqlite3.Row, full: bool) -> dict:
         "chat": json.loads(row["chat"]) if row["chat"] else None,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
-        "checks": _checks(conn, row),
+        "checks": runs.summary(run) if run is not None else None,
         "prosper": _public(row["prosper"]),
     }
+    # Lists show them too (Build's bar merges from one): they need its tests only.
+    record["warnings"] = [
+        warning for warning, _ in _doubts({**record, "tests": json.loads(row["tests"])}, run)
+    ]
     if full:
         record["config"] = json.loads(row["config"])
         record["layout"] = json.loads(row["layout"])
@@ -98,11 +108,61 @@ def busy(pull: dict, merging: bool = False) -> Optional[str]:
     return None
 
 
-def _checks(conn: sqlite3.Connection, row: sqlite3.Row) -> Optional[dict]:
+def _run_of(conn: sqlite3.Connection, row: sqlite3.Row) -> Optional[dict]:
     # Only a run on the copy as it is now says anything about it.
     run = runs.select_run(conn, row["agent_id"], pull=row["number"])
     copy = {key: json.loads(row[key]) for key in ("config", "rules", "tests")}
-    return runs.summary(run) if runs.is_of(run, fingerprint(copy)) else None
+    return run if runs.is_of(run, fingerprint(copy)) else None
+
+
+def first_test(pull: dict) -> Optional[dict]:
+    """The test a fix or a change wrote first, which knows how it went before; None if none.
+
+    Only one it added: a version keeps the first test of every fix merged into it.
+    """
+    return next(
+        (
+            test
+            for test in pull["tests"]
+            if test["source"].get("before") and test["source"].get("pull") == pull["number"]
+        ),
+        None,
+    )
+
+
+def _doubts(pull: dict, run: Optional[dict]) -> list[tuple[str, str]]:
+    """What a merge of an open fix should be told first, each with the note the issue keeps.
+
+    Green checks let a test through at 2 of 3, the issue's own test too, and a
+    person may have told Prosper AI to go on with a test that never failed.
+    Neither stops a merge: the person is told, and confirms once.
+    """
+    if pull["kind"] != "fix" or pull["state"] != "open":
+        return []
+    test = first_test(pull)
+    if test is None:
+        return []
+    doubts = []
+    before = test["source"]["before"]
+    if before["runs"] - before["passed"] <= runs.ALLOWED_MISSES:
+        doubts.append(
+            (
+                f"Not reproduced on v{before['version']}: nothing shows this change fixes it.",
+                f"merged without reproducing it on v{before['version']}",
+            )
+        )
+    result = next((t for t in (run or {}).get("tests", []) if t["id"] == test["id"]), None)
+    if result is not None and runs.verdict(result, run["repeats"]) == "flaky":
+        passed = sum(1 for r in result["runs"] if r["passed"])
+        score = f"{passed} of {len(result['runs'])}"
+        doubts.append(
+            (
+                f"The test for Issue #{pull['fixes']} passes {score}: "
+                "the problem may still happen in some calls.",
+                f"merged with its test at {passed}/{len(result['runs'])}",
+            )
+        )
+    return doubts
 
 
 def _select(conn: sqlite3.Connection, agent_id: str, number: int) -> Optional[dict]:
@@ -313,18 +373,23 @@ def save_pull(
         return _select(conn, agent_id, number)
 
 
-def merge_pull(agent_id: str, number: int, by: str) -> dict:
+def merge_pull(agent_id: str, number: int, by: str, anyway: bool = False) -> dict:
     """Make the pull request's copy the agent's next version, which goes live. Returns the PR.
 
     The caller checks first that the copy is a valid agent. Raises NotFound, or
     Conflict if the pull request is not open, live moved since it was based or
-    its checks do not pass.
+    its checks do not pass, or if it has warnings (a fix that may not fix its
+    issue) and `anyway` does not say the person read them.
     """
     with connect() as conn:
         pull = _require(conn, agent_id, number)
         if reason := _merge_refusal(conn, agent_id, pull):
             raise Conflict(reason)
         run = runs.select_run(conn, agent_id, pull=number)
+        doubts = _doubts(pull, run)
+        if doubts and not anyway:
+            said = " ".join(warning for warning, _ in doubts)
+            raise Conflict(f"{said} Merge anyway to go on.")
         # One moment for both: the version is created when the PR is merged.
         merged = _event("merged", by)
         version = insert_version(
@@ -351,7 +416,8 @@ def merge_pull(agent_id: str, number: int, by: str) -> dict:
         # The name lists show is the live one.
         conn.execute("UPDATE agents SET name = ? WHERE id = ?", (pull["config"]["name"], agent_id))
         if pull["fixes"]:
-            issues.resolve_by_fix(conn, agent_id, pull["fixes"], number, version, by)
+            note = " · ".join(note for _, note in doubts) or None
+            issues.resolve_by_fix(conn, agent_id, pull["fixes"], number, version, by, note)
         return _select(conn, agent_id, number)
 
 

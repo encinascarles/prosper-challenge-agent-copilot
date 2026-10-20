@@ -16,7 +16,7 @@
 // writes to Prosper AI. A fix says which issue it fixes, and links to it; a
 // change, the chat it was asked for in.
 
-import { ArrowLeft, GitMerge, GitPullRequestArrow, GitPullRequestClosed, MoreHorizontal, Phone, RefreshCw } from 'lucide-react'
+import { ArrowLeft, GitPullRequestArrow, GitPullRequestClosed, MoreHorizontal, Phone, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
@@ -44,7 +44,8 @@ import { progress, suiteChanges, summarize } from '@/suite/model'
 import { useChecks } from '@/suite/useChecks'
 import { issueLabel } from '@/live/model'
 
-import { Dot, StateBadge } from './bits'
+import { Dot, StateBadge, Warnings } from './bits'
+import { MergeButton } from './MergeButton'
 import { diffAgents, NOTHING, rebase, updateSummary } from './diff'
 import { basedOn, callsNote, isStale, mergeBlocker, mergeLabel, pullLabel, versionLabel } from './model'
 import { PullChanges } from './PullChanges'
@@ -290,19 +291,18 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onIssue,
                       {busy === 'update' ? 'Updating…' : 'Update'}
                     </Button>
                   ) : (
-                    <span title={blocker ?? undefined} className="flex">
-                      <Button
-                        size="sm"
-                        disabled={blocker !== null || busy !== null}
-                        onClick={() =>
-                          void act('merge', () => mergePull(agent.id, number), (merged) =>
-                            `${pullLabel(number)} merged · ${versionLabel(merged.merged_version ?? 0)} is live`,
-                          )
-                        }
-                      >
-                        <GitMerge className="size-3.5" /> {busy === 'merge' ? 'Merging…' : mergeLabel(pull, live)}
-                      </Button>
-                    </span>
+                    <MergeButton
+                      pull={pull}
+                      label={mergeLabel(pull, live)}
+                      blocker={blocker}
+                      busy={busy !== null}
+                      merging={busy === 'merge'}
+                      onMerge={(anyway) =>
+                        void act('merge', () => mergePull(agent.id, number, anyway), (merged) =>
+                          `${pullLabel(number)} merged · ${versionLabel(merged.merged_version ?? 0)} is live`,
+                        )
+                      }
+                    />
                   )}
                 </>
               )}
@@ -371,6 +371,7 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onIssue,
       <div className="mx-auto max-w-[980px] px-8 pt-6 pb-16">
         {tab === 'conversation' ? (
           <div className="max-w-[720px]">
+            {open && <Warnings warnings={pull.warnings} className="mb-5" />}
             <PullTimeline
               pull={pull}
               live={live}
@@ -384,17 +385,20 @@ export function PullPage({ agent, number, onBack, onOpenInBuild, onTry, onIssue,
             {open && <Composer pull={pull} onSend={send} />}
           </div>
         ) : tab === 'checks' ? (
-          <PullChecks
-            pull={pull}
-            run={checks.run}
-            onRerun={() => void checks.rerun().catch((failure: Error) => setProblem(failure.message))}
-            onRunOne={(test) =>
-              void checks.runOne(test).then(
-                (alone) => setProblem(alone),
-                (failure: Error) => setProblem(failure.message),
-              )
-            }
-          />
+          <>
+            {open && <Warnings warnings={pull.warnings} className="mb-3" />}
+            <PullChecks
+              pull={pull}
+              run={checks.run}
+              onRerun={() => void checks.rerun().catch((failure: Error) => setProblem(failure.message))}
+              onRunOne={(test) =>
+                void checks.runOne(test).then(
+                  (alone) => setProblem(alone),
+                  (failure: Error) => setProblem(failure.message),
+                )
+              }
+            />
+          </>
         ) : changes === null || suite === null ? (
           <p className="py-10 text-center text-[13px] text-muted-foreground">Loading…</p>
         ) : (

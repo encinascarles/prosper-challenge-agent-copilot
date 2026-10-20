@@ -14,6 +14,7 @@ export type Action = {
   what: string // its subject: the issue's or pull request's title, the rule
   meta: string[] // what follows from it: "Calls will use v3 from then on"
   stored: string[] // the words it will keep, a line each: a test's caller and checks
+  warnings?: string[] // what to know before Do it, a line each: a fix whose test passes 2 of 3
   // running: being done; skipped: the person wrote again instead
   state: 'pending' | 'running' | 'done' | 'failed' | 'declined' | 'skipped'
   result: { text: string; link: Link | null } | null // once done: "Opened Issue #14"

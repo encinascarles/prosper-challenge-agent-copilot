@@ -661,6 +661,74 @@ it by half or more. Asking for less (only the steps that change, not the
 whole agent) would make each change cheaper and leave less room to go wrong.
 Prosper AI sometimes still names steps in snake case in its own replies.
 
+### A fix that may not fix its issue still merges, with a warning
+
+**Context.** Six fixes run end to end on two agents all reached green, but in
+three of them the test that reproduces the issue ended at 2 of 3. The merge
+rule lets a test through at 2 of 3 (flaky, shown, not blocking), so "green"
+could mean "still happens one call in three". One fix went in with no
+reproduction at all: the test never failed, and the person said to go on.
+Self-check rounds also added rules unrelated to the issue, to make tests pass
+that were already flaky on the version the fix was based on.
+
+**Options.**
+- *Require 3 of 3 for a fix's own test.* Rejected: the suite is a simulated
+  caller and an LLM judge, and one unlucky call out of three is often the
+  judge, not the agent. A hard rule would block fixes that work, and push
+  Prosper AI to bend the agent until a noisy check gives way.
+- *Change nothing; the score is in the conversation already.* Rejected: "0/3
+  → 2/3" in a long log is easy to miss at the moment that matters, the merge.
+- *Never block, warn where the merge is.* Chosen. The person decides, knowing.
+
+**How it works.**
+- An open fix carries `warnings` when its own test passes 2 of 3 on the copy
+  ("The test for Issue #4 passes 2 of 3: the problem may still happen in some
+  calls"), or when it never failed on the base ("Not reproduced on v3:
+  nothing shows this change fixes it"). They show at the top of the
+  conversation and of Checks, and on the Merge button.
+- Merge with warnings shows them in a small popover; "Merge anyway" merges.
+  The API holds the same line (409 until `anyway`), so the Ask Prosper AI
+  card, which lists the warnings above Do it, takes that click as the
+  confirmation. The issue it resolves keeps what was confirmed ("Resolved by
+  PR #9 in v4 · merged with its test at 2/3").
+- Before handing over, Prosper AI spends one more round (within the two it
+  has) on a fix's test at 2 of 3, given only that test: make the fix hold in
+  every call. If it still does not, it says so.
+- A test that fails on a fix's copy but already passed only 2 of 3 on the
+  base says nothing about the fix: it runs again once, into the same run,
+  with "Already flaky on v3: left as it is", and the agent is not changed for
+  it. Red twice, it is handled like any failing test.
+- Severity: a caller describing symptoms the agent does not route as the
+  guidelines say is always Safety, in the call review and in Tidy alike (the
+  same problem had come out Experience on one agent and Safety on another).
+  A test keeps the two prompts' definitions identical.
+
+**What the real run showed.** On a copy of the database those six fixes ran on,
+four fixes through the UI:
+- Riverside 2, Issue #2 (says "rescheduled" for a request): reproduced 0/3
+  on v3, one rule, 0/3 → 3/3, 10/10. No warning; merged on the first click.
+- Riverside 1, Issue #2 (offers new times to someone cancelling):
+  reproduced 0/3 on v6. One round for the new test, still red after the
+  rule; then only "Offers dates at permitted weekday times" failed, a test
+  at 2/3 on v6: "Already flaky on v6: left as it is", run again, it passed,
+  and the agent was not changed for it. 0/3 → 3/3, no warning, merged.
+- Riverside 1, Issue #4 (a wrong weekday), reopened on v7: reproduced 0/3
+  this time, two rounds, 0/3 → 3/3, no warning; merged from Ask Prosper AI.
+- A clinic complaint on Riverside 2 about something PR #6 had already fixed:
+  not reproduced (3/3, twice), go on anyway, a rule. "Not reproduced on v4:
+  nothing shows this change fixes it" at the top of the conversation, in
+  Checks, on the button's popover and on the Ask card; merged from the card,
+  the issue says "merged without reproducing it on v4".
+None of the four ended at 2/3, so the extra round for a fix's own test was
+not exercised for real (it is in the tests). Re-reviewing the call behind
+the Experience-graded nurse issue: the old prompt said Experience 3 times out
+of 3, the new one Safety 3 of 3; twice it also filed "gives medical advice"
+on the same call. About USD 11.5 in all, nearly all of it suites (gpt-4o).
+
+**Trade-offs.** Running a flaky test again costs one test's calls (about USD
+0.05–0.10), cheaper than a round, which runs the whole suite. The extra round
+on a fix's own test is a whole suite too, spent only when it is at 2 of 3.
+
 ### Ask Prosper AI: questions in a chat, acts on a click
 
 **Context.** Until here Prosper AI only acted inside a pull request. Most of

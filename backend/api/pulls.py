@@ -10,7 +10,8 @@
 #
 # A copy also carries its rules and tests (suite.py has their routes), and each
 # change to a pull request's copy starts its checks again (checks.py). A merge
-# is refused (409) until they have passed on the copy as it is.
+# is refused (409) until they have passed on the copy as it is, and a fix
+# that may not fix its issue until the person confirms its warnings.
 #
 # A pull request left behind by a merge is updated by sending its changes
 # replayed on the new live version. The replay is worked out by the client
@@ -194,6 +195,9 @@ class PullSummary(BaseModel):
     updated_at: str
     checks: Checks | None  # its latest run of the tests; None if none ran
     prosper: Prosper | None  # Prosper AI's work on it; None if it has no part in it
+    # An open fix that may not fix its issue, a line each: its test passes 2
+    # of 3, or it was never reproduced. A merge asks to confirm them.
+    warnings: list[str] = []
 
 
 class Pull(PullSummary):
@@ -202,6 +206,13 @@ class Pull(PullSummary):
     rules: list[Rule]
     tests: list[Test]
     events: list[PullEvent]
+
+
+class PullMerge(BaseModel):
+    anyway: bool = Field(
+        default=False,
+        description="The person read the pull request's warnings and merges it anyway.",
+    )
 
 
 class PullOpen(BaseModel):
@@ -320,9 +331,10 @@ def rename_pull(agent_id: str, number: int, body: PullRename) -> dict:
 
 
 @router.post("/pulls/{number}/merge", response_model=Pull, responses=_MISSING | _REFUSED | INVALID)
-def merge_pull(agent_id: str, number: int) -> Any:
+def merge_pull(agent_id: str, number: int, body: PullMerge | None = None) -> Any:
     # The copy was valid when it was saved; it is checked again because what
     # goes live must pass the rules as they are now, not as they were then.
+    # A fix with warnings is refused (409, saying them) until `anyway`.
     pull = get_pull(agent_id, number)
     # Prosper AI first: before its answers are in there may be no agent at all,
     # and "the agent has no nodes" would not say why.
@@ -330,7 +342,8 @@ def merge_pull(agent_id: str, number: int) -> Any:
         raise HTTPException(status_code=409, detail=reason)
     if found := problem(pull["config"]):
         return found
-    return _answer(store.merge_pull, agent_id, number, YOU)
+    anyway = body is not None and body.anyway
+    return _answer(store.merge_pull, agent_id, number, YOU, anyway)
 
 
 @router.post("/pulls/{number}/close", response_model=Pull, responses=_MISSING | _REFUSED)

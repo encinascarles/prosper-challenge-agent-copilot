@@ -84,13 +84,13 @@ class Tool:
     params: dict  # its arguments, as a strict JSON schema
     # A read: (agent id, arguments) -> what the model reads, and the line the chat shows.
     read: Optional[Callable[[str, dict], tuple[str, str]]] = None
-    # An act: its card, { title, what, meta }, made before anything is done;
-    # it raises ToolError when the act would be refused, so the model hears it
-    # before the person does.
+    # An act: its card, { title, what, meta, warnings? }, made before anything
+    # is done; it raises ToolError when the act would be refused, so the model
+    # hears it before the person does.
     card: Optional[Callable[[str, dict], dict]] = None
     # And doing it, once the person says so: (agent id, arguments, { chat,
-    # message }) -> { text, link, said }: what the card then says, what it
-    # links to, and what the model is told.
+    # message, warnings: the card's }) -> { text, link, said }: what the card
+    # then says, what it links to, and what the model is told.
     act: Optional[Callable[[str, dict, dict], dict]] = None
 
     def spec(self) -> dict:
@@ -130,9 +130,9 @@ def decide(agent_id: str, chat_id: int, index: int, do: bool, tools: dict[str, T
     action = message["action"]
     done, error = None, None
     try:
-        done = tools[action["tool"]].act(
-            agent_id, action["args"], {"chat": chat_id, "message": index}
-        )
+        # The warnings its card showed: the click on Do it was made reading them.
+        at = {"chat": chat_id, "message": index, "warnings": action.get("warnings", [])}
+        done = tools[action["tool"]].act(agent_id, action["args"], at)
     except ToolError as refused:
         error = str(refused)
     except Exception as failure:  # noqa: BLE001 - the card must not stay "running"
@@ -504,7 +504,9 @@ def _did(message: dict) -> str:
     if not action:
         return ""
     proposed = " · ".join(
-        part for part in (action["title"], action["what"], *action["meta"]) if part
+        part
+        for part in (action["title"], action["what"], *action["meta"], *action.get("warnings", []))
+        if part
     )
     outcome = {
         "done": (action.get("result") or {}).get("text", "done"),

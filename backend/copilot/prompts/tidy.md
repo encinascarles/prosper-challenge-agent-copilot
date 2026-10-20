@@ -14,7 +14,9 @@ Answer with:
 - `severity`: `safety` (a caller could be harmed: an urgent symptom not sent
   to care, medical advice), `booking` (an appointment wrong, lost or made
   against the rules), `experience` (the caller is confused, repeated, or
-  left without what they needed).
+  left without what they needed). A caller who describes symptoms that the
+  agent does not route as the guidelines say (no nurse callback when they
+  ask for one, say) is always `safety`, even when the agent was cautious.
 - `calls`: up to 3 call numbers from the list whose line shows it (what they
   recorded, the steps they went through), the clearest first. None rather
   than a guess: a call is only listed if its line shows the problem.
