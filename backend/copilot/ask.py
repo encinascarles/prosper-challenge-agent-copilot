@@ -11,18 +11,19 @@
 # how they went, the latest calls one line each, and whole the calls the chat
 # names. Most questions are answered from those alone, in one request.
 #
-# Then tools (api/tools.py), through llm.turn, one call per step and at most
-# MAX_TOOL_CALLS per message. A tool that reads (search calls, read an issue,
-# read a pull request's tests) runs at once and its result goes back to the
-# model; the chat shows a muted line for it ("Read Issue #5 and its 3
-# calls"). A tool that acts never runs from here: the message ends with its
-# card ("Open issue: Books under the parent's name · Collect details ·
-# Booking"), and the conversation so far is kept on the message. When the
-# person clicks Do it, the tool runs (`decide`), the card says what happened,
-# and the conversation goes on from there with the result, so Prosper AI can
-# say what is next or propose the next step. Cancel only marks the card:
-# the next question tells Prosper AI it was declined. Nothing changes from a
-# chat without a click.
+# Then tools (api/tools.py), on the OpenAI Agents SDK: an Agent whose tools
+# are those, one call per step and at most MAX_TOOL_CALLS per message. A tool
+# that reads (search calls, read an issue, read a pull request's tests) runs
+# at once and its result goes back to the model; the chat shows a muted line
+# for it ("Read Issue #5 and its 3 calls"). A tool that acts needs approval:
+# the run stops at it, and the message ends with its card ("Open issue:
+# Books under the parent's name · Collect details · Booking") and the run's
+# state, serialised, kept on the message, so a restart loses no card. When
+# the person clicks Do it, the state is loaded and approved (`decide`): the
+# tool runs, the card says what happened, and the run goes on with the
+# result, so Prosper AI can say what is next or propose the next step. Cancel
+# only marks the card: the next question tells Prosper AI it was declined.
+# Nothing changes from a chat without a click.
 #
 # Each tool is a route the UI calls, called as a function: the same checks,
 # and the same 404/409/422 sentences, which go back to the model as the
@@ -32,14 +33,32 @@
 # as words, and every issue, pull request or call it links to one that exists.
 #
 
+import asyncio
 import json
 import re
+import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
+from agents import (
+    Agent,
+    FunctionTool,
+    ModelSettings,
+    RunConfig,
+    RunContextWrapper,
+    RunHooks,
+    Runner,
+    RunState,
+    set_tracing_disabled,
+)
+from agents.exceptions import AgentsException
+from agents.run_error_handlers import RunErrorHandlerInput, RunErrorHandlerResult
+from agents.tool_context import ToolContext
 from loguru import logger
+from openai.types.shared import Reasoning
+from pydantic import BaseModel
 
 import store
 from simulate.suite import REPEATS
@@ -47,9 +66,10 @@ from store.prosper import PROSPER
 from store.runs import verdict
 
 from . import setup
-from .artifacts import _list, _object
 from .calls import _ENDED, _context
-from .llm import ATTEMPTS, Failed
+from .llm import ATTEMPTS, EFFORT, MAX_TOKENS, Failed, prompt
+
+set_tracing_disabled(True)  # nothing of a chat leaves through the SDK's tracing
 
 MAX_ANSWER_CHARS = 600
 MAX_TITLE_CHARS = 60
@@ -58,15 +78,20 @@ MAX_TOOL_CALLS = 8  # per message: past them, it answers with what it has
 CALLS_LISTED = 30  # the latest, one line each
 CALLS_IN_FULL = 3  # of those the chat names
 CHAT_SHOWN = 8  # messages of the chat so far, the latest
-LINK_KINDS = ("issue", "pull", "call")
 
-_TEXT = {"type": "string"}
-ANSWER = _object(
-    answer=_TEXT,
-    links=_list(
-        _object(kind={"type": "string", "enum": list(LINK_KINDS)}, number={"type": "integer"})
-    ),
-)
+
+class _Link(BaseModel):
+    kind: Literal["issue", "pull", "call"]
+    number: int  # the issue's or pull request's number, or the call's id
+
+
+class _Said(BaseModel):
+    """An answer: its words, and what it names that can be opened."""
+
+    answer: str
+    links: list[_Link]
+
+
 # A name as the store keeps it, snake_case: never what a person reads.
 _STORED_NAME = re.compile(r"\b[a-z]+(?:_[a-z0-9]+)+\b")
 
@@ -93,15 +118,6 @@ class Tool:
     # then says, what it links to, and what the model is told.
     act: Optional[Callable[[str, dict, dict], dict]] = None
 
-    def spec(self) -> dict:
-        return {
-            "type": "function",
-            "name": self.name,
-            "description": self.about,
-            "parameters": self.params,
-            "strict": True,
-        }
-
 
 def answer(agent_id: str, chat_id: int, about: tuple[dict, str], tools: dict[str, Tool]) -> dict:
     """Answer the chat's last message, about the copy `about` (from `copy_of`).
@@ -114,7 +130,8 @@ def answer(agent_id: str, chat_id: int, about: tuple[dict, str], tools: dict[str
     copy, name = about
     llm = setup.new_llm()
     facts = _facts(agent_id, copy, name, chat["messages"])
-    message = _converse(agent_id, name, tools, llm, [{"role": "user", "content": facts}], 0)
+    start = [{"role": "user", "content": facts}]
+    message = asyncio.run(_converse(_agent(tools, llm), llm, name, start, _scope(agent_id)))
     return store.chats.add_message(agent_id, chat_id, message, llm.usage)
 
 
@@ -128,103 +145,205 @@ def decide(agent_id: str, chat_id: int, index: int, do: bool, tools: dict[str, T
     if not do:
         return store.chats.get_chat(agent_id, chat_id)
     action = message["action"]
-    done, error = None, None
-    try:
-        # The warnings its card showed: the click on Do it was made reading them.
-        at = {"chat": chat_id, "message": index, "warnings": action.get("warnings", [])}
-        done = tools[action["tool"]].act(agent_id, action["args"], at)
-    except ToolError as refused:
-        error = str(refused)
-    except Exception as failure:  # noqa: BLE001 - the card must not stay "running"
-        logger.exception(f"Ask Prosper AI · {action['tool']} failed")
-        error = f"It could not be done: {failure}"
-    result = {"text": done["text"], "link": done.get("link")} if done else None
-    chat = store.chats.settle_action(agent_id, chat_id, index, result, error)
-    resume = message.get("resume")
-    if resume is None:
-        return chat
-    output = done["said"] if done else f"Refused: {error}"
-    items = [*resume["items"], _output(resume["call"], output)]
+    # The warnings its card showed: the click on Do it was made reading them.
+    at = {"chat": chat_id, "message": index, "warnings": action.get("warnings", [])}
+    scope = _scope(agent_id, at)
+    saved = (message.get("resume") or {}).get("state")
+    if saved is None:
+        # A card from before the run was kept with it: done, with nothing to go on from.
+        _act(tools[action["tool"]], scope, action["args"])
+        return store.chats.get_chat(agent_id, chat_id)
     llm = setup.new_llm()
+    follow = None
     try:
-        follow = _converse(agent_id, message["about"], tools, llm, items, resume["used"], True)
+        follow = asyncio.run(_resume(_agent(tools, llm), llm, message["about"], saved, scope))
     except Exception:  # noqa: BLE001 - what was done is done; the rest is a nicety
         logger.exception("Ask Prosper AI · could not go on after an action")
-        follow = None
+    if not scope["settled"]:
+        _settle(scope, None, "It could not be done: the conversation could not be picked up.")
     if follow is None:
-        return chat
+        return store.chats.get_chat(agent_id, chat_id)
     return store.chats.add_message(agent_id, chat_id, follow, llm.usage)
 
 
-def _output(call_id: str, text: str) -> dict:
-    return {"type": "function_call_output", "call_id": call_id, "output": text}
+def _scope(agent_id: str, at: Optional[dict] = None) -> dict:
+    """What a run's tools share: the agent, the lines it read, the cards it made.
 
-
-def _converse(
-    agent_id: str,
-    name: str,
-    tools: dict[str, Tool],
-    llm,
-    items: list,
-    used: int,
-    after_action: bool = False,
-) -> Optional[dict]:
-    """Talk with the model from `items` until it answers or proposes an act: its message.
-
-    `used`: tool calls this message made already. After an action, Prosper
-    AI may have nothing to add: then None.
+    `at`: the card being done, once the person said Do it.
     """
-    specs = [tool.spec() for tool in tools.values()]
-    reads: list[str] = []
-    base = {"by": PROSPER, "about": name, "links": [], "reads": reads}
-    refused = 0
+    return {"agent_id": agent_id, "reads": [], "cards": {}, "at": at, "settled": False}
+
+
+# Low effort, one tool call at a time (an act waits for the person, and
+# whatever came with it would wait too), and nothing kept at OpenAI: the
+# organization's key has zero data retention, so the whole conversation is
+# sent each step, its reasoning encrypted, and the run is kept on our side.
+_SETTINGS = ModelSettings(
+    reasoning=Reasoning(effort=EFFORT),
+    max_tokens=MAX_TOKENS,
+    parallel_tool_calls=False,
+    store=False,
+    response_include=["reasoning.encrypted_content"],
+)
+# No call data leaves through tracing: the SDK's export to OpenAI is off.
+_RUN = RunConfig(tracing_disabled=True, tool_not_found_behavior="return_error_to_model")
+
+
+def _agent(tools: dict[str, Tool], llm) -> Agent:
+    return Agent(
+        name=PROSPER,
+        instructions=prompt("ask"),
+        model=llm.agent_model(),
+        model_settings=_SETTINGS,
+        tools=[_function(tool) for tool in tools.values()],
+        output_type=_Said,
+    )
+
+
+def _function(tool: Tool) -> FunctionTool:
+    """`tool` as the SDK runs it: a read at once; an act once the person approves its card."""
+
+    async def invoke(call: ToolContext, arguments: str) -> str:
+        scope = call.context
+        args = json.loads(arguments)
+        try:
+            if tool.read is not None:
+                output, line = tool.read(scope["agent_id"], args)
+                scope["reads"].append(line)
+                return output
+            if refused := scope["cards"].get(call.tool_call_id, {}).get("refused"):
+                return f"Refused: {refused}"
+            return _act(tool, scope, args)
+        except ToolError as error:
+            return f"Refused: {error}"
+
+    async def needs_approval(run: RunContextWrapper, args: dict, call_id: str) -> bool:
+        # The card is made here, before anything is done; an act it would be
+        # refused for is not put to the person: the refusal goes to the model.
+        scope = run.context
+        try:
+            scope["cards"][call_id] = tool.card(scope["agent_id"], args)
+        except ToolError as error:
+            scope["cards"][call_id] = {"refused": str(error)}
+            return False
+        return True
+
+    return FunctionTool(
+        name=tool.name,
+        description=tool.about,
+        params_json_schema=tool.params,
+        on_invoke_tool=invoke,
+        strict_json_schema=True,
+        needs_approval=needs_approval if tool.act is not None else False,
+    )
+
+
+def _act(tool: Tool, scope: dict, args: dict) -> str:
+    """Do the act the person approved, and write on its card how it went: what the model is told."""
+    done, error = None, None
     try:
-        while True:
-            step = llm.turn("ask", items, specs, ANSWER, use_tools=used < MAX_TOOL_CALLS)
-            items = [*items, *step["output"]]
-            call = step["call"]
-            if call is None:
-                try:
-                    said = json.loads(step["text"])
-                    if after_action and not said["answer"].strip():
-                        return None
-                    check_answer(said, _known(agent_id))
-                except ValueError as error:
-                    refused += 1
-                    if refused >= ATTEMPTS:
-                        raise Failed(str(error)) from error
-                    items.append(
-                        {
-                            "role": "user",
-                            "content": f"That was refused: {error}\n"
-                            "Fix it and answer again with the whole JSON.",
-                        }
-                    )
-                    continue
-                return {**base, "text": said["answer"], "links": _unique(said["links"])}
-            used += 1
-            tool = tools.get(call["name"])
+        done = tool.act(scope["agent_id"], args, scope["at"])
+    except ToolError as refused:
+        error = str(refused)
+    except Exception as failure:  # noqa: BLE001 - the card must not stay "running"
+        logger.exception(f"Ask Prosper AI · {tool.name} failed")
+        error = f"It could not be done: {failure}"
+    _settle(scope, {"text": done["text"], "link": done.get("link")} if done else None, error)
+    return done["said"] if done else f"Refused: {error}"
+
+
+def _settle(scope: dict, result: Optional[dict], error: Optional[str]) -> None:
+    at = scope["at"]
+    store.chats.settle_action(scope["agent_id"], at["chat"], at["message"], result, error)
+    scope["settled"] = True
+
+
+class _Counted(RunHooks):
+    """Every request of a run counted and priced on `llm`, and logged with its time."""
+
+    def __init__(self, llm):
+        self.llm = llm
+        self.started = 0.0
+
+    async def on_llm_start(self, context, agent, system_prompt, input_items) -> None:
+        self.started = time.monotonic()
+
+    async def on_llm_end(self, context, agent, response) -> None:
+        self.llm.count(response.usage)
+        calls = [item.name for item in response.output if item.type == "function_call"]
+        did = f"calls {calls[0]}" if calls else "answers"
+        logger.info(f"Prosper AI · ask · {did} · {time.monotonic() - self.started:.1f}s")
+
+
+async def _resume(agent: Agent, llm, name: str, saved: dict, scope: dict) -> Optional[dict]:
+    """Pick up the run kept with a card, its act approved: the act runs, then the run goes on."""
+    state = await RunState.from_json(agent, saved, context_override=scope)
+    for pending in state.get_interruptions():
+        state.approve(pending)
+    return await _converse(agent, llm, name, state, scope, after_action=True)
+
+
+async def _converse(
+    agent: Agent, llm, name: str, start, scope: dict, after_action: bool = False
+) -> Optional[dict]:
+    """Run the agent from `start` (the facts, or a run picked up) until it answers or proposes
+    an act: its message.
+
+    At most MAX_TOOL_CALLS tool calls, then it answers with what it has.
+    After an action, Prosper AI may have nothing to add: then None.
+    """
+    hooks = _Counted(llm)
+    quiet = agent.clone(model_settings=replace(_SETTINGS, tool_choice="none"))
+    base = {"by": PROSPER, "about": name, "links": [], "reads": scope["reads"]}
+
+    async def answer_now(error: RunErrorHandlerInput) -> RunErrorHandlerResult:
+        said = await Runner.run(
+            quiet, error.run_data.history, context=scope, max_turns=1, hooks=hooks, run_config=_RUN
+        )
+        return RunErrorHandlerResult(final_output=said.final_output)
+
+    try:
+        result = await Runner.run(
+            agent,
+            start,
+            # A run picked up has its own, with the approval in it.
+            context=None if isinstance(start, RunState) else scope,
+            max_turns=MAX_TOOL_CALLS,
+            hooks=hooks,
+            run_config=_RUN,
+            error_handlers={"max_turns": answer_now},
+        )
+        for attempt in range(1, ATTEMPTS + 1):
+            if result.interruptions:
+                return {**base, "text": "", **_proposed(result)}
+            said = result.final_output.model_dump()
+            if after_action and not said["answer"].strip():
+                return None
             try:
-                if tool is None:
-                    raise ToolError(f"There is no tool {call['name']}.")
-                args = json.loads(call["arguments"])
-                if tool.read is not None:
-                    output, line = tool.read(agent_id, args)
-                    reads.append(line)
-                else:
-                    action = {"tool": tool.name, "args": args, **tool.card(agent_id, args)}
-                    resume = {"items": items, "call": call["call_id"], "used": used}
-                    return {
-                        **base,
-                        "text": "",
-                        "action": {**action, "state": "pending"},
-                        "resume": resume,
-                    }
-            except ToolError as error:
-                output = f"Refused: {error}"
-            items.append(_output(call["call_id"], output))
-    except Failed as error:
+                check_answer(said, _known(scope["agent_id"]))
+                return {**base, "text": said["answer"], "links": _unique(said["links"])}
+            except ValueError as error:
+                if attempt == ATTEMPTS:
+                    raise Failed(str(error)) from error
+                again = f"That was refused: {error}\nFix it and answer again with the whole JSON."
+                items = [*result.to_input_list(), {"role": "user", "content": again}]
+                result = await Runner.run(
+                    quiet, items, context=scope, max_turns=1, hooks=hooks, run_config=_RUN
+                )
+    except (Failed, AgentsException) as error:
         return {**base, "text": f"I couldn't answer that: {error} Ask me again.", "failed": True}
+
+
+def _proposed(result) -> dict:
+    """The card of the act the run stopped at, and the run, kept to pick up on Do it."""
+    pending = result.interruptions[0]
+    call = pending.raw_item
+    card = result.context_wrapper.context["cards"][call.call_id]
+    action = {"tool": pending.tool_name, "args": json.loads(call.arguments), **card}
+    return {
+        "action": {**action, "state": "pending"},
+        "resume": {"state": result.to_state().to_json()},
+    }
 
 
 def check_answer(answer: dict, known: dict) -> None:

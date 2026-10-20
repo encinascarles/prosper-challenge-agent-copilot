@@ -3,6 +3,9 @@
 # with no network: an LLM service that answers from a script, a caller that
 # says scripted lines and a judge with a fixed verdict.
 #
+# Prosper AI's model is scripted too (ScriptedModel), for its jobs and for the
+# chat's agent run.
+#
 # The fake LLM is Pipecat's own OpenAILLMService with only the request to
 # OpenAI replaced: everything after it (streaming, function calls, Flows'
 # transitions, the frames a turn is made of) is the real code a call runs.
@@ -10,6 +13,7 @@
 
 import json
 
+from agents import Model, ModelResponse, Usage
 from openai.types.chat import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import (
     Choice,
@@ -18,6 +22,11 @@ from openai.types.chat.chat_completion_chunk import (
     ChoiceDeltaToolCallFunction,
 )
 from openai.types.completion_usage import CompletionUsage
+from openai.types.responses import (
+    ResponseFunctionToolCall,
+    ResponseOutputMessage,
+    ResponseOutputText,
+)
 from pipecat.services.openai.llm import OpenAILLMService
 
 from copilot.llm import LLM
@@ -158,26 +167,52 @@ class ScriptedModel(LLM):
             raise AssertionError(f"Nothing scripted for '{name}'.")
         return json.dumps(answers.pop(0))
 
-    def _turn(self, name, items, tools, schema, use_tools):
-        self.asked.setdefault(name, []).append([{"role": "system", "content": name}, *items])
-        self.tools.append(use_tools)
-        self.usage["requests"] += 1
-        answers = self.script.get(name) or []
+    def agent_model(self) -> "ScriptedAgentModel":
+        return ScriptedAgentModel(self, "ask")
+
+
+class ScriptedAgentModel(Model):
+    """The model of an Agents SDK run, answering from its ScriptedModel's script for `name`.
+
+    Only the request is replaced: the run (its tools, approvals, turn limit,
+    the state it keeps) is the SDK's real code. Each request is kept in
+    `asked`, the prompt first and then the conversation so far, and whether
+    it allowed tools in `tools`.
+    """
+
+    def __init__(self, scripted: ScriptedModel, name: str):
+        self.scripted = scripted
+        self.name = name
+
+    async def get_response(self, system_instructions, input, model_settings, tools, *_, **__):
+        items = [item if isinstance(item, dict) else item.model_dump() for item in input]
+        scripted = self.scripted
+        scripted.asked.setdefault(self.name, []).append(
+            [{"role": "system", "content": self.name}, *items]
+        )
+        use_tools = bool(tools) and model_settings.tool_choice != "none"
+        scripted.tools.append(use_tools)
+        answers = scripted.script.get(self.name) or []
         if not answers:
-            raise AssertionError(f"Nothing scripted for '{name}'.")
+            raise AssertionError(f"Nothing scripted for '{self.name}'.")
         answer = answers.pop(0)
+        n = len(scripted.tools)
         if "tool" in answer:
             assert use_tools, "A tool was called when only an answer was allowed."
-            call = {
-                "call_id": f"call_{self.usage['requests']}",
-                "name": answer["tool"],
-                "arguments": json.dumps(answer["arguments"]),
-            }
-            return {"output": [{"type": "function_call", **call}], "call": call, "text": ""}
-        text = json.dumps(answer)
-        said = {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": text}],
-        }
-        return {"output": [said], "call": None, "text": text}
+            output = ResponseFunctionToolCall(
+                type="function_call",
+                id=f"fc_{n}",
+                call_id=f"call_{n}",
+                name=answer["tool"],
+                arguments=json.dumps(answer["arguments"]),
+                status="completed",
+            )
+        else:
+            text = ResponseOutputText(type="output_text", text=json.dumps(answer), annotations=[])
+            output = ResponseOutputMessage(
+                type="message", id=f"msg_{n}", role="assistant", status="completed", content=[text]
+            )
+        return ModelResponse(output=[output], usage=Usage(requests=1), response_id=None)
+
+    def stream_response(self, *args, **kwargs):
+        raise NotImplementedError("Ask Prosper AI does not stream.")
