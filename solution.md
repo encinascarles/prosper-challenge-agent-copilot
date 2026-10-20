@@ -387,7 +387,9 @@ each other.
 
 **One structured request per artifact, checked in code.** Options:
 - *An agent framework (tool calls in a loop).* Rejected: the steps are known,
-  and a loop that decides them is harder to read, test and price.
+  and a loop that decides them is harder to read, test and price. (Ask
+  Prosper AI's chat, where the steps are not known, is the one agent: on the
+  OpenAI Agents SDK, below.)
 - *One request for everything.* Rejected: one bad part fails the whole answer,
   and nothing can be shown until all of it is written.
 - *Questions, then the agent, its rules and its tests, each one request with
@@ -768,7 +770,7 @@ everything Prosper AI writes: at most 600 characters, no snake_case names,
 and every issue, pull request or call it links to must exist; a refused
 answer goes back with the reason. Links are chips that open what they name.
 
-Then tools, through `llm.turn` on the Responses API with function calling,
+Then tools, on the OpenAI Agents SDK (why: the next section),
 one call per step and at most 8 per message (`copilot/ask.py`, tools in
 `api/tools.py`). Nine read (search calls by caller, outcome, issue, version or
 day; read a call; list and read issues and pull requests; read the tests of
@@ -783,7 +785,7 @@ parent's name · Collect details · Booking · Flagged by the clinic") with Do i
 and Cancel. Merge's card says what follows ("Merge PR #19 as v4 · Calls will
 use v4 from then on · 9 of 11 tests pass, 2 flaky · Resolves Issue #10").
 On Do it the act runs and the card becomes what happened, with a link
-("Opened Issue #17 →"); the conversation goes on from where it stopped with
+("Opened Issue #17 →"); the run goes on from where it stopped with
 the result, so Prosper AI can say what is next or propose the next act of a
 request ("close PR #18 and fix Issue #10 instead" is two cards in a row).
 Cancel only marks the card, and the next question tells Prosper AI it was
@@ -810,7 +812,8 @@ failing", with no card. A test checks that every act calls its route.
 The conversation is kept on our side and sent whole each step, the model's
 reasoning encrypted with it: the OpenAI key's organization has zero data
 retention, so a response cannot be continued by its id. A card waiting for
-its click holds the conversation so far; it is dropped once decided.
+its click holds the run so far (the SDK's `RunState`, as JSON in the chat's
+row); it is dropped once decided.
 
 Asked for a change, Prosper AI proposes a pull request (`open_pull_request`):
 a title and what it would change. The card opens a pull request of kind `change` ("From your chat …"), its
@@ -896,6 +899,85 @@ for a click every time; reversible, cheap acts (snooze, run a test) could be
 allowed without one once people trust it, and edits to a pull request's copy
 in place (beyond adding a rule or a test) are not tools yet: they go through
 Prosper AI's own conversation in the pull request.
+
+### Why the chat runs on the Agents SDK, and the jobs do not
+
+**Context.** Ask Prosper AI's chat is an agent: a model that picks tools in a
+loop, reads, proposes acts, waits for a click and goes on. It first shipped on
+a loop of our own (`llm.turn` and `_converse`, 180 lines: the request,
+the tool dispatch, the turn bound, keeping the conversation on a waiting card,
+picking it up on Do it). That is the part every agent framework already is,
+and a reviewer has to read ours line by line to trust it.
+
+**Options.**
+- *Keep our loop.* Small and fully known, but it is ours to own and to
+  explain: approvals, resuming and the turn bound are each a few lines that
+  only we have tested.
+- *A general agent framework (LangGraph, and the like).* A second vendor and
+  vocabulary on top of OpenAI's, for one agent with plain function tools.
+- *The OpenAI Agents SDK (`openai-agents`).* Chosen. The official Python one,
+  on the Responses API the chat already used, same vendor and same model; it
+  has the pieces the chat needs as built-ins: function tools, human approval
+  (`needs_approval`, the run's interruptions), a serialisable `RunState`, a
+  turn bound (`max_turns`), and a custom `Model` for tests.
+
+**How it maps.** The 20 tools stay in `api/tools.py`, each the route the UI
+calls; `copilot/ask.py` wraps each in a `FunctionTool` and adds no logic. A
+read runs when the model calls it. An act has `needs_approval`, which makes
+the card: a card the act would be refused for is not put to the person, the
+refusal goes back to the model as before. The run stops at the act, and its
+`RunState` is stored as JSON on the message with the card, so a restart
+loses no waiting card. Do it loads the state, approves it and resumes: the
+SDK runs the act, which settles the card, and the run goes on with its result.
+Cancel only marks the card, as before: no request is made, and the next
+question's facts say it was declined (rejecting through the SDK would have
+cost a request and could add a message nobody asked for). The bound is
+`max_turns` (8 tool calls); past it, its error handler asks the same agent for
+an answer with tools off, as the loop did. The answer's checks are ours, as
+before: refused, it is asked again with the reason. Every request is counted
+and priced through the run's hooks on the same `LLM`, and tracing is off, so
+no call data leaves through the SDK's export. Tests drive the real SDK run
+with a scripted `Model`: never OpenAI.
+
+The SDK is held at 0.19: 0.22 needs openai 3, which would pull in a newer
+Pipecat than the voice stack is verified on.
+
+**The jobs stay pipelines.** Setup, the call review, a fix and tidying an
+issue have known steps in a known order (questions, agent, rules, tests,
+suite; or test, change, suite, self-check). An agent choosing that order
+would be slower, cost more, and be harder to test and to price; each step
+stays one structured request checked in code (`llm.py`).
+
+**What it cost in code.** Not fewer lines: the chat's run is 244 lines now
+against 180 (`wc -l` of the functions on each side). What went into the SDK
+is the mechanics (building each request, dispatching tools, the turn bound,
+keeping and picking up the conversation); what came in is glue (each tool as
+a `FunctionTool`, the hooks that count cost, the turn-limit handler) and
+three things the old loop did not have: the run kept in a standard,
+versioned format, a way to still do a card an older server kept, and a log
+line per model step. The argument for it is what a reviewer has to trust,
+not the line count.
+
+**What the real run showed.** The same session as before the switch, on two
+copies of the same demo agent (Anna, v1, 48 calls, 6 open issues), on main
+and then on this branch through the panel. Server time per answer, before →
+after: a question with links ("Why did Nadia Williams not get a nurse
+callback?", the call and Issue #4 linked) 5.3 → 5.4 s; a clinic's email with
+"open an issue for this" to its card 4.2 → 4.0 s; "run all the tests" to its
+card 3.3 → 1.8 s; "snooze the issues about billing" (none are: it says so and
+asks, no card) 3.0 → 3.5 s; "fix issue #4" to its card 2.0 → 2.1 s; "merge
+it" to its card 1.8 → 2.2 s. Do it, to the next message: 2.2–3.4 s before
+(timed at the API), 3.6–4.6 s after (timed in the browser, which adds about
+a second of waiting for the panel). The same within noise: the time is the
+model's. The fix's own
+pipeline (unchanged) came back with one test failing the first time on this
+branch; "merge it" then read the pull request and answered that it cannot
+merge, with no card. "Run the failing test on PR #9 again" → card → Do it →
+6 of 8 pass, 2 flaky; "merge it" → the card with its warning (Issue #4's test
+passes 2 of 3) → Do it → v2 live. The chat's requests cost USD 0.09 before
+and 0.14 after (two more questions); with the suites and the two fixes, the
+whole check spent about USD 3.5.
+
 
 ### Issues a person reports: the clinic's complaints in the same list
 
