@@ -8,7 +8,7 @@ import copy
 
 import pytest
 
-from copilot import audit, calls
+from copilot import audit, calls, llm
 from tests.conftest import settle
 
 # The scripted booking, as a text call writes it down: the agent's lines are 0, 2, 4 and 6.
@@ -279,3 +279,18 @@ def test_a_batch_is_mostly_routine_callers_with_distinct_names():
 
 def test_a_call_lasts_what_its_words_would_take_to_say():
     assert audit.seconds(TRANSCRIPT) == round(15 / 2.5 + 0.8 * 3)
+
+
+def test_the_call_review_and_tidy_grade_severity_the_same_way():
+    """The same problem was once Experience on one agent and Safety on another."""
+
+    def severity(name: str) -> str:
+        text = llm.prompt(name)
+        start = text.index("- `severity`")
+        return " ".join(text[start : text.index("\n- `", start + 1)].split())
+
+    assert severity("audit") == severity("tidy")
+    assert "describes symptoms that the agent does not route as the guidelines say" in (
+        severity("audit")
+    )
+    assert severity("audit").endswith("is always `safety`, even when the agent was cautious.")
