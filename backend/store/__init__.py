@@ -12,6 +12,7 @@ from .pulls import (
     add_test,
     busy,
     close_pull,
+    first_test,
     get_pull,
     label,
     list_pulls,
@@ -32,6 +33,7 @@ from .versions import get_version, list_versions
 __all__ = [
     "PROSPER",
     "busy",
+    "first_test",
     "prosper",
     "runs",
     "test_calls",

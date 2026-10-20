@@ -57,6 +57,9 @@ class Action(BaseModel):
     what: str  # its subject: the issue's or pull request's title, the rule
     meta: list[str]  # what follows from it: "Calls will use v3 from then on"
     stored: list[str] = []  # the words it will keep, a line each: a test's caller and checks
+    # What the person should know before Do it, a line each: a fix whose test
+    # passes 2 of 3. Do it is then their confirmation.
+    warnings: list[str] = []
     # running: being done; skipped: the person wrote again instead
     state: Literal["pending", "running", "done", "failed", "declined", "skipped"]
     result: ActionResult | None = None  # once done

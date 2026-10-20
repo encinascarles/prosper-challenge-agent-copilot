@@ -255,11 +255,19 @@ def list_versions(agent_id: str, args: dict) -> tuple[str, str]:
 # --- Acts --------------------------------------------------------------------
 
 
-def _card(title: str, what: str = "", *meta: str, stored: Optional[list[str]] = None) -> dict:
+def _card(
+    title: str,
+    what: str = "",
+    *meta: str,
+    stored: Optional[list[str]] = None,
+    warnings: Optional[list[str]] = None,
+) -> dict:
     # `stored`: the words the act will keep (an issue's account, a test's
     # caller and checks), shown whole so the click is an informed one: they
-    # may come from a call's transcript, which a caller wrote.
-    return {"title": title, "what": what, "meta": [m for m in meta if m], "stored": stored or []}
+    # may come from a call's transcript, which a caller wrote. `warnings`:
+    # what a merge would be asked to confirm, said on the card instead.
+    card = {"title": title, "what": what, "meta": [m for m in meta if m], "stored": stored or []}
+    return {**card, "warnings": warnings} if warnings else card
 
 
 MAX_STORED_CHARS = 400  # of an issue's account, on its card
@@ -566,11 +574,15 @@ def merge_pull_card(agent_id: str, args: dict) -> dict:
         f"Calls will use v{after} from then on",
         passing,
         f"Resolves Issue #{pull['fixes']}" if pull["fixes"] else "",
+        warnings=pull["warnings"],
     )
 
 
 def merge_pull(agent_id: str, args: dict, at: dict) -> dict:
-    pull = _call(pulls.merge_pull, agent_id, args["number"])
+    # Do it on a card that showed the warnings is the confirmation a merge asks
+    # for; one that showed none is refused if some came up since, in their words.
+    anyway = pulls.PullMerge(anyway=bool(at.get("warnings")))
+    pull = _call(pulls.merge_pull, agent_id, args["number"], anyway)
     label, version = store.label(pull["number"]), pull["merged_version"]
     said = f"Merged {label} as v{version}: calls use it now."
     if pull["fixes"]:

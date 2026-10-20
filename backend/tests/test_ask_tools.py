@@ -13,7 +13,7 @@ from api import live, pulls, suite, tools
 from copilot import ask
 from tests.conftest import settle
 from tests.fakes import tool
-from tests.test_fix import ISSUE, two_callers, verdicts, with_issue  # noqa: F401
+from tests.test_fix import ISSUE, fixed_at, two_callers, verdicts, with_issue  # noqa: F401
 
 ANSWER = {"answer": "Issue #2 is about the times offered.", "links": []}
 NOTHING_MORE = {"answer": "", "links": []}
@@ -246,6 +246,27 @@ def test_a_merge_card_says_what_follows(client, with_issue, prosper_model):  # n
         f"Merged PR #{pull['number']} · v2 is live"
     )
     assert client.get(f"/api/agents/{agent_id}").json()["live_version"] == 2
+
+
+def test_a_merge_card_says_the_warnings_and_do_it_confirms_them(
+    client,
+    fixed_at,  # noqa: F811
+    prosper_model,
+):
+    agent_id, pull = fixed_at([False, True, True])
+    number = pull["number"]
+    prosper_model.script = {"ask": [tool("merge_pull", number=number), NOTHING_MORE]}
+    chat = _ask(client, agent_id, "Merge the fix.")
+    index = len(chat["messages"]) - 1
+
+    card = chat["messages"][index]["action"]
+    assert card["warnings"] == pull["warnings"] != []
+    chat = _decide(client, agent_id, chat, index)
+
+    assert chat["messages"][index]["action"]["state"] == "done"
+    assert client.get(f"/api/agents/{agent_id}").json()["live_version"] == 2
+    issue = client.get(f"/api/agents/{agent_id}/issues/{ISSUE}").json()
+    assert issue["events"][-1]["text"] == "merged with its test at 2/3"
 
 
 # Each act, with arguments, and the route functions the UI calls for it.

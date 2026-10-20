@@ -449,3 +449,74 @@ def test_going_on_without_the_test_it_wrote_says_so_and_stops(client, with_issue
     assert pull["events"][-1]["text"].startswith("I no longer have the test I wrote on v1")
     assert pull["prosper"]["state"] == "done"
     assert pull["tests"] == []
+
+
+# ---- A fix that may not fix its issue: warned of, never blocked ---------------------
+
+
+@pytest.fixture
+def fixed_at(client, with_issue, prosper_model, verdicts, monkeypatch):
+    """A fix whose own test (id "repro") fails on v1, then scores `after` (one list per run
+    of the suite). Returns (agent id, pull)."""
+    from copilot import fix
+
+    monkeypatch.setattr(fix, "new_id", lambda: "repro")
+
+    def make(*after: list[bool]) -> tuple[str, dict]:
+        agent_id = with_issue()
+        prosper_model.script = {"reproduce": [TEST], "fix": [FIX]}
+        verdicts.extend([False] * 3)
+        for run in after:
+            verdicts.extend(run)
+        number = _fix(client, agent_id)["number"]
+        return agent_id, _pull(client, agent_id, number)
+
+    return make
+
+
+def test_a_fix_whose_test_passes_three_of_three_merges_with_no_warning(client, fixed_at):
+    agent_id, pull = fixed_at([True] * 3)
+
+    assert pull["warnings"] == []
+    merged = client.post(f"/api/agents/{agent_id}/pulls/{pull['number']}/merge")
+    assert merged.status_code == 200, merged.text
+    assert _issue(client, agent_id)["events"][-1]["text"] is None
+
+
+def test_a_fix_whose_test_passes_two_of_three_warns_and_asks_to_confirm(client, fixed_at):
+    agent_id, pull = fixed_at([False, True, True])
+    number = pull["number"]
+
+    assert pull["checks"]["state"] == "passed"
+    warning = (
+        f"The test for Issue #{ISSUE} passes 2 of 3: the problem may still happen in some calls."
+    )
+    assert pull["warnings"] == [warning]
+    refused = client.post(f"/api/agents/{agent_id}/pulls/{number}/merge")
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == f"{warning} Merge anyway to go on."
+    merged = client.post(f"/api/agents/{agent_id}/pulls/{number}/merge", json={"anyway": True})
+    assert merged.status_code == 200, merged.text
+
+    issue = _issue(client, agent_id)
+    assert issue["state"] == "resolved"
+    assert issue["events"][-1]["text"] == "merged with its test at 2/3"
+
+
+def test_a_fix_not_reproduced_warns_and_asks_to_confirm(client, with_issue, prosper_model):
+    agent_id = with_issue()
+    prosper_model.script = {"reproduce": [TEST, TEST], "fix": [FIX]}
+    number = _fix(client, agent_id)["number"]
+    question = _pull(client, agent_id, number)["events"][-1]["question"]
+    client.post(
+        f"/api/agents/{agent_id}/pulls/{number}/answers", json={"question": question, "option": 0}
+    )
+    settle()
+
+    pull = _pull(client, agent_id, number)
+    assert pull["checks"]["state"] == "passed"
+    assert pull["warnings"] == ["Not reproduced on v1: nothing shows this change fixes it."]
+    assert client.post(f"/api/agents/{agent_id}/pulls/{number}/merge").status_code == 409
+    merged = client.post(f"/api/agents/{agent_id}/pulls/{number}/merge", json={"anyway": True})
+    assert merged.status_code == 200
+    assert _issue(client, agent_id)["events"][-1]["text"] == "merged without reproducing it on v1"
