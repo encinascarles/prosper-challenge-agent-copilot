@@ -322,18 +322,9 @@ def merge_pull(agent_id: str, number: int, by: str) -> dict:
     """
     with connect() as conn:
         pull = _require(conn, agent_id, number)
-        if reason := busy(pull, merging=True):
+        if reason := _merge_refusal(conn, agent_id, pull):
             raise Conflict(reason)
-        live = live_version(conn, agent_id)
-        if pull["base_version"] != live:
-            based = f"v{pull['base_version']}" if pull["base_version"] else "no version"
-            raise Conflict(
-                f"{label(number)} is based on {based}, but live is now v{live}. "
-                f"It has to be updated to v{live} before it can merge."
-            )
         run = runs.select_run(conn, agent_id, pull=number)
-        if blocker := runs.merge_blocker(run, fingerprint(pull)):
-            raise Conflict(f"{label(number)} cannot merge: {blocker[0].lower()}{blocker[1:]}")
         # One moment for both: the version is created when the PR is merged.
         merged = _event("merged", by)
         version = insert_version(
@@ -362,6 +353,30 @@ def merge_pull(agent_id: str, number: int, by: str) -> dict:
         if pull["fixes"]:
             issues.resolve_by_fix(conn, agent_id, pull["fixes"], number, version, by)
         return _select(conn, agent_id, number)
+
+
+def merge_refusal(agent_id: str, number: int) -> Optional[str]:
+    """Why the pull request cannot merge now, in the words a merge would be refused with,
+    or None if it can. Raises NotFound, or Conflict when it is not open."""
+    with connect() as conn:
+        return _merge_refusal(conn, agent_id, _require(conn, agent_id, number))
+
+
+def _merge_refusal(conn: sqlite3.Connection, agent_id: str, pull: dict) -> Optional[str]:
+    number = pull["number"]
+    if reason := busy(pull, merging=True):
+        return reason
+    live = live_version(conn, agent_id)
+    if pull["base_version"] != live:
+        based = f"v{pull['base_version']}" if pull["base_version"] else "no version"
+        return (
+            f"{label(number)} is based on {based}, but live is now v{live}. "
+            f"It has to be updated to v{live} before it can merge."
+        )
+    run = runs.select_run(conn, agent_id, pull=number)
+    if blocker := runs.merge_blocker(run, fingerprint(pull)):
+        return f"{label(number)} cannot merge: {blocker[0].lower()}{blocker[1:]}"
+    return None
 
 
 def close_pull(agent_id: str, number: int, by: str) -> dict:

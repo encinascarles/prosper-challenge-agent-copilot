@@ -3,6 +3,9 @@
 # answer, a check of what comes back, and the check's error fed back when it
 # fails.
 #
+# Ask Prosper AI also talks with tools (`turn`): one step of a conversation in
+# which the model may call a function instead of answering.
+#
 # Plain OpenAI SDK, no agent framework: each artifact (an agent, its rules,
 # its tests, its questions) is one request with Structured Outputs, so the
 # answer always parses into the shape asked for. What a schema cannot say
@@ -167,6 +170,57 @@ class LLM:
             )
             raise CutOff("The model ran out of room before it finished its answer.")
         return response.output_text or ""
+
+    def turn(
+        self, name: str, items: list, tools: list, schema: dict, use_tools: bool = True
+    ) -> dict:
+        """One step of a conversation where the model may call a tool: { output, call, text }.
+
+        `items` is the conversation so far, the way the Responses API takes
+        it; `output` is what this step adds to it. `call` is the one function
+        the model calls ({ call_id, name, arguments }), or None when it
+        answered: then `text` is the JSON `schema` asks for. Without
+        `use_tools`, it has to answer.
+
+        Kept on our side, the whole conversation, and sent again each step:
+        the organization's key keeps nothing at OpenAI (zero data retention),
+        so a response cannot be continued by its id. The model's reasoning
+        travels encrypted with it, so it picks up where it left off.
+        """
+        started = time.monotonic()
+        step = self._turn(name, items, tools, schema, use_tools)
+        took = time.monotonic() - started
+        did = f"calls {step['call']['name']}" if step["call"] else "answers"
+        logger.info(f"Prosper AI · {name} · {did} · {took:.1f}s")
+        return step
+
+    def _turn(self, name: str, items: list, tools: list, schema: dict, use_tools: bool) -> dict:
+        """One request of a conversation with tools. The tests replace this: never OpenAI."""
+        response = self.client.responses.create(
+            model=self.model,
+            instructions=prompt(name),
+            input=items,
+            tools=tools,
+            tool_choice="auto" if use_tools else "none",
+            # One at a time: a call that acts waits for the person, and
+            # whatever came with it would wait too.
+            parallel_tool_calls=False,
+            text={
+                "format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}
+            },
+            reasoning={"effort": EFFORT},
+            max_output_tokens=MAX_TOKENS,
+            store=False,
+            include=["reasoning.encrypted_content"],
+        )
+        self.count(response.usage)
+        if response.status == "incomplete":
+            raise CutOff("The model ran out of room before it finished its answer.")
+        output = [item.model_dump(exclude_none=True) for item in response.output]
+        call = next((item for item in output if item["type"] == "function_call"), None)
+        if call is not None:
+            call = {key: call[key] for key in ("call_id", "name", "arguments")}
+        return {"output": output, "call": call, "text": response.output_text or ""}
 
     def add_cost(self, usd: float) -> None:
         """Count what something else this work paid for cost: the simulated calls it made."""
