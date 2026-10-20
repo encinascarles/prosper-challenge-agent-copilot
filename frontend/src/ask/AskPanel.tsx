@@ -32,6 +32,7 @@ import {
   PhoneCall,
   Plus,
   Search,
+  TriangleAlert,
   Wrench,
   X,
   type LucideIcon,
@@ -390,6 +391,13 @@ function ActionCard({ action, busy, disabled, onDecide, onOpen }: { action: Acti
           <div className="text-[13.5px] font-semibold">{action.title}</div>
           {action.what && <div className="mt-0.5 text-[13px] leading-snug">{action.what}</div>}
           {action.meta.length > 0 && <div className="mt-1 text-[12px] leading-snug text-muted-foreground">{action.meta.join(' · ')}</div>}
+          {(action.warnings ?? []).map((warning) => (
+            // Said before the click: Do it is the person's confirmation.
+            <p key={warning} className="mt-1.5 flex items-start gap-1.5 text-[12.5px] leading-snug">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warn" />
+              <span>{warning}</span>
+            </p>
+          ))}
           {action.stored.length > 0 && (
             // What it will keep, word for word: the click is on these.
             <div className="mt-2 space-y-1 border-l-2 pl-2.5 text-[12.5px] leading-snug whitespace-pre-wrap">

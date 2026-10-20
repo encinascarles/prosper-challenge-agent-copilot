@@ -257,6 +257,9 @@ export type PullSummary = {
   updated_at: string
   checks: Checks | null // its latest run on the copy as it is now; null if none ran on it
   prosper: Prosper | null // Prosper AI's work on it; null if it has no part in it
+  // An open fix that may not fix its issue, a line each: its test passes 2 of 3,
+  // or it was never reproduced. Merge asks to confirm them.
+  warnings: string[]
 }
 
 /** A pull request with its own copy of the agent, which is what the editor saves to. */

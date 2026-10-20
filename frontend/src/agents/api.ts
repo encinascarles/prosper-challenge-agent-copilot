@@ -219,8 +219,9 @@ export function runTest(id: string, of: ChecksOf, test: string): Promise<SuiteRu
 }
 
 /** Makes the pull request's copy the next version, which goes live. */
-export function mergePull(id: string, number: number): Promise<Pull> {
-  return request(`${pullPath(id, number)}/merge`, 'POST')
+/** `anyway`: the person read its warnings and merges all the same. */
+export function mergePull(id: string, number: number, anyway = false): Promise<Pull> {
+  return request(`${pullPath(id, number)}/merge`, 'POST', anyway ? { anyway } : undefined)
 }
 
 export function renamePull(id: string, number: number, title: string): Promise<Pull> {

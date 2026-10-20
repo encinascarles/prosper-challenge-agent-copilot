@@ -19,6 +19,7 @@ const pull = (prosper: PullSummary['prosper'], state: PullSummary['state'] = 'op
   created_at: at,
   updated_at: at,
   checks: null,
+  warnings: [],
   prosper,
 })
 

@@ -5,12 +5,14 @@
 // Merging takes the saved copy, so it waits for the save. A pull request based
 // on a version that is no longer live cannot merge: its copy is of an older
 // agent, and merging it would undo what was merged since. Nor can one whose
-// checks are running or failing. The bar says so where the button is.
+// checks are running or failing. The bar says so where the button is. A fix
+// that may not fix its issue merges once its warnings are confirmed.
 
-import { ArrowLeft, GitMerge, GitPullRequestArrow, Phone } from 'lucide-react'
+import { ArrowLeft, GitPullRequestArrow, Phone } from 'lucide-react'
 
 import type { Checks, PullSummary } from '@/agents/types'
 import { Button } from '@/components/ui/button'
+import { MergeButton } from '@/pulls/MergeButton'
 import { basedOn, isStale, mergeBlocker, mergeLabel, pullLabel } from '@/pulls/model'
 import { ChecksLine } from '@/suite/bits'
 
@@ -28,7 +30,8 @@ type Props = {
   /** Why a test call cannot be placed now, or null. */
   callBlocker: string | null
   onTry: () => void
-  onMerge: () => void
+  /** `anyway`: the person confirmed the warnings of a fix that may not fix its issue. */
+  onMerge: (anyway: boolean) => void
   onBack: () => void
   /** The pull request's page. */
   onOpenPage: () => void
@@ -79,11 +82,15 @@ export function PullBar(props: Props) {
             <Phone className="size-3.5" /> Try it
           </Button>
         </span>
-        <span title={blocker ?? undefined} className="flex">
-          <Button size="sm" className="h-7 text-[12.5px]" disabled={blocker !== null || merging} onClick={onMerge}>
-            <GitMerge className="size-3.5" /> {merging ? 'Merging…' : mergeLabel(pull, live)}
-          </Button>
-        </span>
+        <MergeButton
+          pull={pull}
+          label={mergeLabel(pull, live)}
+          blocker={blocker}
+          busy={false}
+          merging={merging}
+          className="h-7 text-[12.5px]"
+          onMerge={onMerge}
+        />
         {live > 0 && (
           <>
             <span className="mx-1 h-4 w-px bg-border" />

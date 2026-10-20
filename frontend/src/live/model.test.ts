@@ -125,6 +125,9 @@ describe('fixing an issue', () => {
     expect(eventText({ type: 'fixing', by: 'Prosper AI', at, pull: 5 })).toBe('Opened PR #5 to fix it')
     expect(eventText({ type: 'unlinked', by: 'you', at, pull: 5 })).toBe('Closed PR #5 without merging · still open')
     expect(eventText({ type: 'fixed', by: 'you', at, pull: 5, version: 2 })).toBe('Resolved by PR #5 in v2')
+    expect(eventText({ type: 'fixed', by: 'you', at, pull: 5, version: 2, text: 'merged with its test at 2/3' })).toBe(
+      'Resolved by PR #5 in v2 · merged with its test at 2/3',
+    )
     expect(eventText({ type: 'fix_merged', by: 'you', at, pull: 5, version: 2, text: 'ignored' })).toBe('PR #5 merged as v2 · issue left ignored')
     expect(eventText({ type: 'fix_merged', by: 'you', at, pull: 5, version: 2, text: 'resolved' })).toBe('PR #5 merged as v2 · issue already resolved')
     expect(eventText({ type: 'came_back', by: 'Prosper AI', at, text: 'v2', caller: 'Ana' })).toBe('Came back in v2: Ana’s call')
