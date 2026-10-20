@@ -40,11 +40,10 @@ import time
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 from agents import (
     Agent,
-    AgentOutputSchemaBase,
     FunctionTool,
     ModelSettings,
     RunConfig,
@@ -59,6 +58,7 @@ from agents.run_error_handlers import RunErrorHandlerInput, RunErrorHandlerResul
 from agents.tool_context import ToolContext
 from loguru import logger
 from openai.types.shared import Reasoning
+from pydantic import BaseModel
 
 import store
 from simulate.suite import REPEATS
@@ -66,7 +66,6 @@ from store.prosper import PROSPER
 from store.runs import verdict
 
 from . import setup
-from .artifacts import _list, _object
 from .calls import _ENDED, _context
 from .llm import ATTEMPTS, EFFORT, MAX_TOKENS, Failed, prompt
 
@@ -79,15 +78,20 @@ MAX_TOOL_CALLS = 8  # per message: past them, it answers with what it has
 CALLS_LISTED = 30  # the latest, one line each
 CALLS_IN_FULL = 3  # of those the chat names
 CHAT_SHOWN = 8  # messages of the chat so far, the latest
-LINK_KINDS = ("issue", "pull", "call")
 
-_TEXT = {"type": "string"}
-ANSWER = _object(
-    answer=_TEXT,
-    links=_list(
-        _object(kind={"type": "string", "enum": list(LINK_KINDS)}, number={"type": "integer"})
-    ),
-)
+
+class _Link(BaseModel):
+    kind: Literal["issue", "pull", "call"]
+    number: int  # the issue's or pull request's number, or the call's id
+
+
+class _Said(BaseModel):
+    """An answer: its words, and what it names that can be opened."""
+
+    answer: str
+    links: list[_Link]
+
+
 # A name as the store keeps it, snake_case: never what a person reads.
 _STORED_NAME = re.compile(r"\b[a-z]+(?:_[a-z0-9]+)+\b")
 
@@ -113,15 +117,6 @@ class Tool:
     # message, warnings: the card's }) -> { text, link, said }: what the card
     # then says, what it links to, and what the model is told.
     act: Optional[Callable[[str, dict, dict], dict]] = None
-
-    def spec(self) -> dict:
-        return {
-            "type": "function",
-            "name": self.name,
-            "description": self.about,
-            "parameters": self.params,
-            "strict": True,
-        }
 
 
 def answer(agent_id: str, chat_id: int, about: tuple[dict, str], tools: dict[str, Tool]) -> dict:
@@ -194,25 +189,6 @@ _SETTINGS = ModelSettings(
 _RUN = RunConfig(tracing_disabled=True, tool_not_found_behavior="return_error_to_model")
 
 
-class _Answer(AgentOutputSchemaBase):
-    """The answer's JSON schema, ANSWER, as the SDK takes an output type."""
-
-    def is_plain_text(self) -> bool:
-        return False
-
-    def name(self) -> str:
-        return "ask"
-
-    def json_schema(self) -> dict:
-        return ANSWER
-
-    def is_strict_json_schema(self) -> bool:
-        return True
-
-    def validate_json(self, json_str: str) -> dict:
-        return json.loads(json_str)
-
-
 def _agent(tools: dict[str, Tool], llm) -> Agent:
     return Agent(
         name=PROSPER,
@@ -220,7 +196,7 @@ def _agent(tools: dict[str, Tool], llm) -> Agent:
         model=llm.agent_model(),
         model_settings=_SETTINGS,
         tools=[_function(tool) for tool in tools.values()],
-        output_type=_Answer(),
+        output_type=_Said,
     )
 
 
@@ -340,7 +316,7 @@ async def _converse(
         for attempt in range(1, ATTEMPTS + 1):
             if result.interruptions:
                 return {**base, "text": "", **_proposed(result)}
-            said = result.final_output
+            said = result.final_output.model_dump()
             if after_action and not said["answer"].strip():
                 return None
             try:
