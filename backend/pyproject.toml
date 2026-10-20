@@ -18,6 +18,10 @@ dependencies = [
     "python-docx>=1.2.0",
     # FastAPI's form and file uploads (already pulled in by the runner; used directly now).
     "python-multipart>=0.0.32",
+    # Ask Prosper AI's chat: an agent with tools on the OpenAI Agents SDK. Held
+    # below 0.22, which needs openai 3 and so a newer Pipecat than the voice
+    # stack is verified on.
+    "openai-agents>=0.19,<0.20",
 ]
 
 [tool.uv]
