@@ -2,10 +2,14 @@
 # Ask Prosper AI's tools: a read runs at once and its result goes back to the
 # model; an act waits on its card until the person says Do it or Cancel; a
 # refusal goes back as the tool's answer; a message makes a bounded number of
-# tool calls. And every act is the route the UI calls, not a copy of it. The
+# tool calls; a waiting card outlives a restart. And every act is the route
+# the UI calls, not a copy of it. The run is the Agents SDK's own; only its
 # model is scripted: nothing here reaches OpenAI.
 #
 
+import json
+
+import agents
 import pytest
 
 import store
@@ -448,3 +452,68 @@ def test_flaky_tests_are_said_as_flaky_not_as_failing(client, new_agent, verdict
     assert "Now: 0 of 1 pass, 1 flaky (2/3: does not block a merge)." in output
     listed, _ = tools.TOOLS["list_pulls"].read(agent_id, {"state": None})
     assert "checks passed: 0 of 1 pass, 1 flaky (2/3: does not block a merge)" in listed
+
+
+def test_a_waiting_card_survives_a_restart_and_do_it_still_works(
+    client,
+    with_issue,  # noqa: F811
+    prosper_model,
+):
+    agent_id = with_issue()
+    prosper_model.script = {"ask": [tool("read_issue", number=ISSUE), SNOOZE]}
+    chat = _ask(client, agent_id, "Snooze Issue #2 for a week.")
+    index = len(chat["messages"]) - 1
+    # The run is kept with the card, as JSON in the chat's row: nothing in memory.
+    with store.db.connect() as conn:
+        (row,) = conn.execute("SELECT messages FROM chats WHERE id = ?", (chat["id"],)).fetchone()
+    assert json.loads(row)[index]["resume"]["state"]["current_turn"] == 2
+
+    # The server restarts: startup runs, and a new model answers what comes next.
+    store.init_db()
+    assert _state(client, agent_id) == "open"
+    prosper_model.script = {"ask": [{"answer": "It comes back next week.", "links": []}]}
+    chat = _decide(client, agent_id, chat, index)
+
+    assert _state(client, agent_id) == "snoozed"
+    assert chat["messages"][index]["action"]["state"] == "done"
+    assert chat["messages"][-1]["text"] == "It comes back next week."
+    # It went on from the run as it was: the read, the call, then the act's result.
+    resumed = prosper_model.asked["ask"][-1]
+    types = [item.get("type") for item in resumed[2:]]
+    assert types == ["function_call", "function_call_output"] * 2
+    assert resumed[-1]["output"] == "Snoozed Issue #2"
+
+
+def test_a_card_kept_before_runs_were_kept_is_still_done(client, with_issue, prosper_model):  # noqa: F811
+    agent_id = with_issue()
+    prosper_model.script = {"ask": [SNOOZE]}
+    chat = _ask(client, agent_id, "Snooze Issue #2 for a week.")
+    index = len(chat["messages"]) - 1
+    # As an older server kept it: the conversation's items, not the run.
+    with store.db.connect() as conn:
+        messages = json.loads(
+            conn.execute("SELECT messages FROM chats WHERE id = ?", (chat["id"],)).fetchone()[0]
+        )
+        messages[index]["resume"] = {"items": [], "call": "call_1", "used": 1}
+        conn.execute(
+            "UPDATE chats SET messages = ? WHERE id = ?", (json.dumps(messages), chat["id"])
+        )
+    asked = len(prosper_model.asked["ask"])
+
+    chat = _decide(client, agent_id, chat, index)
+
+    assert _state(client, agent_id) == "snoozed"
+    assert chat["messages"][index]["action"]["result"]["text"] == "Snoozed Issue #2"
+    assert len(prosper_model.asked["ask"]) == asked  # done, with nothing to go on from
+
+
+def test_every_request_is_counted_and_nothing_is_traced(client, with_issue, prosper_model):  # noqa: F811
+    agent_id = with_issue()
+    prosper_model.script = {"ask": [tool("list_versions"), ANSWER]}
+    prosper_model.usage["requests"] = 0  # what the calls' reviews asked, before
+
+    chat = _ask(client, agent_id, "Which versions are there?")
+
+    assert chat["usage"]["requests"] == 2
+    assert ask._RUN.tracing_disabled
+    assert agents.tracing.get_trace_provider()._manual_disabled
