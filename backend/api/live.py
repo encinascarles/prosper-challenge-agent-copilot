@@ -336,8 +336,7 @@ def get_test_call(agent_id: str, call_id: int) -> dict:
 def review_test_call(agent_id: str, call_id: int) -> dict:
     """Have Prosper AI review the test call as it reviews calls; nothing is filed as an issue."""
     _agent(agent_id)
-    _answer(playing.review_test_call, agent_id, call_id)
-    return store.test_calls.get_test_call(agent_id, call_id)
+    return _answer(playing.review_test_call, agent_id, call_id)
 
 
 @router.get("/issues", response_model=list[IssueSummary], responses=_MISSING)

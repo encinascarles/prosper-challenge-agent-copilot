@@ -223,10 +223,12 @@ def _audit(
     return answer, findings
 
 
-def review_test_call(agent_id: str, call_id: int) -> None:
+def review_test_call(agent_id: str, call_id: int) -> dict:
     """Have Prosper AI review the test call, in the background. Its findings stay on it.
 
-    Raises NotFound, or Conflict if it is being reviewed already.
+    Returns the call as the review starts: read after, it could already be
+    reviewed, and say it never was pending. Raises NotFound, or Conflict if it
+    is being reviewed already.
     """
     call = store.test_calls.get_test_call(agent_id, call_id)
     if call is None:
@@ -237,9 +239,11 @@ def review_test_call(agent_id: str, call_id: int) -> None:
         copy, name = store.get_version(agent_id, call["version"]), f"v{call['version']}"
     if not store.test_calls.start_review(agent_id, call_id):
         raise store.Conflict("Prosper AI is reviewing this call already.")
+    started = store.test_calls.get_test_call(agent_id, call_id)
     future = _pool.submit(_review_test_call, agent_id, call, copy, name)
     with _lock:
         _jobs[:] = [job for job in _jobs if not job.done()] + [future]
+    return started
 
 
 def _review_test_call(agent_id: str, call: dict, copy: dict, name: str) -> None:
