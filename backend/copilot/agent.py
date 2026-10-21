@@ -375,7 +375,8 @@ def _agent(tools: dict[str, Tool], model: LLM, where: str, brief: Optional[str] 
 def _stop_when_waiting(run: RunContextWrapper, results) -> ToolsToFinalOutputResult:
     # A question to the person ends the turn: its answer starts the next.
     if isinstance(run.context, Work) and run.context.waiting:
-        return ToolsToFinalOutputResult(is_final_output=True, final_output=None)
+        said = _Said(answer="", links=[])
+        return ToolsToFinalOutputResult(is_final_output=True, final_output=said)
     return ToolsToFinalOutputResult(is_final_output=False)
 
 
@@ -500,7 +501,8 @@ async def _converse(
         error_handlers={"max_turns": answer_now},
     )
     for attempt in range(1, ATTEMPTS + 1):
-        if result.interruptions or result.final_output is None:
+        waiting = isinstance(context, Work) and context.waiting
+        if result.interruptions or result.final_output is None or waiting:
             return result, None
         said = result.final_output.model_dump()
         if after_action and not said["answer"].strip():

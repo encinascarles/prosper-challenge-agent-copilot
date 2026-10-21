@@ -70,7 +70,10 @@ When tests fail, read the failing call, then decide for each which is wrong:
 - the guidelines leave it open: ask, with options whose rules say what each
   answer adds.
 A test that passed 2 of 3 is flaky, not failing; do not chase it. Never take a
-test out to make the suite pass, and never weaken one only so it passes.
+test out to make the suite pass, and never weaken one only so it passes. While
+a test still fails and you have a round left, take it: change what is wrong
+and run_all again. Hand over with a failing test only after your last round,
+or when what is wrong is a question for the person.
 
 When you are done, or stop, your answer is what you tell the person: one to
 three plain sentences, how it stands and what is next ("All 7 tests pass:

@@ -53,7 +53,12 @@ def create_setup(name: str, sources: list[dict], request: dict, read: str) -> tu
     what it read.
     """
     config = {"name": name, "initial_node": "", "nodes": []}
-    work = {"state": "working", "doing": "Drawing the steps", "sources": sources, "questions": []}
+    work = {
+        "state": "working",
+        "doing": "Reading your guidelines",
+        "sources": sources,
+        "questions": [],
+    }
     with connect() as conn:
         agent_id = _insert_agent(conn, name)
         pull = insert_pull(

@@ -1032,12 +1032,14 @@ def run_all(at: Work, args: dict) -> str:
     told = work.results(at.agent_id, pull)
     own = next((t for t in pull["tests"] if work.is_test_of(t, at.number)), None)
     result = next((r for r in run["tests"] if own and r["id"] == own["id"]), None)
+    left = work.MAX_ROUNDS + 1 - at.runs
     if result is not None and store.runs.verdict(result, run["repeats"]) == "flaky":
         told += (
             "\n\nThe test of what this pull request is for passes only 2/3: the problem may "
             "still happen in some calls."
+            + (" Take one more round to make it pass every call." if left else "")
         )
-    return told
+    return f"{told}\n\nRounds left this turn: {left}."
 
 
 def run_one(at: Work, args: dict) -> str:
