@@ -1,1408 +1,676 @@
 # Solution
 
-> Work in progress. This document grows with each PR: every key decision is
-> recorded here in the same PR that implements it.
+## Summary
 
-## The problem, as I read it
+**The problem.** Prosper's deployment team does two jobs by hand: it turns a
+clinic's written guidelines into a voice agent, then keeps fixing that agent
+as problems show up, some flagged by the clinic, others hidden in call data
+that someone has to read.
 
-Prosper's deployment team spends its time on two manual loops:
+**The idea: treat the voice agent like code.** A coding agent fixing a bug
+first writes a failing test, makes the smallest change that fixes it, and
+reruns all the tests; a person reviews and merges. The same loop runs here:
 
-1. **Initial implementation.** A clinic hands over natural-language guidelines
-   (how to greet, what to collect, when to escalate, which visits need what) and
-   someone translates them into a working agent graph.
-2. **Production iteration.** Clients flag issues, or issues hide in call data.
-   Someone has to find them, work out which part of the agent caused them, change
-   it, and make sure the fix does not break something else. Finding the issues is
-   itself a large part of the cost.
+> issue → a test that reproduces it → the smallest change → the whole suite
+> → merge as a new version
 
-The builder UI (Phase 1) is the surface; the Copilot (Phase 2) is the point. The
-measure of success is how much of those two loops it takes off the team's hands.
+Prosper AI proposes each change; a person merges it. Nothing reaches callers
+except through a merge.
+
+**What was built.**
+- A graph editor for Pipecat Flows JSON. Each step is a card, edited in
+  place. A voice test call lights up its path on the graph.
+- Versions and pull requests. Every change (a hand edit, a setup, a fix) is
+  made inside a pull request, on its own copy of the agent. Merging makes
+  that copy the next live version.
+- Tests: simulated calls in text, run on the real Pipecat pipeline, 3 times
+  each on every change. A failing test blocks the merge.
+- **Setup with Prosper AI.** The person gives the clinic's guidelines
+  (notes, PDF, Word). Prosper AI asks about what they leave open, then writes
+  the agent, the rules (each quoting the line it comes from) and the tests,
+  runs the suite and checks its own work against the result (the
+  self-check). All of this happens in PR #1.
+- **Calls and issues, like Sentry.** Simulated callers phone the live
+  version. Prosper AI reviews every call, and what goes wrong is grouped by
+  problem into issues, the way Sentry groups error events: one issue, many
+  calls, so you see how often callers hit it. Issues can be snoozed,
+  ignored or resolved, and one resolved by a fix that shows up again in a
+  later version reopens ("Came back in v3"). People can report issues too,
+  for example by pasting a clinic's email.
+- **Fix with Prosper AI** on any issue: the loop above, inside a pull
+  request.
+
+**Prosper AI is one agent**, with one set of tools, in the Ask Prosper AI
+chat and in a pull request's conversation. In the chat it can look up
+anything in the product and do what the person can do (open issues, fix, run
+tests, merge…), but only after the person clicks to confirm. In a pull
+request it edits the pull request's copy directly: nothing there reaches
+callers before a person merges. Setup and Fix are not separate programs:
+they are how its work in a pull request starts.
+
+**Measured** on the final code. Every agent was built from the same sample
+guidelines, always picking the first option at every question. The samples
+are small. "Green" means no test fails, so the pull request can merge.
+
+| | Result |
+| --- | --- |
+| Setup reaches green on its own | **5/5**, median 76 s and USD 0.43 |
+| Issues found in 24 simulated calls | **6 issues: 5 real, 1 debatable, 0 false, 0 duplicates** |
+| Fix reaches green (mergeable) | **5/6**, median 114 s and USD 0.74 |
+| The issue's own test passes all 3 runs (3/3) after the fix | **5/6** |
+
+**Key decisions** (the full reasons are in Decisions & trade-offs).
+- Every change goes through a version and a pull request. A change that a
+  model wrote must be tried before a patient hears it.
+- Tests are text calls on the real engine, so what we test is exactly what
+  callers get.
+- Each test runs 3 times. 2/3 is flaky: shown in yellow, it does not block
+  the merge. The agent never answers the same way twice, so one run proves
+  little.
+- Prosper AI is one agent on the **OpenAI Agents SDK**, with the guarantees
+  in its tools. What must always hold (ask before drawing, reproduce before
+  changing, never rewrite the issue's test, a person merges) is checked in
+  code by the tools, not left to the prompt.
+- Calls are simulated on the live version, not taken from canned examples,
+  so the issues found are about the real agent as it is now.
+
+**Next.** Count a problem as reproduced when it fails even once in 3 runs.
+Treat a flaky test about the same duty as the issue as part of the fix. Use
+real call data. Run only the tests that a change can affect. Add access
+control and handle patient data properly.
 
 ## Scope
 
-_What is built, what is mocked, and what is deliberately left out, with the
-reason for each. Filled in as the build progresses._
+**In** (what the two manual jobs need, end to end):
+- Build: the graph editor, validation that names the broken step, a voice
+  test call. The change loop: versions, pull requests, tests, and a merge
+  that failing tests block.
+- Prosper AI: setup from guidelines, call review into issues, fix, tidying
+  a reported issue, and Ask with tools.
+
+**Simulated, on purpose:**
+- *Production calls.* There is no call data and no phone line. "Play calls"
+  sends 10–12 simulated callers to the live version, through the same text
+  pipeline the tests use, and the UI says so. *The clinic*: a person pastes
+  its complaints into New issue.
+
+**Out, and why:**
+- Accounts, permissions, several clinics: the person using the builder is
+  "you". Neither manual job needs them.
+- Telephony and real patient data: they need compliance work that a demo
+  cannot show.
+- Voice-level testing (speech recognition errors, interruptions, latency):
+  the tests check the graph and the prompts, not the audio.
+- A visual polish pass, mobile, i18n.
+
+## Product walkthrough
+
+One top bar on every screen: the agent, its version, the sections Build ·
+Calls · Issues · Pull requests, Test call and Ask Prosper AI.
+
+1. **New agent → Build it with Prosper AI.** You give a name, notes and
+   files. PR #1 opens and Prosper AI works in its conversation. It first
+   asks up to three questions with options (median 6 s). The graph appears
+   in Build within half a minute (median 27 s from the start, answering at
+   once), then the rules, the tests and the checks. "Merge & go live as v1".
+2. **Build.** The graph, edited in place: every text on a card is an input.
+   Rules and tests sit in a side rail. A voice Test call draws its path on
+   the cards.
+3. **Calls.** "Play calls" runs a batch of simulated calls on the live
+   version. Each call shows its transcript, its path and the checks Prosper
+   AI applied; a failed check is quoted on the turn where it failed.
+4. **Issues.** An inbox like Sentry's: findings grouped by problem into
+   issues (Safety, Booking, Experience), each with its calls and how many.
+   You can snooze an issue (for a day, a week, or until a new version is
+   live), resolve or ignore it, write a New issue, Tidy it with Prosper AI,
+   or **Fix with Prosper AI**.
+5. **Pull request.** Three tabs. Conversation: Prosper AI's steps as they
+   land (the test fails 0/3 on v1, the change, the checks). You can write
+   to Prosper AI there ("the confirmation must always give the address"),
+   and it goes on working on the same copy. Changes: a diff in words
+   ("Changed when Collect details moves on"). Checks: each test's score
+   (3/3, 2/3, 0/3). Merge as v2; the issue then says "Fixed in v2 by PR #8".
+6. **Ask Prosper AI** (⌘J) on any screen. "Why did Nadia Williams not get a
+   nurse callback?" gets an answer with links. "Have her ask if it's a first
+   visit" gets a card (Do it / Cancel) to open a pull request, where the
+   same agent then makes the change.
 
 ## Architecture
 
-_Overview diagram and the main components. Filled in as the build progresses._
-
-## Key decisions
-
-### Frontend: Vite + React + TypeScript SPA
-
-**Context.** The backend already exists in Python: Pipecat's FastAPI server runs
-the voice pipeline, and the Copilot has to live next to `AgentBuilder` to work on
-the real agent format. The UI needs a graph editor and an in-page WebRTC call.
-
-**Options.**
-- *Full-stack JS framework (Next.js, Remix).* Rejected: it brings a second server
-  runtime, and logic would split between TypeScript and Python for no gain.
-- *Python UI (Streamlit, Gradio).* Rejected: no native graph editor (React Flow
-  would have to be wrapped anyway), a rerun-per-interaction model that fights a
-  stateful canvas plus a live call, and weak WebRTC integration.
-- *Client-only React SPA built with Vite.* Chosen.
-
-**Trade-offs.** Minimal tooling and one backend. The dev server proxies `/api` to
-FastAPI, so the browser sees one origin. Direct access to React Flow and Pipecat's
-React client. Cost: two dev servers locally, hidden behind `make dev`.
-
-**Styling: Tailwind + shadcn/ui.** The brief values judgement over polish, so the
-UI should look decent at near-zero design cost. shadcn copies accessible
-components into the repo (owned code, no runtime component library).
-
-### Storage: SQLite, with the agent JSON in one column
-
-**Context.** Agents have to survive a restart and be listed, opened and saved by
-the editor. Phase 2 adds calls, issues and tests that point at agents.
-
-**Options.**
-- *JSON files, one per agent.* Rejected: enough for today, but calls and issues
-  need queries across records ("the calls of this agent with an open issue"), and
-  that would mean moving everything later.
-- *A hosted database (Postgres).* Rejected: a server to install and configure
-  before the reviewer can run anything, for a single-process app.
-- *SQLite through the stdlib `sqlite3` module.* Chosen.
-
-**Trade-offs.** Zero setup and no new dependency: the file is created and seeded
-with the example agent on first start. No ORM and no migrations tool, which is
-fine for one table and will need revisiting if the schema grows. The agent is
-stored whole in one TEXT column, as `AgentConfig` reads it: nothing queries inside
-the graph, so tables for nodes and edges would only be a mapping to keep in sync.
-Deleting an agent removes it for good, versions and pull requests included,
-so the editor asks first. Only a database that is being created is
-seeded. One whose last agent was deleted stays empty, or the example would come
-back on its own at the next start.
-
-### Node positions live next to the agent, not in it
-
-**Context.** The editor has to reopen a graph the way it was left, so where each
-node sits must be saved. The agent JSON is what Pipecat runs and what the Copilot
-reads and rewrites.
-
-**Options.**
-- *A `position` on each node of the agent JSON.* Rejected: a canvas coordinate is
-  not part of an agent. It would reach the schema, the builder and every prompt
-  that carries the agent, and moving a node would count as changing the agent.
-- *The browser's local storage.* Rejected: the arrangement would be lost on
-  another device, and it is part of how the team reads a flow.
-- *A `layout` column next to `config`: `{ "<node name>": { "x", "y" } }`.* Chosen.
-
-**Trade-offs.** Creating an agent and saving a pull request's copy take the same
-body, `{ config, layout? }`, and both are written in one statement, so they
-cannot be saved apart; a version keeps the layout it was merged with. The store drops positions of
-names that are not nodes of the agent on every save, with or without a layout in
-the request, so the layout never refers to a node that is gone. A client that
-leaves the layout out (the Copilot applying a fix) keeps the stored one; a node
-without a position is fine, the editor places it. Cost: the layout is keyed by
-node name, so a rename has to carry the position over, which is the editor's job
-since it knows the old name. Existing databases get the column added at startup
-(a check on `PRAGMA table_info`), the one migration so far and still short of
-needing a tool.
-
-### The API lives on Pipecat's FastAPI app
-
-**Context.** The Pipecat runner already starts a FastAPI server for the call
-signalling, and exposes its `app` for extra routes.
-
-**Options.**
-- *A second service for the builder API.* Rejected: two processes and two ports
-  to run, and CORS between them.
-- *Mount an `APIRouter` on the runner's app.* Chosen.
-
-**Trade-offs.** One backend, one port and one origin for the browser: calls and
-agents go through the same `/api`. `bot.py` only does the wiring; the routes are
-in `api/` and persistence in `store/`. The bot runs in the same process, so it
-reads the agent a call was started for (and will save its calls) straight through `store`,
-with no HTTP between services. Cost: the API starts with the runner, so
-it is tied to how Pipecat builds its app. The tests avoid that by mounting the
-same router on a bare FastAPI app.
-
-### Validation errors say where the problem is
-
-**Context.** An agent is saved only if `AgentBuilder` accepts it, the same code
-that compiles the graph for a call. Its message is what the API returns, so it
-has to be usable: the editor points at the broken node with it, and the Copilot
-will read it to repair its own output.
-
-**Options.**
-- *Catch `KeyError` / `TypeError` in the API.* Rejected: `KeyError: 'name'` cannot
-  say whether the agent, a node or an edge is missing its name.
-- *Move the schema to Pydantic.* Rejected: its errors locate by index
-  (`nodes.1.edges.0.target`), and it means rewriting the dataclass schema that
-  came with the challenge for a gain the builder's graph checks would not share.
-- *Check each field in `schema.py` as `from_dict` reads it.* Chosen.
-
-**Trade-offs.** Messages use names, not indexes ("Missing required field 'target'
-in edge 'choose_intent' of node 'greeting'."), and everything that loads an agent
-gets the same ones. The schema stays one set of dataclasses. Cost: a small
-hand-written checker instead of a library, and the request body is an untyped
-object in the OpenAPI docs (the example agent is shown instead). The tests pin
-each sentence, because they are a contract.
-
-### Versions and pull requests: nothing reaches callers except by merging
-
-**Context.** Everything the Copilot will do (set up an agent from guidelines,
-fix an issue found in calls, refine a fix after a comment) produces a proposed
-change that someone reviews, tries and then puts in front of callers. A person
-editing by hand does the same. Until now saving overwrote the agent, so every
-save went straight to the next call.
-
-**Options.**
-- *Keep overwriting, and record each save as a version to roll back to.*
-  Rejected: a change still reaches callers before anyone has tried it, and the
-  Copilot's edits would too.
-- *One draft per agent, then "publish".* Rejected: one draft cannot hold two
-  proposals at once (Prosper fixing one issue while someone edits by hand), and
-  a published version would not say why it exists.
-- *Live versions, and pull requests that each hold their own copy.* Chosen.
-
-**Trade-offs.** An agent has versions v1, v2…, immutable snapshots of its config
-and layout; the latest is live and calls run on it. A pull request is based on
-the version that was live when it was opened and holds a whole copy of the
-agent, which is what the editor saves to. Merging checks that copy with the
-same `AgentBuilder` validation (422 naming the node and edge), adds the next
-version from it and records which PR it came from, so the history answers "why
-is this live". Whole copies rather than patches: an agent is a few kilobytes,
-and a diff is computed when there is a screen to show it on.
-
-A new agent starts with PR #1, "Set up <name>", based on nothing: it is not live
-until that is merged, so even the first version goes through the same door.
-Before that, the agent is what PR #1 holds, name included. The name is part of
-the agent JSON, so renaming a live agent is a change like any other. A database
-from before versions is migrated at startup: each agent becomes v1 from its
-stored graph, with no PR, and its row keeps only what is not versioned (id,
-name, the PR counter). Still no migrations tool: `CREATE TABLE IF NOT EXISTS`
-and a one-off backfill, in one transaction.
-
-A merge is refused (409) once live has moved past what the PR was based on: its
-copy is of an older agent, and merging it would quietly undo whatever went live
-in between. The PR says "Needs update · based on v1" until it is updated (see
-the next decision). Every store operation takes the
-write lock up front (`BEGIN IMMEDIATE`), so two merges cannot both read "live is
-v1" and both become v2.
-
-In the editor, live is never saved to. The first edit on live that changes the
-agent opens a PR, "Your edits", and the edit lands there with its undo intact;
-a toast says so and the pill switches to it. Moving cards or Tidy up is not a
-change to the agent, so on live it opens nothing and is not kept. A test call
-runs what the editor is on: the start body carries the agent id and, on a PR,
-its number. Production calls will only ever name the agent, so they run live.
-
-PRs are numbered per agent from one counter that issues will share, so "PR #5"
-and "Issue #3" never collide; the UI always writes the prefix. Each PR keeps a
-small log (opened, saved, merged, closed, reopened, updated: by whom, when) as JSON in its row,
-since it is only read with its PR. There are no accounts: the person using the
-builder is "you" in that log, and Prosper will sign its own changes.
-
-API: `GET /api/agents[/{id}]` add `live_version` (0 until PR #1 merges) and the
-open PR count; `POST /api/agents` returns the agent and its PR #1;
-`GET …/versions[/{n}]`; `GET …/pulls?state=`, `POST …/pulls` (`{title}`, a copy
-of live), `GET`/`PUT`/`PATCH` (title) `…/pulls/{n}`, `POST …/pulls/{n}/merge`,
-`…/close`, `…/reopen` and `…/update`. There is no route that writes over an
-agent or a version.
-
-### A pull request is read on its own page, and updated by replaying it
-
-**Context.** A pull request could only be seen through the pill and the bar in
-Build, which say which one you are on but not what it changes or what happened
-to it. Reviewing a change, and soon reading what Prosper did, needs a place of
-its own. And a PR left behind by a merge could only wait: there was no way to
-bring it onto the new live version.
-
-**What.** Pull requests are a section next to Build: a list (Open · Merged ·
-Closed) and a page per PR with its actions, its Conversation (the log, newest at
-the bottom, where Prosper's turns will go) and its Changes. The section and the
-page are in the URL, so a link lands on the same place. A closed PR keeps its
-conversation and can be reopened as it was; if live moved on meanwhile, it needs
-an update like any other.
-
-**Changes are computed where they are shown.** Copies are stored whole, so the
-diff is a pure function in the browser (`frontend/src/pulls/diff.ts`) over the
-PR's copy and the version it is based on, worded for a non-engineer: steps
-added, removed and renamed, instructions word by word, ways out added, removed
-or moved, fields and the agent's settings. Stored copies carry no node ids (the
-JSON mirrors Flows' `NodeConfig`, and ids would be one more thing every writer
-has to keep stable), so a step is followed by its name and, when the name is
-gone, by what it says: a renamed step keeps its instructions and edges.
-
-**Update replays the PR's changes on live.** Options:
-- *Rebuild the PR by hand on live.* Rejected: it is the manual work the product
-  is meant to remove.
-- *A three-way merge on the server.* Rejected for now: the same step matching
-  would live twice, in Python for the merge and in TypeScript for the Changes
-  tab, and drift.
-- *Replay in the browser, checked by the server.* Chosen. The browser replays
-  with the same matching the diff uses and sends the result with the version it
-  replayed on (`onto`). The server takes it only if that version is still live
-  (409 otherwise, so a merge in between cannot slip under it) and if it is a
-  valid agent (422 naming where, as on save).
-
-What only one side changed is taken from it. Where both changed the same thing
-(the same instructions, say), the PR wins: it is the change under review, and
-live is still there to compare with. The event says so ("Updated to v2 · kept
-your text in Confirm"). A step the PR edited and live removed is kept with the
-edit; edges left pointing at a removed step are dropped, and the Changes tab
-shows the result before anyone merges it.
-
-**Summaries travel with the events.** Each save and update carries one line on
-what it changed, written by whoever made the change: the editor diffs what it
-saves against the last save (following steps by id, so even a rename and a
-rewrite in one save is one step), and Prosper will write its own. The server
-stores the line, it does not derive it.
-
-**Trade-offs.** A merge through the API alone cannot update a stale PR without
-a client that replays; when Prosper needs to, the replay moves to the server as
-one implementation. A step renamed *and* mostly rewritten on one side between
-two versions shows as removed and added.
-
-### Rules sit next to the agent JSON, and the builder puts them in the prompt
-
-**Context.** Most fixes to an agent are not a new step: they are one sentence
-it must follow ("read the date back before saying goodbye", "never give
-medical advice"), everywhere or in one step. Prosper AI will add them for
-each issue it fixes, and each has to say where it came from.
-
-**Options.**
-- *Edit the step's instructions.* Rejected: the sentence melts into text the
-  person wrote, nothing says where it came from, and taking it out again
-  means finding it.
-- *A `rules` field inside the agent JSON.* Rejected: the JSON mirrors Flows'
-  `NodeConfig`, and the cards edit it; rules would be one more thing every
-  writer of the graph has to carry along.
-- *A list next to the config, like the layout, compiled in by `AgentBuilder`.*
-  Chosen.
-
-**Trade-offs.** A rule is `{ id, step | null, text, source }`, stored with each
-copy (a version, a pull request) so it is versioned with the agent: a pull
-request carries its own and the merge puts them live. `AgentBuilder(config,
-rules)` appends the rules for every step to each node's role message and a
-step's own as one more task message of that node. Every runner goes through
-the builder, so a voice call, a test call and a test all get the same prompt.
-A rule names its step, so it follows a rename (the save sends the steps it
-renamed) and goes with a removed step, like a position in the layout. A pull
-request can only add rules and take out the ones it added; that keeps
-replaying it on a newer live version a simple union. Cost: what the model is
-told is now in two places, the cards and the rail.
-
-### Tests are text calls on the voice call's pipeline, run on every change
-
-**Context.** The Copilot's loop needs proof: reproduce an issue with a test,
-change the agent, and show the whole suite still passes before anything goes
-live. That needs tests a person can write in a sentence, and a way to run
-them that is cheap enough to do on every save.
-
-**Options.**
-- *A simulator of our own (a loop over the graph calling the LLM).* Rejected:
-  it would test our reimplementation of Flows, not what calls run.
-- *Voice calls with a synthetic caller.* Rejected: slow, paid per second of
-  speech, and STT noise would make every result flaky.
-- *The real pipeline without audio.* Chosen: the same `AgentBuilder`,
-  `FlowManager` (through `start_flow`, now shared with `bot.py`) and LLM
-  service, with caller lines going in as messages and a small processor where
-  TTS would be, collecting what the agent says and the node messages it
-  reports. The path comes from the same reporter as a voice call's.
-
-**Trade-offs.** A test is `{ name, caller, checks }`: who calls (a model plays
-them) and one check per line. "Reaches <step>", "Ends the call" and "<field>
-is recorded" are decided from the path, exactly and for free; anything else
-is judged by a model on the transcript, yes or no with one line why. A line
-is a path check only when it names a step or a field the copy has; "Reaches a
-decision about the doctor" is a sentence, so it is judged rather than failing
-every run, and the form says which kind each line is before it runs. The
-agent's turn ends at the end of a response that
-called no function, a rule pinned by tests that run Pipecat's OpenAI service
-on a scripted stream. Those tests found that the function-call frame, being a
-system frame, can overtake the response's start, so calls are counted between
-response ends.
-
-**Models.** The agent runs on the model its own JSON names (gpt-4o for the
-sample), because what is tested must be what calls run. The simulated caller
-and the judge are ours, and they need judgment rather than latency: they play
-a person from a paragraph and decide whether a transcript meets a sentence. So
-they use the newest general model available on the key, `gpt-6.1-sol`, set by
-one variable (`PROSPER_MODEL`) so it can change without touching code.
-
-A simulated call does not always go the same way, so each test runs 3 times
-and shows as 3/3, 2/3, 0/3. It passes at 3/3, is flaky at 2/3 and fails
-below that. Only failing tests block a merge. A voice agent on an LLM does not
-answer the same way every time: 2/3 shows that (in yellow, "flaky", in the
-rail, the Checks tab and the bar) without letting one unlucky call in three
-hold a merge back. Asking for 3/3 made most real suites red on calls that
-went right two times out of three. Every change to a pull
-request's copy (save, update, rule or test added or taken out) runs the whole
-suite again, and a merge is refused until it passes (409 on the server, a
-disabled button in the UI), PR #1 included. Each run stores a fingerprint of
-the config, rules and tests it ran on, and a merge needs the latest run to
-match the copy as it is now: a change stored a moment before its run starts
-cannot slip through on the run before it. All calls of a suite run at once,
-12 at a time.
-
-**What it costs.** Measured on the sample agent: 5 tests × 3 calls took 26 s
-of wall-clock (12.9 s per call on average) and about USD 0.25, almost all of
-it the agent's own gpt-4o tokens, since each turn resends the whole context;
-the caller and the judge add a few cents. To keep that from being paid for
-nothing: a save that does not change the config, rules or tests (moving
-cards) keeps the run it has; a new change cancels the run in progress, so a
-burst of saves pays for the calls already started, not for a suite each; and
-"Run again" is the only way to repeat a whole run on the same copy (one
-test can also be run again on its own: see "Three kinds of calls" below). At scale, the
-next steps would be to run only the tests a change can affect (those whose
-path goes through an edited step, and the new ones) and to make the full
-suite run on demand or before a merge rather than on every save. They run on an event loop in a thread of their
-own, so voice calls on the server's loop never wait behind them. Results are
-written as each call finishes and the editor polls them every 1.5 s while a
-run is going; a stream would be more moving parts for a run that lasts under a
-minute. Only the latest run of each copy is kept, which is all the screens
-show, and a merged pull request's run becomes its version's.
-
-Cost: text is not voice. No STT errors, interruptions or latency are tested;
-the tests check the graph and the prompts. A judged check can be wrong, which
-is why its reason is always shown. And every save spends money, so the suite
-stays small and the caller and judge use one configurable model.
-
-### Prosper AI sets up a new agent inside its PR #1
-
-**Context.** The first manual loop: someone reads a clinic's guidelines and
-draws the agent by hand. The product already has the door everything goes
-through (a pull request, its suite, a merge), so the question was how an AI
-fills that door in, in a way a person can follow, correct and trust.
-
-**What.** "Build it with Prosper AI" in the new agent dialog takes a name,
-pasted notes and files (PDF, Word, text). The files are read on the server
-before anything is stored (`pypdf`, `python-docx`; no OCR, so a scan is
-refused with the reason while the dialog is open). The agent is created with
-PR #1 opened by Prosper AI on an empty copy, and a background job fills it in,
-logging each step in the PR's conversation as it lands. First it reads the
-guidelines and asks what they leave open (up to three questions, 2–3 options
-each, or says there is no gap). Nothing is drawn until every answer is in.
-Then it draws the agent with the answers ("Drew 7 steps", the graph shows up
-in Build), writes the rules (each quoting its line, or the answer it comes
-from, on the step it is about), and the tests last, from the guidelines and
-the answers. Build and the PR page poll the
-PR every second while it works; a stream would be more moving parts for a job
-of about a minute. Meanwhile the copy is Prosper AI's: Build is read-only and
-the API refuses the person's saves to it (409), so the two never write over
-each other.
-
-**One structured request per artifact, checked in code.** Options:
-- *An agent framework (tool calls in a loop).* Rejected: the steps are known,
-  and a loop that decides them is harder to read, test and price. (Ask
-  Prosper AI's chat, where the steps are not known, is the one agent: on the
-  OpenAI Agents SDK, below.)
-- *One request for everything.* Rejected: one bad part fails the whole answer,
-  and nothing can be shown until all of it is written.
-- *Questions, then the agent, its rules and its tests, each one request with
-  a strict JSON schema.* Chosen. Plain OpenAI SDK (`copilot/llm.py`).
-  (Later replaced by the one agent and its tools: "Prosper AI is one agent",
-  below. What a setup asks, draws and checks stayed the same.)
-
-**Why questions first and tests last.** At first the questions came after the
-agent and its tests were written. An answer turned into a rule then
-contradicted both: the clinic asked for a date of birth before opening a
-chart, the test callers had none to give, and the self-check spent its rounds
-blaming the agent. Asked first, an answer shapes what gets drawn. Written
-last, the tests check the agent the clinic described.
-
-Each answer is checked in code and, when refused, sent back with the sentence
-that says why (twice at most): the agent goes through `AgentBuilder` exactly as
-a save, plus no dead ends and some end; a rule's quote must be in its source
-word for word (a made-up quote would point at a sentence nobody wrote); a
-test's "Reaches X" / "X is recorded" must name a real step or field. Strict
-mode cannot describe an edge's `properties` (a JSON-schema object keyed by
-field name), so the model writes the agent in a shape of its own (an edge
-lists its fields) and code turns it into `AgentConfig`, with snake_case names
-and `go_to_<target>` functions as the editor makes them. The voice agent keeps
-gpt-4o; Prosper AI uses `PROSPER_MODEL`. Prompts are short files in
-`copilot/prompts/`.
-
-**Questions, answers and requests.** A setup question is answered by picking
-an option or writing in the composer. Either way the answer is kept for the
-drawing and becomes a rule quoting it (source "Your answer in PR #1"). A
-question the self-check asks later comes with the rule each option becomes,
-so picking one is a write with no model call. Anything written in the
-composer goes to Prosper AI: the answer in your own words, or a change ("make
-the greeting shorter"). It rewrites PR #1's copy through the same checks, adds
-or takes out rules and tests (only those PR #1 added), sees what failed in the
-last run and why, says what it changed, and the suite runs again.
-
-**Checking its own draft.** A first draft fails some of its own tests, and
-fixing that by hand (taking tests out, adding rules) is the manual work this
-is meant to remove. So when a run that follows a change of Prosper AI's own
-fails, it reads each failing test's runs and gives it one verdict, written
-as a line in the conversation: the agent is wrong (it makes the smallest
-change), the test asks for more than the guidelines say (it rewrites the
-test in place and says why), or the guidelines leave a gap (it asks the
-clinic). It never takes a test out, and code checks that every failing test
-got a verdict and that each verdict did what it says. Two rounds at most,
-then it says what still fails and hands over: past that, more rounds mostly
-spend money on a flaky model. Everything it writes is held short in code (a
-task at most three sentences, a rule one, a test 2–4 checks with at most one
-judged and none about style), and every problem of an answer goes back at
-once, since refusing on the first one let the model fix one thing and break
-another.
-
-**When it stops halfway.** Jobs run in the server's process, so a restart
-marks any work still going as interrupted. Prosper AI remembers the job it is
-on: a message after a failure retries it, the setup from the step it stopped
-at, an answer still tied to its question. While it works, the person's
-changes to that copy (an option clicked included) wait.
-
-**What it costs, measured.** A setup from the sample PDF and DOCX: 5 requests,
-about 8k tokens in and 3k out, USD 0.05; graph drawn 40 s after the click,
-questions at 56 s; a change request 20–50 s and USD 0.02–0.04. The suite after
-it dominates: 9 tests × 3 calls in 38 s, about USD 0.26, mostly the agent's own
-gpt-4o. Two things found on the way: at default reasoning effort a request
-could think for minutes and spend its whole token budget writing nothing, so
-requests use low effort; even then, on Chat Completions, about one agent
-request in two thought to its 6,000-token limit and wrote nothing. The same
-request through the Responses API thinks a few hundred tokens, so Prosper AI
-uses that; a cut-off answer is still asked for once more.
-
-A review or a change writes the whole agent back, and it ran past 6,000
-tokens, so those two get 12,000. Even so, one review went to 12,000 tokens of
-degenerate output (no thinking) and only succeeded on its retry.
-
-**This round, measured.** Two setups from scratch through the UI, on the
-sample files, answering every question with its first option, no hand edits.
-
-- *Setup A* ran before the builder change below. Questions at 10 s, graph at
-  76 s. Its first suite had 2 tests passing, 2 flaky and 3 failing; the
-  self-check was then cut off twice and failed. It cost USD 0.77.
-- *Setup B* ran after it. Questions at 10 s, graph at 55 s. Its first suite
-  had 1 failing test; one self-check round fixed the agent, the suite came
-  back with 5 passing and 2 flaky, and it was merged as v1 318 s after the
-  click. It cost USD 1.14 (USD 0.20 of Prosper AI, USD 0.94 for 2 suites).
-
-Setup A's runs showed why calls failed. Mostly, the voice model did the next
-step's work in the current one and said goodbye itself: no function was
-called, so the call never moved and never ended. Asking Prosper AI for
-plainer edges was not enough, so `AgentBuilder` now tells every step that
-moves on to do only its own step and to call a function as soon as its
-condition holds. That is the same for every agent and is compiled in, like
-rules. The simulated caller also no longer hangs up after its own goodbye,
-which used to fail "Ends the call" because of the caller rather than the
-agent.
-
-**Trade-offs and what is next.** The first agent is a draft: on the samples it
-was sensible (greet, booking or change details, offer the two slots, confirm,
-nurse callback, goodbye) but wordy, and its first suite failed where an answer
-had become a rule for every step (the greeting began asking for a date of
-birth). Earlier versions needed a person to get to green. One setup now got there
-on its own, which is a single data point, not a rate.
-Prosper AI only works in PR #1 for now; it cannot edit a rule in place (it
-takes it out and adds another), it does not run tests itself to try a fix
-before proposing it, and a test whose check is flaky has to be judged by a
-person. Next: the same loop for issues found in calls, on PRs it opens.
-
-### Calls come from simulated callers, and Prosper AI reviews every one
-
-**Context.** The second manual job is reading production calls to find what
-goes wrong. There is no call data here, and the live agent is whatever a setup
-generated, so canned calls would not match it.
-
-**Options.**
-- *Seeded example calls and issues.* Rejected: they would describe some other
-  agent, and nothing would change when the agent does.
-- *Voice calls with a synthetic caller.* Rejected for the same reasons as for
-  tests: slow, paid per second, and STT noise.
-- *Simulated callers on the live version, through the tests' text pipeline.*
-  Chosen. "Play calls" asks Prosper AI for a morning's mix of 10–12 callers
-  from the clinic's guidelines and agent (mostly routine, 2+ edge cases: a
-  symptom mid-booking, a time the clinic does not offer, a relative calling,
-  everything said in one breath), then phones live with them, all at once and
-  1.5 s apart. The UI says they are simulated wherever calls are listed.
-
-**How a call is read.** As each call ends it is stored with the version that
-answered, path, transcript and a length estimated from its words (there is no
-audio to time), and Prosper AI reviews it in one structured request: the
-checks it applied (3–8, taken from the rules first, then a guideline line or
-a clinic answer), pass or fail, and one finding per failed check. A finding
-names the agent's turn by its index and quotes it; the quote is checked word
-for word, so the call and issue pages highlight a real line. Its step is read
-from the transcript, not asked for. As for tests, a refused answer goes back
-with the reason.
-
-**Grouping.** A finding joins a tracked issue (open, snoozed or ignored) with
-the same problem, or opens one. That is a second, small request, made only
-when there is something to join, and grouping takes one call at a time while
-reviews run in parallel, so two calls with the same new problem cannot both
-open it. A call's findings and its review are written in one transaction,
-so a call never shows half its findings; one whose issue was resolved since
-it was grouped opens a new issue, as a resolved problem that comes back
-does. A batch in which no call ran fails with the reason, rather than
-looking like a quiet morning. Issues take numbers from the counter pull requests use, so "Issue #3"
-and "PR #4" never clash and the PR that fixes an issue can name it. An issue
-is open, snoozed (a day, a week, or until the next version: checked when
-issues are read, so nothing has to wake it), resolved (by hand it stops
-collecting, and if the problem comes back it is a new issue; by a fix, see
-below) or ignored (leaves the open list but keeps counting calls).
-
-**What the real runs showed.** A setup from the sample files, first option
-everywhere, reached green on its first suite (6 passing, 1 flaky) and was
-merged as v1 184 s after the click, USD 0.70 (0.11 Prosper AI, 0.59 the
-suite). Three batches of 12 calls on that v1, about 80 s each:
-- *Batch 1* filed 5 calls under "Presents unverified appointment times as
-  available", a duty no guideline states. The audit prompt now says every
-  check must come from a rule, a guideline line or an answer; batch 2 filed
-  nothing more there.
-- The real problems it found: symptoms mentioned mid-booking get "contact a
-  healthcare provider" and more booking instead of the nurse callback the
-  guidelines promise (Safety, 3 calls across batches); a relative's
-  cancellation accepted without the chart check the clinic's answer requires;
-  a cancellation claimed as done; date, time and place not read back.
-- *Batch 3* opened a second issue for a problem already tracked, because it
-  was said in another step. Grouping first only offered issues of the same
-  step; it now offers every tracked issue, and a real grouping request put
-  both findings where they belonged.
-- *Batch 4*, after that change, on the same v1 with 9 issues tracked: 12
-  calls, 5 with findings, 6 findings. 5 joined existing issues (one of them
-  twice) and 1 opened a new one, for a rule no tracked issue was about
-  ("Gives medical advice about symptoms"). USD 0.43.
-
-**What it costs.** A batch is USD 0.46–0.49: the calls 0.32–0.34 (almost all
-the agent's own gpt-4o, which resends its context every turn; the prompt
-cache barely helps), reviews 0.13 (about a cent each), the caller mix 0.02.
-A call that goes nowhere is cut at 12 caller turns: one stuck call in the
-first smoke run had cost USD 0.10 alone.
-
-**Trade-offs and what is next.** Simulated callers are not customers: they
-are cooperative and articulate, and they only hit what Prosper AI thought to
-send them. The review is a model's reading and can be wrong, which is why
-every finding shows the turn and why. Next: real call data in place of the
-simulated callers.
-
-### Fix with Prosper AI: a failing test first, then the smallest change
-
-**Context.** An issue says what went wrong; someone still has to work out the
-cause, change the agent and hope nothing else broke. A coding agent fixing a
-bug does three things in order, and so does this: reproduce it with a failing
-test, make the smallest change, run the whole suite.
-
-**Options.**
-- *Ask the model for a fix straight from the issue.* Rejected: nothing would
-  show the change fixes anything, or that the problem was real.
-- *Replay the issue's calls on the fixed agent.* Rejected: a recorded caller
-  does not react to new answers, so the replay drifts after the first change.
-- *A test written from the issue's calls, run on the version that had them.*
-  Chosen. It is the same kind of test as every other one, so once merged it
-  stays in the suite and the problem cannot quietly come back.
-
-**How it works.** "Fix with Prosper AI" on an issue opens a pull request of
-kind `fix` ("Fix: <issue title>", based on live, linked to the issue) and a
-background job on the setup's machinery (events in the conversation, busy
-guard, resumable from the step that failed, cost counted):
-1. *Reproduce.* One request writes a test from the issue and its latest calls
-   (who called, the lines up to the bad turn, why it matters), held to the
-   same checks as any test. It runs 3 times on the version the calls had, and
-   counts only if it fails, below 2 of 3. If it passes, one more try with a
-   sharper caller, told how the first went; if that passes too, Prosper AI
-   says it could not reproduce it ("may be rare or already fixed") and asks
-   whether to go on.
-2. *Propose.* One request for the smallest change (a rule on the step where
-   it goes wrong, a plainer task, a field or an edge, in that order), through
-   the same path as any change of Prosper AI's: AgentBuilder, length limits,
-   retries with the error. Two checks of its own: it must change something,
-   and at most two steps. A change also keeps the function names of edges it
-   does not touch, so fixing a hand-drawn agent does not rename its edges.
-3. *Prove.* The whole suite plus the new test runs on the copy. Failing
-   tests go to the setup's self-check (two rounds per request), which may not
-   rewrite the test that reproduces the issue: that test says what the agent
-   must do. When everything passes: "All checks passed · 8/8 · the new test
-   0/3 on v1 → 3/3". The test keeps its score on the old version in its
-   source, so Changes and Checks show it before and after.
-
-The composer now works on any open pull request, so the person refines a fix
-in words, and the checks run again. "Fix it yourself" opens the same kind of
-pull request in Build, without Prosper AI.
-
-**The issue follows its fix.** One open fix per issue; opening, closing and
-reopening it are logged on the issue, which shows "PR #12 open". Merging
-resolves it in the same write as the new version and remembers that version.
-A finding from a later call can still join an issue a fix resolved: on the
-fixed version or later it reopens it ("Came back in v2") instead of filing
-the same problem again; from a call the old version answered, reviewed after
-the merge, it joins and leaves it resolved.
-
-**What the real run showed.** On the v1 of the setup above, Issue #5
-(Safety: symptoms mid-booking get more booking instead of the nurse callback,
-4 calls). Prosper AI's test, a caller who mentions dizzy spells while times
-are offered, failed 0/3 on v1, each call ending at goodbye without reaching
-Nurse callback. The change: one edge from Offer times to Nurse callback, the
-smallest one that fixes it (Offer times had no way there). The first run had
-the new test failing; one self-check round made the edge's condition plainer,
-and the suite passed 8/8, new test 3/3. 3 min 7 s from the click; Prosper AI's
-requests USD 0.19, each suite about USD 0.65–0.77 (the agent's own gpt-4o).
-A refine ("if they don't want to give a callback number…") first failed: the
-model wrote a test with 5 checks, then one with two judged lines, and the
-change prompt never stated those limits (it does now). Then its answers ran
-past the token limit. Replayed, each one wrote a few hundred characters of
-the agent and then blank space to the limit, right after a choice field's
-`options`: the model wanted to close the field there, strict mode required
-`required` next, and blank space was all it could still write. With
-`required` before `options`, the same request finished 3 times out of 3, in
-about 2,600 tokens. Once through, the refine added a rule in Nurse callback
-and a test, which was handed back after one round because rounds were
-counted over the whole pull request (now per request). Asked to fix it, the
-two rounds made the agent route symptoms more firmly but the test still
-failed: its judged check wanted the number on file said again after the
-caller declined, though the agent had already offered it. One more message
-saying so, and Prosper AI rewrote the test: 6/9 passed, 3 flaky, the new
-test 3/3. Merged as v2, the issue resolved itself ("Fixed in v2 by
-PR #12"). A batch of 12 calls on v2 (USD 0.48) left it resolved: the one
-caller who mentioned a symptom mid-booking went to Nurse callback. It filed
-one new issue (a call left open after the caller was done) and added a call
-to an existing one.
-
-All of it, real spend: about USD 8. Prosper AI's requests were 1.07 (the
-reproduction's calls included), 8 suite runs on the pull request about 5.9,
-replaying the cut-off request about 0.6, the v2 batch 0.48.
-
-**Trade-offs and what is next.** A suite is most of the cost (gpt-4o, every
-test 3 times on every change): running only the new and the failing tests
-while Prosper AI iterates, and the whole suite once before merge, would cut
-it by half or more. Asking for less (only the steps that change, not the
-whole agent) would make each change cheaper and leave less room to go wrong.
-Prosper AI sometimes still names steps in snake case in its own replies.
-
-### A fix that may not fix its issue still merges, with a warning
-
-**Context.** Six fixes run end to end on two agents all reached green, but in
-three of them the test that reproduces the issue ended at 2 of 3. The merge
-rule lets a test through at 2 of 3 (flaky, shown, not blocking), so "green"
-could mean "still happens one call in three". One fix went in with no
-reproduction at all: the test never failed, and the person said to go on.
-Self-check rounds also added rules unrelated to the issue, to make tests pass
-that were already flaky on the version the fix was based on.
-
-**Options.**
-- *Require 3 of 3 for a fix's own test.* Rejected: the suite is a simulated
-  caller and an LLM judge, and one unlucky call out of three is often the
-  judge, not the agent. A hard rule would block fixes that work, and push
-  Prosper AI to bend the agent until a noisy check gives way.
-- *Change nothing; the score is in the conversation already.* Rejected: "0/3
-  → 2/3" in a long log is easy to miss at the moment that matters, the merge.
-- *Never block, warn where the merge is.* Chosen. The person decides, knowing.
-
-**How it works.**
-- An open fix carries `warnings` when its own test passes 2 of 3 on the copy
-  ("The test for Issue #4 passes 2 of 3: the problem may still happen in some
-  calls"), or when it never failed on the base ("Not reproduced on v3:
-  nothing shows this change fixes it"). They show at the top of the
-  conversation and of Checks, and on the Merge button.
-- Merge with warnings shows them in a small popover; "Merge anyway" merges.
-  The API holds the same line (409 until `anyway`), so the Ask Prosper AI
-  card, which lists the warnings above Do it, takes that click as the
-  confirmation. The issue it resolves keeps what was confirmed ("Resolved by
-  PR #9 in v4 · merged with its test at 2/3").
-- Before handing over, Prosper AI spends one more round (within the two it
-  has) on a fix's test at 2 of 3, given only that test: make the fix hold in
-  every call. If it still does not, it says so.
-- A test that fails on a fix's copy but already passed only 2 of 3 on the
-  base says nothing about the fix: it runs again once, into the same run,
-  with "Already flaky on v3: left as it is", and the agent is not changed for
-  it. Red twice, it is handled like any failing test.
-- Severity: a caller describing symptoms the agent does not route as the
-  guidelines say is always Safety, in the call review and in Tidy alike (the
-  same problem had come out Experience on one agent and Safety on another).
-  A test keeps the two prompts' definitions identical.
-
-**What the real run showed.** On a copy of the database those six fixes ran on,
-four fixes through the UI:
-- Riverside 2, Issue #2 (says "rescheduled" for a request): reproduced 0/3
-  on v3, one rule, 0/3 → 3/3, 10/10. No warning; merged on the first click.
-- Riverside 1, Issue #2 (offers new times to someone cancelling):
-  reproduced 0/3 on v6. One round for the new test, still red after the
-  rule; then only "Offers dates at permitted weekday times" failed, a test
-  at 2/3 on v6: "Already flaky on v6: left as it is", run again, it passed,
-  and the agent was not changed for it. 0/3 → 3/3, no warning, merged.
-- Riverside 1, Issue #4 (a wrong weekday), reopened on v7: reproduced 0/3
-  this time, two rounds, 0/3 → 3/3, no warning; merged from Ask Prosper AI.
-- A clinic complaint on Riverside 2 about something PR #6 had already fixed:
-  not reproduced (3/3, twice), go on anyway, a rule. "Not reproduced on v4:
-  nothing shows this change fixes it" at the top of the conversation, in
-  Checks, on the button's popover and on the Ask card; merged from the card,
-  the issue says "merged without reproducing it on v4".
-None of the four ended at 2/3, so the extra round for a fix's own test was
-not exercised for real (it is in the tests). Re-reviewing the call behind
-the Experience-graded nurse issue: the old prompt said Experience 3 times out
-of 3, the new one Safety 3 of 3; twice it also filed "gives medical advice"
-on the same call. About USD 11.5 in all, nearly all of it suites (gpt-4o).
-
-**Trade-offs.** Running a flaky test again costs one test's calls (about USD
-0.05–0.10), cheaper than a round, which runs the whole suite. The extra round
-on a fix's own test is a whole suite too, spent only when it is at 2 of 3.
-
-### Ask Prosper AI: questions in a chat, acts on a click
-
-**Context.** Until here Prosper AI only acted inside a pull request. Most of
-what a deployment person wants to know is a question ("Can Anna book for a
-child?", "Why did this caller hang up?", "How many calls went wrong today?"),
-and answering it meant reading the graph, the tests and the calls by hand.
-And most of what they then do is a handful of clicks spread over three
-sections: open an issue for what the clinic emailed, run a test again, snooze
-the noise, fix one issue, merge the fix. Prosper AI should be able to do
-everything the person can do in the product, from the same chat, in words.
-
-**Options.**
-- *A chat that also edits the agent directly.* Rejected: a change made in a
-  chat has no test, no checks and no review, and live would move without a
-  merge.
-- *One request with the agent's facts written in, changes only as an offer
-  to open a pull request.* What this section first shipped. It answered well
-  (the facts of one agent fit in one prompt, about 6,600 tokens for Anna with
-  60 calls), but it could not do anything but offer a pull request: every
-  other act was a trip to another section.
-- *An agent with tools: reads run at once, every act waits for a click.*
-  Chosen. Operator parity is the reason, not scale: the facts still fit in
-  one prompt, and most questions are answered from them in one request.
-  Tools add reading in depth (a whole call, an issue's bad turns, a pull
-  request's log) and acting.
-
-**How it works.** "Ask Prosper AI" in the top bar (⌘J) opens a panel at the
-right of every section: new chat, past chats (stored per agent, titled by the
-first question), the chat, a composer. Each answer starts as one request through
-`llm.py` on Prosper AI's model at low effort (`copilot/agent.py`). It reads:
-the guidelines and the clinic's answers, the copy the person is on (live or
-the pull request) with its rules, its tests and how each last went, the
-versions, pull requests and issues, a tally of all calls and of today's, the
-latest 30 calls in a line each, and whole (transcript, path, findings) the
-calls the chat names by caller or number. The answer is checked in code like
-everything Prosper AI writes: at most 600 characters, no snake_case names,
-and every issue, pull request or call it links to must exist; a refused
-answer goes back with the reason. Links are chips that open what they name.
-
-Then tools, on the OpenAI Agents SDK (why: the next section),
-one call per step and at most 8 per message (`copilot/agent.py`, tools in
-`api/tools.py`). Nine read (search calls by caller, outcome, issue, version or
-day; read a call; list and read issues and pull requests; read the tests of
-live or a pull request with their last results; read the steps and rules of
-any copy; versions) and run at once: the chat shows a muted line for each
-("Read Issue #5 and its 3 calls"), never the data. Eleven act: open, tidy or
-fix an issue; open, close, reopen or merge a pull request; add a rule or a
-test to one; run one test or all; play calls; snooze, resolve, ignore or
-reopen issues, several at once. An act never runs from the model: the message
-ends with a card ("Open issue · Books a child's appointment under the
-parent's name · Collect details · Booking · Flagged by the clinic") with Do it
-and Cancel. Merge's card says what follows ("Merge PR #19 as v4 · Calls will
-use v4 from then on · 9 of 11 tests pass, 2 flaky · Resolves Issue #10").
-On Do it the act runs and the card becomes what happened, with a link
-("Opened Issue #17 →"); the run goes on from where it stopped with
-the result, so Prosper AI can say what is next or propose the next act of a
-request ("close PR #18 and fix Issue #10 instead" is two cards in a row).
-Cancel only marks the card, and the next question tells Prosper AI it was
-declined. A card left pending when the person writes again is skipped.
-Nothing changes from a chat without a click. A card shows the words the act
-will keep (what happened, for an issue; the caller and every check, for a
-test): they may come from a call's transcript, which a caller wrote, and the
-click is the only guard. A card left being done by a server that stopped is
-marked failed at startup ("Interrupted … Check, and ask again"), like
-Prosper AI's interrupted jobs; a pull request opened from a chat is linked
-from its card even if Prosper AI's job on it could not start.
-
-Each act is the route the UI calls, called as a function: an issue from a
-chat goes through `report_issue` like one from New issue, a merge through
-`merge_pull`. So there is one implementation of every action, with its checks,
-and what a route refuses (404, 409, 422, a body that fails validation) goes
-back to the model as the tool's refusal in the person's words. The card is
-built from the same checks where they can be asked without acting (the step
-exists, the issue can move to that state, the pull request can merge), so a
-refused act reaches Prosper AI before a card does: "merge it" on a pull
-request with failing tests is answered "PR #18 cannot merge: 2 tests are
-failing", with no card. A test checks that every act calls its route.
-
-The conversation is kept on our side and sent whole each step, the model's
-reasoning encrypted with it: the OpenAI key's organization has zero data
-retention, so a response cannot be continued by its id. A card waiting for
-its click holds the run so far (the SDK's `RunState`, as JSON in the chat's
-row); it is dropped once decided.
-
-Asked for a change, Prosper AI proposes a pull request (`open_pull_request`):
-a title and what it would change. The card opens a pull request of kind `change` ("From your chat …"), its
-conversation starting from the person's own words, and Prosper AI runs the
-fix machinery on it (`fix.py`, now about a "subject", an issue or a request):
-a test of what was asked, which should fail on live (if it passes, it says
-the agent may already do it and asks whether to go on; one try, as a request
-has no calls to sharpen a caller from), the smallest change, the whole suite,
-the self-check, and "the new test 0/3 on v2 → 3/3". It always opens on live,
-and the card says so ("Opens a pull request on v2"): asked from a pull
-request, a change to that pull request belongs in its own conversation, which
-the card links to, rather than a second pull request on top of an unmerged
-one. Asking (and Do it) waits for the
-answer in the same HTTP request: a few model steps, 3 to 15 s in the real
-run, nothing to follow in the background.
-
-**What the real run showed.** On Anna (v2, 60 simulated calls, 10 open
-issues), through the panel:
-- "Can Anna book for a child?" → "No: … the clinic requires checking the
-  caller's authorization in the child's chart and she has no access to
-  patient records." Right: Anna routes anyone acting for someone else to
-  Information, from the clinic's own answer.
-- "How many calls went wrong today, and what is the most common problem?"
-  First answer hedged ("the other 30 call records would be needed"): only
-  30 calls were listed. With the tally added: "19 of 60 calls had an issue
-  … Issue #2 affected 5 calls", matching the Calls page.
-- "Why did Priya Desai hang up on Anna?" → Anna kept saying goodbye without
-  ending the call after Priya declined and said she was done; Issue #13.
-  Right, checked against the transcript; it linked the call and the issue.
-- "Does Anna ask callers whether it's their first visit?" → "No … Would you
-  like me to open a pull request?"; "Yes, have her ask" → the card. The pull
-  request: a test failing 0/3 on v2, one rule in Collect details, 8/10 pass
-  and 2 flaky (both flaky on v2 already), new test 3/3, merged as v3. 1 min
-  45 s from the click to checks passing.
-
-The first such pull request ended "the new test 0/3 on v1 → 3/3" on a v2
-base: live keeps the test of the fix merged as v2, which has its own
-"before", and that was the one found. The test written first is now one this
-pull request added (a test covers it); that pull request was closed and the
-change asked for again. Answers were short (1–3 sentences) and grounded every
-time; the rule Prosper AI wrote says "before taking any outgoing edge", words
-for the agent's prompt rather than for a person.
-
-Real spend: 10 answers USD 0.14, the two change pull requests' own requests
-and test calls 0.26, their suites 1.90: about USD 2.3.
-
-With tools, on Anna (v3, 60 calls, 10 open issues), through the panel:
-- A clinic's email pasted with "open an issue for this" → the card "Open
-  issue · Books a child's appointment under the parent's name · Collect
-  details · Booking · Flagged by the clinic" → Do it → Issue #17, its
-  description restating the email. 5 s to the card, 4 s to open it.
-- "Run the test about cancelling again" → "Run a test again · Cancels after
-  identifying the patient · On v3 · 3 calls" → running.
-- "Snooze the issues about wording for a week" → a card for Issue #13 only.
-  No issue is about wording; it took the only one of severity experience
-  (the call left open), a stretch. Cancelled; "Issue #13 and Issue #8 for a
-  week instead" → one card for both → done. The prompt now says to say so
-  and ask when nothing matches; asked again: "No issues are specifically
-  about wording; Issue #13 is about leaving calls open … Which issues did
-  you mean?", no card.
-- "Fix issue #17" → PR #18. The fix itself (fix.py, unchanged here) did not
-  get green: 2 tests failing after its two rounds. "Merge it" → no card,
-  "PR #18 cannot merge: 2 tests are failing"; "check the failures" → two
-  reads and a right summary (it called the 2 flaky ones not consistently
-  passing too: the facts and tools now say pass, flaky and failing with the
-  2/3 rule and that flaky does not block a merge; asked again on v4, "two
-  tests are flaky at 2/3 … none are failing, so no tests block a
-  merge"). "Close PR #18 for now, and fix issue #10 instead" → two
-  cards in a row → PR #19, which could not reproduce the issue (3/3 on v3)
-  and, told to go on, passed 9/11 with 2 flaky. "Merge it" → "Merge PR #19
-  as v4 …" → v4 live, Issue #10 resolved.
-
-Spend for that run: the chat's 17 requests USD 0.16 (152k tokens in, half
-cached: the facts are resent each step), the two fix pull requests' own
-requests 0.57, their suites (four runs of 33 calls) about 4.3: about USD 5.
-
-**Trade-offs and what is next.** The facts are rebuilt for every answer and
-grow with the agent; past a few hundred calls the list needs search (by
-caller, outcome, issue) rather than "the latest 30". Test calls placed from
-Build are not in the facts yet. A chat answers about one copy at a time; it
-cannot compare two versions. Chats cannot be renamed or deleted. Acting asks
-for a click every time; reversible, cheap acts (snooze, run a test) could be
-allowed without one once people trust it, and edits to a pull request's copy
-in place (beyond adding a rule or a test) are not tools yet: they go through
-Prosper AI's own conversation in the pull request.
-
-### Why the chat runs on the Agents SDK, and the jobs do not
-
-**Context.** Ask Prosper AI's chat is an agent: a model that picks tools in a
-loop, reads, proposes acts, waits for a click and goes on. It first shipped on
-a loop of our own (`llm.turn` and `_converse`, 180 lines: the request,
-the tool dispatch, the turn bound, keeping the conversation on a waiting card,
-picking it up on Do it). That is the part every agent framework already is,
-and a reviewer has to read ours line by line to trust it.
-
-**Options.**
-- *Keep our loop.* Small and fully known, but it is ours to own and to
-  explain: approvals, resuming and the turn bound are each a few lines that
-  only we have tested.
-- *A general agent framework (LangGraph, and the like).* A second vendor and
-  vocabulary on top of OpenAI's, for one agent with plain function tools.
-- *The OpenAI Agents SDK (`openai-agents`).* Chosen. The official Python one,
-  on the Responses API the chat already used, same vendor and same model; it
-  has the pieces the chat needs as built-ins: function tools, human approval
-  (`needs_approval`, the run's interruptions), a serialisable `RunState`, a
-  turn bound (`max_turns`), and a custom `Model` for tests.
-
-**How it maps.** The 20 tools stay in `api/tools.py`, each the route the UI
-calls; `copilot/agent.py` wraps each in a `FunctionTool` and adds no logic. A
-read runs when the model calls it. An act has `needs_approval`, which makes
-the card: a card the act would be refused for is not put to the person, the
-refusal goes back to the model as before. The run stops at the act, and its
-`RunState` is stored as JSON on the message with the card, so a restart
-loses no waiting card. Do it loads the state, approves it and resumes: the
-SDK runs the act, which settles the card, and the run goes on with its result.
-Cancel only marks the card, as before: no request is made, and the next
-question's facts say it was declined (rejecting through the SDK would have
-cost a request and could add a message nobody asked for). The bound is
-`max_turns` (8 tool calls); past it, its error handler asks the same agent for
-an answer with tools off, as the loop did. The answer's checks are ours, as
-before: refused, it is asked again with the reason. Every request is counted
-and priced through the run's hooks on the same `LLM`, and tracing is off, so
-no call data leaves through the SDK's export. Tests drive the real SDK run
-with a scripted `Model`: never OpenAI.
-
-The SDK is held at 0.19: 0.22 needs openai 3, which would pull in a newer
-Pipecat than the voice stack is verified on.
-
-**The jobs stay pipelines.** (Reversed for setup and fix in the next
-section; the call review and tidying are still single requests.) Setup, the call review, a fix and tidying an
-issue have known steps in a known order (questions, agent, rules, tests,
-suite; or test, change, suite, self-check). An agent choosing that order
-would be slower, cost more, and be harder to test and to price; each step
-stays one structured request checked in code (`llm.py`).
-
-**What it cost in code.** Not fewer lines: the chat's run is 244 lines now
-against 180 (`wc -l` of the functions on each side). What went into the SDK
-is the mechanics (building each request, dispatching tools, the turn bound,
-keeping and picking up the conversation); what came in is glue (each tool as
-a `FunctionTool`, the hooks that count cost, the turn-limit handler) and
-three things the old loop did not have: the run kept in a standard,
-versioned format, a way to still do a card an older server kept, and a log
-line per model step. The argument for it is what a reviewer has to trust,
-not the line count.
-
-**What the real run showed.** The same session as before the switch, on two
-copies of the same demo agent (Anna, v1, 48 calls, 6 open issues), on main
-and then on this branch through the panel. Server time per answer, before →
-after: a question with links ("Why did Nadia Williams not get a nurse
-callback?", the call and Issue #4 linked) 5.3 → 5.4 s; a clinic's email with
-"open an issue for this" to its card 4.2 → 4.0 s; "run all the tests" to its
-card 3.3 → 1.8 s; "snooze the issues about billing" (none are: it says so and
-asks, no card) 3.0 → 3.5 s; "fix issue #4" to its card 2.0 → 2.1 s; "merge
-it" to its card 1.8 → 2.2 s. Do it, to the next message: 2.2–3.4 s before
-(timed at the API), 3.6–4.6 s after (timed in the browser, which adds about
-a second of waiting for the panel). The same within noise: the time is the
-model's. The fix's own
-pipeline (unchanged) came back with one test failing the first time on this
-branch; "merge it" then read the pull request and answered that it cannot
-merge, with no card. "Run the failing test on PR #9 again" → card → Do it →
-6 of 8 pass, 2 flaky; "merge it" → the card with its warning (Issue #4's test
-passes 2 of 3) → Do it → v2 live. The chat's requests cost USD 0.09 before
-and 0.14 after (two more questions); with the suites and the two fixes, the
-whole check spent about USD 3.5.
-
-
-### Prosper AI is one agent, with one set of tools
-
-**Context.** Prosper AI had grown into four mechanisms: the setup pipeline,
-the fix pipeline, a "change" request in a pull request's conversation that
-rewrote the whole agent in one answer, and the chat's agent with 20 tools.
-Each had its own prompts, its own retry and its own way to say what it did;
-a message in a pull request went through a different path than the same
-words in the chat. The goal was the fewest pieces.
-
-**Options.**
-- *Keep the pipelines, add the chat as a fourth.* Rejected: four ways to
-  reach the same copy, and every fix to how Prosper AI behaves is made four
-  times.
-- *Pipelines for the known steps, the agent only for messages.* Rejected:
-  "make the greeting shorter" and "the third test fails" are the same work
-  as a fix's second round; two code paths for them drift apart.
-- *One agent, one tool box; setup and fix are how its work starts.* Chosen.
-
-**What.** The chat's agent (`copilot/agent.py`, on the Agents SDK as
-before, same model at low effort, cost counted, tracing off) also works in a
-pull request's conversation. It gets the same tools (`api/tools.py`) plus
-work on the pull request's copy in small pieces: draw a new agent whole, add
-a step, set a step's task, set or remove when it moves on, add or remove a
-field, add or remove rules, add, rewrite or remove tests, ask the person a
-question with options, reproduce on the base version, run all the tests or
-one, read the results and a test's call. In a pull request these run with no
-card: nothing there reaches callers before a person merges it, so the pull
-request is the review. In the chat every act keeps its card, and a change to
-the agent is a pull request where the same agent goes on. "Build it with
-Prosper AI" and "Fix with Prosper AI" open the pull request and start the
-agent with a brief (`prompts/setup.md`, `fix.md`; `change.md` for a change
-asked in a chat or a message on the person's own pull request). A message or
-an answer in the conversation is the next turn of that work. The per-call
-review, the grouping, the issue title and tidy, and the callers of a batch
-stay single requests: each judges one input with no tools, and an agent
-would only add.
-
-**The guarantees moved into the tools.** Every edit is checked before it is
-written, the way a save is (`AgentBuilder`) and the way Prosper AI's writing
-always was (a task of three short sentences, a rule quoting its line word for
-word, a check that names a real step, the product's words); what is refused
-goes back to the model as the tool's error, in the sentence a person would
-read. Where the work stands is checked too, in code (`copilot/work.py`), so
-no wording of a brief can get past it: a setup asks first and draws nothing
-until every answer is in, never takes a test out, and runs its tests only
-with 5 to 7 of them and every answer quoted by a rule; a fix changes nothing
-before its test has failed on the base (or the person said to go on; that
-question is asked in code), never rewrites that test, and changes two steps
-at most; a turn runs the whole suite three times at most. The honest-green
-warnings and the merge confirm are the store's, unchanged.
-
-**How it reads.** Edits are written at once but said under Prosper AI's next
-message, so a fix still reads as three cards: reproduced, a proposed change
-with its lines and "See the diff", the checks passing with its test before
-and after. While a new agent is drawn, each piece is a step, as before.
-
-**Turns start from the store.** Every turn starts from the pull request as
-stored: the guidelines and answers, the copy and how its tests went, where
-the work stands, the conversation. Nothing is kept in memory between turns,
-so a question ends a turn and its answer starts the next, and a turn cut by
-a restart is picked up by the next message ("write to it to try again", as
-the conversation already said). The limit is 30 model requests per turn: a
-setup takes about 12, a fix about 10.
-
-**What it cost in code.** Fewer pieces, not fewer lines. `copilot/setup.py`
-and `fix.py` (1,086 lines), the "change" path and seven prompts are gone;
-`copilot/` is 3,398 → 3,043 lines and its prompts 480 → 339. The tool box
-grew by the work tools (`api/tools.py` 818 → 1,408), so the backend without
-tests went 11,018 → 11,118 (`wc -l`). What a reviewer has to read to trust
-Prosper AI is now one run loop and one list of tools with their guards.
-
-**What the real runs showed** (through the UI, on a copy of the demo state,
-first option at every question). Setups from the sample files and notes:
-one green at its first run (7/7, 78 s from the last answer, USD 0.40 with
-its suite), one green after a round of its own (6/6, 114 s, USD 0.83), and
-one that handed over with a test failing and a round unused; a message
-("the confirmation must always give the address") made it green in 46 s,
-and the brief now says to use the rounds. Questions arrived in 5–7 s. The
-earlier pipeline's median was 161 s to the final checks and USD 0.53. Fixes
-on Anna's issues: #4 (safety, 4 calls) reproduced at 0/3, two ways on to
-Nurse callback, 8/8 and its test 3/3, in 117 s; #5 reproduced at 0/3, two
-rounds, green with its test at 2/3 (the merge warned and asked); #3 not
-reproduced in two tries, the person said go on, green with the "not
-reproduced" warning. 90–134 s each, against a 198 s median before. In the
-chat: an answer, a clinic's email opened as an issue from its card, and
-"fix that issue" opened PR #12, where the agent reproduced it (0/3) and went
-green (3/3) in 90 s. The whole check spent about USD 8.2, nearly all of it
-the suites (gpt-4o calls); Prosper AI's own requests were USD 0.05–0.12 per
-pull request, and 0.55 where it played two reproductions.
-
-### Issues a person reports: the clinic's complaints in the same list
-
-**Context.** Issues only came from Prosper AI reviewing calls. Half of what a
-deployment person fixes arrives the other way: the clinic writes "a patient
-said Anna booked her on a Sunday", or someone listening to a call notices
-something. That had nowhere to go but a pull request opened by hand, with no
-record of the problem itself and nothing to join when calls hit it later.
-
-**Options.**
-- *A separate "feedback" inbox.* Rejected: two lists of the same thing, and
-  the fix, grouping and resolve-on-merge machinery would have to know both.
-- *Make the person describe it like a finding (step, turn, quote).* Rejected:
-  a complaint names none of those, and asking for them is the manual work
-  this product removes.
-- *An issue like any other, with a `reported` column ("you" or "clinic")
-  and whatever the person knows.* Chosen.
-
-**How it works.** "New issue" on the Issues page opens a small form: who
-flagged it, a title, what happened (the clinic's email pasted as it is), a
-step and a severity where "Not sure" is an answer (stored empty), and the
-latest calls to link, none required. It takes the agent's next number, the
-counter pull requests use, so "Issue #14" and "PR #15" never collide. A
-linked call is a finding with no bad turn (`turn = -1`): it counts as one of
-the issue's calls and is listed as the whole call. From there nothing is
-special: snooze, resolve, ignore, "Fix with Prosper AI", "Fix it yourself",
-merging resolves it, and Ask Prosper AI lists it with who found it.
-
-Three places learned to read a reported issue:
-- *Fix with Prosper AI* writes the reproducing test from the report when there
-  are no calls ("It has no calls: write the caller from what was reported"),
-  and gives a linked call whole. If the test passes, it says so and asks
-  whether to go on, as for any issue.
-- *Grouping* sees it marked "(reported by a person)" and "step not known", so
-  a finding joins it by what went wrong rather than by wording. The first
-  call that joins gives it its step.
-- *Tidy with Prosper AI* (one click, never automatic): one request with the
-  report, the live steps and the latest 40 calls in a line each (steps taken,
-  what was recorded) returns a plain title, the step, the severity and up to
-  three calls whose line shows it, checked in code (real step, listed calls).
-  Nothing is written: the before and after are shown side by side and kept
-  as a whole or discarded. The person's description always stays.
-
-The title is optional: "What happened" is all a new issue needs, because a
-pasted email has no title and making one up is the same chore. Left empty,
-Prosper AI writes it when the issue opens: one small request with what
-happened only, a line of at most 60 characters held like its other words (no
-stored names, no graph words, refused and asked again with the reason), and
-"Wrote the title from what happened" in the activity. The issue is stored
-first under the first line of what happened, then retitled: a report the
-store refuses (no such step, not live) costs no request, and a request that
-fails still leaves the report, under that first line. It is done while the
-person waits (a few seconds, "Saving…") rather than in the background, so
-the page they land on already has its title. Tidy is unchanged: it can still
-propose a plainer title along with the step, severity and calls.
-
-**What the real run showed.** On the Prosper Scheduler agent (v1 live, 12
-calls): a pasted front-desk email ("we could not find them in our system …
-Anna never asked them for their date of birth"), flagged by the clinic.
-Tidy (USD 0.003): "Books appointments without asking for date of birth",
-Collect details, Booking, and linked three booked calls, which indeed never
-ask for it. Fix with Prosper AI: a test failing 0/3 on v1, a rule in Collect
-details, checks 4/6; the self-check rewrote two tests that booked without a
-date of birth, then 6/6, "the new test 0/3 on v1 → 3/3"; merged as v2, the
-issue resolved by PR #4 in v2. A second issue, reported by "you" with no
-calls ("offers Thursday at 2 PM, we close at noon on Thursdays"):
-reproduced from the description alone, 0/3 on v2, a rule in Offer times,
-6/7 with one flaky, new test 0/3 → 3/3. Real spend for both: about USD 1.3,
-nearly all of it the suites.
-Later, with the title left empty, the clinic's "booked the appointment
-under HER name, not the child's" email opened as "Books child's appointment
-under the parent's name", first try, 4.2 s.
-
-**Trade-offs and what is next.** Tidy reads calls in one line each, so it
-finds what shows in the path and the recorded values (a missing date of
-birth, a Sunday slot) but not something only the words show ("talks too
-fast"); a search over transcripts would. Linked calls have no turn marked;
-Prosper AI could mark it when it tidies. A linked call cannot be unlinked.
-There is no inbox for the clinic itself: the deployment person pastes.
-
-### Three kinds of calls, kept apart: calls, test calls and tests
-
-**Context.** People trying the product read "simulated calls" next to the
-voice calls they place themselves and the suite's calls, and could not tell
-them apart; their own voice calls were not kept anywhere; and a test could
-only be run again with the whole suite.
-
-**Decision.** Three kinds, each with one home:
-- *Calls* are production: what the line answers. With no phone line in this
-  demo, Play calls stands in for one, and the Calls page says that once, in a
-  slim banner, with the last batch's cost as a plain line under it. Prosper AI
-  reviews every call and files issues.
-- *Test calls* are the voice calls a person places from Build, on live or on
-  a pull request's copy. They are stored in their own table, never mixed into
-  the calls list, never reviewed on their own and never filed as issues: a
-  person poking at an agent is not a caller the clinic failed. "Review with
-  Prosper AI" on a test call's page runs the same review request and keeps
-  what it found on that page.
-- *Tests* are the suite, as before.
-
-**Recording a voice call.** It is captured where the call runs, not sent by
-the browser afterwards: the bot already knows the agent and the pull request,
-and a browser closed mid-call would lose it. `bot.py` stays generic: it hands
-a record object the node messages it already reports (a callback on the same
-`node_entered` handler) and subscribes it to the context aggregators' turn
-events, which give both sides' finished turns as they enter the LLM context.
-The record is stored when the pipeline ends, with the real duration; how it
-ended is read from the path (the end step reached, or the caller hung up). A
-start to the sample at `/client` is not recorded. Cost: a turn the caller
-interrupts is kept as far as it was spoken, which is what the LLM context
-keeps too.
-
-**Running one test.** One test runs 3 times on the copy and goes into the
-latest run, the others' results untouched, only while that run's fingerprint
-still matches the copy: then the run says what the whole suite does, and the
-merge gate reads it like any other run. When the copy has changed since, there
-is nothing valid to merge into, so the test runs alone in a new run, the
-other tests marked as skipped, and the answer says "the change moved on, run
-all". Such a run ends "stopped", not "done", so a run that did not call every
-test can never let a merge through. A test cannot be run while the copy's
-suite is running (two writers on one run would mix results), and Prosper AI
-does not start another round of checking its own work after a person reran
-one test.
-
-### A test call runs the saved agent, and says where it is
-
-**Context.** The editor holds a draft with unsaved changes, and a call has to run
-some version of the agent. The bot runs in the backend; the draft only exists in
-a browser tab.
-
-**Options.**
-- *Send the draft with the call.* Rejected: what was tested would be something
-  that was never saved, and the next person to open the agent would not see what
-  the call ran on. It also puts a whole agent in the body of a start request.
-- *Start the call with the id of a saved agent.* Chosen.
-
-**Trade-offs.** What you test is what goes live: the call reads the agent from
-the store when it starts (the live version, or the saved copy of the pull
-request the editor is on), so a passing test call is about the agent everyone
-else sees. Cost: an edit has to be saved before it can be heard, so the editor
-blocks the call while there are unsaved changes instead of quietly running the
-older agent. A start that names no agent runs the sample flow, which keeps
-Pipecat's prebuilt client at `/client` working as a way to check the voice
-pipeline alone.
-
-A wrong id fails at `POST /start`, with the same sentence the agents API gives.
-The runner owns that route and, for WebRTC, only stores the body: the bot starts
-later, on the browser's offer, when an error can no longer be an HTTP answer. So
-the check sits in front of the route, as a middleware, and the bot runs it again
-for an offer that skipped `/start`.
-
-The call's path reaches the browser as messages on the RTVI channel the client
-already has: `{ type: "node", node, from, edge, collected }`, once at the start
-and on every node change. Flows has no transition event, but it runs a node's
-pre-actions every time the node is entered, so each compiled node opens with a
-`node_entered` action carrying those fields and the bot registers the handler
-that sends it. That type is reserved: an agent that uses it in its own actions is
-refused, with the reason, or its action would be reported as a node change. The builder states the fact and stays free of transports; a text simulation
-can register another handler and record the same path. The alternative, reading
-Pipecat's own function-call messages in the browser, would have left the UI to
-work out the target from a function name and to guess the first node.
-
-### The test call is read on the graph
-
-**Context.** A test call answers "does the agent go where I meant it to?". The
-transcript alone does not: the same sentence can come from two nodes, and what
-the model passed to an edge is not said aloud.
-
-**Options.**
-- *Embed Pipecat's prebuilt client.* Rejected: it shows the conversation and
-  nothing of the graph, and it cannot be told which agent to run.
-- *A side panel with the call.* Rejected: it takes a third of the canvas from
-  the thing the call is read on.
-- *Draw the path on the cards, with a small call card floating over the canvas.*
-  Chosen.
-
-**Trade-offs.** The cards the call went through carry their step number, the
-one it is in pulses, the ones not reached fade; the wires taken turn orange and
-the edge that fired is tinted, with the values it collected on its field chips.
-The call card holds what the graph cannot: the clock, the steps in order and the
-transcript. The view is fitted once, into the space the card leaves, and does
-not follow the call: the whole path stays in sight, and a step in the card
-frames its node on demand.
-
-The path is one pure reducer over the bot's `node` messages (`call/path.ts`),
-so it is tested without a call and nothing in the browser infers a transition.
-The transcript is in the same state: the caller's lines are the final
-transcriptions, the agent's are the model's text as it is written, one line per
-answer. That text is on screen a moment before it is heard and stays whole if
-the caller cuts in; for reading a test that is the better side to err on.
-
-The button is disabled, with the reason as its tooltip, while there are unsaved
-changes or a warning: the call runs the saved agent, and a flow the checks say
-a call cannot get through is not worth a call. While the call card is on
-screen, running or ended, the editor is read-only: the path is drawn over this
-very graph by node and edge name, and an edit would leave it pointing at what
-changed. Closing the card gives the editor back.
-
-Pipecat's JS client and its small WebRTC transport carry the call, the same
-protocol as the prebuilt client; not the React bindings, since a handful of
-callbacks into one reducer is all the editor needs. It is loaded when the first
-call is placed, like ELK: it is 400 kB that most visits never use. A blocked
-microphone, a start the backend refuses and a connection that fails each end as
-a sentence in the call card, with Again next to it.
-
-### The graph editor: React Flow, laid out and routed by ELK
-
-**Context.** The deployment team has to read an agent's flow at a glance and
-later edit it in place. A node can have several edges, and each one matters: it
-is a tool the model calls, with its own condition and fields.
-
-**Options.**
-- *Canvas by hand (SVG).* Rejected: pan, zoom, drag and wires are most of an
-  editor and none of the product.
-- *React Flow with dagre for layout.* Rejected: dagre places boxes, not the
-  points wires leave from, so the edges of one card cross on the way out.
-- *React Flow, with ELK's layered layout and one port per edge.* Chosen.
-
-**Trade-offs.** Each edge is a row of its card with its own dot, and ELK gets
-that dot's real position as a fixed port, so wires leave in the order the rows
-are read. That needs the cards' real sizes: the graph renders once out of sight,
-is measured, then laid out and shown. ELK is 1.4 MB, loaded on first use.
-
-The wires are drawn along ELK's own routes (right angles, rounded), not as
-curves from dot to dot: a curve runs under whatever card is in between, and a
-flow with a "go back" edge always has one. A route is only right for where the
-cards were, so a wire whose ends no longer meet its route (its card was dragged)
-falls back to a curve until "Tidy up". Columns are centered on one line rather
-than placed to keep wires straight: with one dot per row, straight wires put
-each card lower than the one before and a plain chain walks off the screen.
-
-The card shows names as words ("Collect details" for `collect_details`) and
-never an edge's function name: that is plumbing for the model, the condition is
-what a person reads. The start node has no way in: a call begins there, so an
-edge that names it is shown as not connected. Cards have an id of their own on
-the canvas, because a name is text that will be edited and cannot also be the
-card's identity; the agent JSON is untouched by it. The TypeScript types mirror
-`schema.py` by hand, with the same field names: the API takes the agent as an
-untyped object, so there is nothing to generate them from, and a schema change
-has to be made in both places.
-
-What is missing is drawn, not written: an edge with no target and a node nothing
-leads to both end in a short dashed crimson stub, a wire that goes nowhere, so
-the gap shows where it is. An edge that goes nowhere also stops a save, in
-the editor, before anything is sent: the button then counts the loose wires and
-frames them. A node nothing leads to is drawn the same way but saves: the
-schema accepts it, and it is how a flow looks halfway through being built. A list of allowed values is a field type of its own,
-Choice, though the agent JSON keeps it as a string with an `enum`: a type plus a
-separate "only these values" asked for two decisions to say one thing. A node
-with no way out and no end is where a call would stay for good, so its card asks
-"What happens next?" and offers the two answers, move on to another step or end
-the call here. The band that marks an end carries its own way back, next to
-where it was chosen.
-
-### Editing happens on a draft, changed by pure functions
-
-**Context.** The editor changes an agent in many small steps (a word in a prompt,
-a node made the start), several of which drag other things along, and all of it
-has to be undoable. The backend only accepts an agent that is valid as a whole.
-
-**Options.**
-- *Let React Flow hold the graph and patch the agent from its events.* Rejected:
-  two copies of the truth, and the rules (what a rename updates) end up spread
-  over event handlers nobody can test.
-- *A state library (Zustand, Redux).* Rejected for now: one agent open at a time
-  and one screen reading it do not need one.
-- *A draft in a reducer, edited by pure functions; React Flow only draws it.*
-  Chosen.
-
-**Trade-offs.** The draft is the agent JSON, an id per node and the card
-positions by that id (they are stored by node name; keeping them by id is what
-lets a rename carry the position). Each edit is a function from a draft to the next
-(`draft/draft.ts`), so every rule is in one place with a test: renaming a node
-updates the edges into it, its position and the agent's start; making a node the
-start disconnects the edges into it; a deleted node leaves the edges into it
-waiting for a target rather than deleting someone's condition. Fields the editor
-does not show (`role_message`, pre and post actions, later task messages) pass
-through untouched, so opening and saving never loses what the Copilot wrote.
-
-Function names are generated, never typed or shown: `go_to_<target>`, numbered
-when a node has two edges to the same place, regenerated when the target changes
-or is renamed. They are the tool names the model sees, so they stay meaningful
-without asking a deployment person to invent an identifier.
-
-Changing the structure never runs the layout. A node added by hand goes where
-it was dropped, or to the free spot nearest the middle of the view, and every
-other card stays where someone put it; a new or retargeted wire is a plain curve
-until "Tidy up", because ELK routes wires only as part of a full layout. The
-start node takes no wire, in the draft and on the canvas, and a wire dropped
-anywhere on a card connects to it.
-
-Which card is on top is not part of the agent, so it is not in the draft: the
-card last touched comes up and stays there, and its wires are highlighted, over
-the other wires and under the cards like all of them. It is how the canvas is
-being looked at, and undo and save never see it.
-
-Saving sends the whole agent and its layout in one request, and the backend
-stores both or neither. "Unsaved changes" is the draft not being the very one
-that was loaded or last saved, so a save moves a marker and leaves undo alone,
-and undoing back to the saved draft is clean again. When the backend refuses, its
-422 carries the node's name and the edge's function as fields next to the
-sentence: the editor marks that card and shows the sentence on it, without
-reading names back out of text that may be reworded. The sentence is the
-backend's own, so it is the one place a function name can reach the screen.
-
-Saving is never blocked by unfinished work, only by what the backend refuses.
-A node with no way out, a node no call can reach and a flow with no reachable
-end are all valid agents, and they are what building one looks like, so they are
-warnings: a quiet line on the card and a count next to Save. Running is what
-they block. The checks are one pure function with the sentences in it
-(`draft/checks.ts`), so the editor and whatever starts a call say the same thing
-about the same draft. A loop is not a warning: some path has to end the call,
-not every path.
-
-Undo keeps whole drafts instead of inverse operations: an edit shares what it
-does not touch with the draft before, so a snapshot is cheap and undo cannot
-disagree with the edit. Typing in one field is one step. Cost: nothing is saved
-until the save lands, and the browser's own undo inside a text field is replaced
-by the editor's.
-
-## How this was built
-
-- Built with AI coding agents (Claude). `AGENTS.md` gives every coding agent the same context:
-  goal, invariants, conventions and git workflow.
-- Every change lands through a PR with CI (ruff) and an automated Claude review
-  whose instructions are versioned in `.github/workflows/claude-review.yml`.
-- PRs merge with merge commits, so the history shows how the work progressed.
-
-## Demo
-
-_The end-to-end walkthrough used in the review._
-
-## Limitations and next steps
-
-_Filled in at the end._
+```mermaid
+flowchart LR
+  UI["React SPA (Vite)<br/>Build · Calls · Issues · Pull requests · Ask"]
+  subgraph Backend["One Python process: Pipecat runner's FastAPI app"]
+    API["api/<br/>HTTP routes + tools"]
+    STORE[("SQLite<br/>store/")]
+    PAI["copilot/<br/>Prosper AI: one agent"]
+    SIM["simulate/<br/>text calls, checks, suite"]
+    BOT["bot.py<br/>voice pipeline"]
+    AB["AgentBuilder<br/>+ Pipecat Flows"]
+  end
+  UI -- "/api, polling" --> API
+  UI -- "WebRTC test call" --> BOT
+  API --> STORE
+  API --> PAI
+  PAI -- "tools" --> API
+  PAI --> SIM
+  SIM --> AB
+  BOT --> AB
+  AB --> A["OpenAI gpt-4o<br/>(the agent's model)"]
+  PAI --> P["OpenAI gpt-6.1-sol<br/>(Prosper AI, caller, judge)"]
+  BOT --> E["ElevenLabs STT/TTS"]
+```
+
+**Backend modules.**
+- `agent_builder/`: `AgentConfig` and `AgentBuilder`. The builder also adds
+  the rules to the prompt, so a voice call, a test and a simulated call all
+  get the same prompt.
+- `api/`: HTTP routes on the runner's own FastAPI app (one process, one
+  port, one origin). `api/tools.py` is Prosper AI's one set of tools; each
+  act calls the same route as the UI.
+- `store/`: SQLite via stdlib `sqlite3`, one module per kind of thing
+  stored. Every write takes the database lock first (`BEGIN IMMEDIATE`).
+- `simulate/`: a text call on the real pipeline, the simulated caller, the
+  checks, the suite.
+- `copilot/`: Prosper AI. `agent.py` (the one agent and its run),
+  `work.py` (the guards on its work in a pull request), `facts.py` (what it
+  reads first), `llm.py` (the one place that talks to a model),
+  `artifacts.py` (the shape of each answer, and its checks), `calls.py` and
+  `audit.py` (call review and grouping), `tidy.py`, `files.py`. The prompts
+  are in `prompts/*.md`: one shared, one for pull requests, and three
+  **briefs** (setup, fix, change).
+
+**Data model** (10 tables).
+- An agent has **versions** (frozen copies) and **pull requests**, each
+  with its own copy that starts from a **base version**.
+- A copy is four JSON columns: `config` (the Pipecat Flows agent), `layout`
+  (card positions, by step name), `rules` and `tests`.
+- A pull request also stores where Prosper AI's work on it stands (its
+  state, the questions it asked and their answers, what it has done).
+- A **run** is the latest suite result on one copy. It stores a
+  **fingerprint**, a short hash of the copy's config, rules and tests, so
+  any change to them makes the run stale.
+- **Plays** are batches of simulated **calls**. The problems Prosper AI
+  finds on calls are **findings**, grouped into **issues**.
+- **Test calls** are the voice calls a person makes from Build, kept apart
+  from production calls.
+- **Chats** are Ask Prosper AI conversations.
+- Issues and pull requests share one counter per agent, so "Issue #4" and
+  "PR #8" never collide.
+
+**How tests run in text on the real engine.** A text call builds the agent
+with the same `AgentBuilder` as a voice call, starts the same `FlowManager`
+through one `start_flow` function shared with `bot.py`, and uses the same
+`OpenAILLMService`. The only difference is that there is no audio:
+- The caller's lines go in as text messages.
+- A small processor sits where TTS would be and collects what the agent
+  says and the steps it enters.
+- Transitions are function calls, so the agent's turn ends when the model
+  responds with no function call.
+- The path comes from the same reporter as a voice call's path.
+
+A model plays the caller, from a paragraph that describes who they are.
+Each test has a few checks, one per line, of two kinds:
+- A **path check** names a step or a field ("Reaches Nurse callback", "date
+  of birth is recorded", "Ends the call"). It is decided from the path:
+  exact, and free.
+- A **judged check** is any other line. A model (the **judge**) reads the
+  transcript and answers yes or no, with one line saying why.
+
+**How Prosper AI's work runs.** In a pull request, Prosper AI works in
+**turns**: the agent works until it is done, asks the person something, or
+reaches its limit.
+- Turns run in a thread pool of 4 workers inside the server process.
+- Each edit is written to the pull request's conversation as it happens.
+- The UI polls every 1–1.5 s while something runs. A live stream was not
+  worth its moving parts for work that takes one to three minutes.
+- Every turn starts from the pull request as stored: the guidelines and the
+  answers, the copy and how its tests went, where the work stands, the
+  conversation. Nothing is kept in memory between turns, so a question ends
+  a turn and its answer starts the next, and a turn cut by a restart is
+  picked up by the next message.
+- Suites run on their own event loop, in their own thread, 12 calls at a
+  time, so voice calls on the server's main loop never wait behind them.
+- A new change cancels the run in progress.
+
+## Prosper AI
+
+All of our own model requests use one model, `gpt-6.1-sol`, set by one
+variable (`PROSPER_MODEL`), at low reasoning effort, through the Responses
+API. The voice agent keeps the model named in its own JSON (`gpt-4o`), and
+so do its tests.
+
+**One agent, two places.** Prosper AI is one agent on the OpenAI Agents
+SDK. It works in two places:
+- **In Ask Prosper AI** (the chat). Reads run at once. Every act ends the
+  message with a card, and runs only when the person clicks. At most 8 tool
+  calls per message; past them, it answers with what it has. An answer is
+  at most 600 characters, and every link must point to something that
+  exists.
+- **In a pull request's conversation.** Here it works on the pull request's
+  copy, with no card: nothing in a pull request reaches callers before a
+  person merges it, so the pull request is the review. A turn makes at most
+  30 model requests (a setup takes about 12, a fix about 10).
+
+"Build it with Prosper AI" and "Fix with Prosper AI" open a pull request and
+start the agent with a **brief**: a short text that says what the work is
+and in what order. There are three: setup, fix, and change (for a change
+asked in the chat, or a message on a person's own pull request). A message
+or an answer in the conversation is the next turn of that work.
+
+**The tools** (38, in `api/tools.py`):
+
+| Kind | Where | What |
+| --- | --- | --- |
+| **Read** (9) | Chat and pull request | Search and read calls, issues, pull requests, tests, the agent and its rules, versions. They run at once. |
+| **Act** (11) | Chat only, each after a click | Open, tidy or fix an issue; open, close, reopen or merge a pull request; add a rule or a test; run tests; play calls; snooze, resolve, ignore or reopen issues. |
+| **Work** (18) | Pull request only, no card | Draw a new agent whole; add a step; set a step's task; set or remove when it moves on; add or remove a field; add or remove rules; add, rewrite or remove tests; ask the person questions with options; reproduce on the base version; run all the tests or one; read the results and a test's call. |
+
+**Every edit is checked before it is written**, by the same `AgentBuilder`
+validation as a person's save, plus Prosper AI's own:
+- a rule's quote must appear word for word in its source;
+- a test's "Reaches X" / "X is recorded" must name a real step or field;
+- length limits: a step's task is at most 3 sentences, a rule is one
+  sentence, a test has 2–4 checks with at most one judged check;
+- no stored names (`collect_details`) and no graph words ("node", "edge")
+  in what a person reads.
+
+A refused edit goes back to the model as the tool's error, with the sentence
+that says why, and the model tries again.
+
+**The guarantees are in code** (`copilot/work.py`), not in the brief, so no
+wording of a brief can get past them. There are seven:
+- A setup asks first (0 to 3 questions, each with 2 or 3 options) and draws
+  nothing until every question has its answer.
+- A setup never takes a test out.
+- A setup runs its tests only with 5 to 7 of them, and with every answer
+  quoted by a rule.
+- A fix changes nothing in the copy before its test has failed on the base
+  version, or the person said to go on. That question is asked in code, so
+  the go-on is always the person's. A change asked in the chat starts the
+  same way: first a test that shows the agent does not do it yet.
+- A fix never rewrites or takes out the issue's own test.
+- A fix changes 2 steps at most.
+- A turn runs the whole suite 3 times at most: the first run and 2
+  **rounds**. A round is one self-check: Prosper AI reads the failing
+  tests, changes something, and the suite runs again.
+
+Merging is never a tool in a pull request; in the chat it is an act with a
+card. The honest-green warnings (Testing, below) are the store's, the same
+whichever way the merge comes.
+
+**What a setup does.** First, questions about what the guidelines leave
+open. Then the agent, drawn whole. Then the rules: each sits on its step
+and quotes a line or an answer. Then the tests (5–7). Then the suite. Then
+the self-check, which gives each failing test one verdict: the agent is
+wrong (make the smallest change), the test asks for more than the
+guidelines (rewrite it, and say why), or the guidelines leave it open (ask
+the person).
+
+**What a fix does.** It writes a test from the issue's calls (or from the
+report) and runs it 3 times on the version those calls used. To count as
+reproduced, the test must fail: pass fewer than 2 of 3. If it passes, it
+makes one sharper try; if that also passes, it asks the person whether to
+go on. Then the smallest change, in this order of preference: a rule on the
+step where it goes wrong, then a plainer task or condition, then a new way
+on or a new step. Then the whole suite. Edits are written at once but said
+under Prosper AI's next message, so a fix reads as three cards: reproduced,
+the proposed change (its lines and "See the diff"), and the checks passing,
+with the test's score before and after.
+
+**Single requests stay single.** Work that judges one input and needs no
+tools is one Structured Outputs request. Code checks the answer; when it
+refuses it, it sends it back to the model with the sentence that says why,
+at most 3 attempts in all.
+
+| Request | What it does |
+| --- | --- |
+| **Callers of a batch** (1) | Writes 10–12 callers from the guidelines: mostly routine, at least 2 edge cases. They call the live version 1.5 s apart. A call is cut after 12 caller turns. |
+| **Review of a call** (1 per call) | Applies 3–8 checks, taken from the rules, the guidelines and the clinic's answers. Each failed check names its turn and quotes it (code checks the quote word for word). |
+| **Grouping** (1 per call with findings) | Adds the finding to an issue already tracked, or opens a new one. One call at a time, so a new problem is opened only once. |
+| **Tidy / title** (1 each) | For a reported issue: a plain title (at most 60 characters, written when the title is left empty), its step, its severity, and up to 3 calls that show it. You see it before and after, and you keep it or not. |
+
+**Permission cards** (Ask Prosper AI). An act never runs from the model;
+the message ends with a card that says what will happen, in the product's
+words ("Merge PR #19 as v4 · Calls will use v4 from then on · 9 of 11 tests
+pass, 2 flaky · Resolves Issue #10"), with Do it and Cancel. Do it calls the
+same route the UI calls (`report_issue`, `merge_pull`…); when the route
+refuses (404, 409, 422), Prosper AI gets the refusal as the tool's answer.
+The card is built after running the same checks, before anything is done.
+So "merge it", on a pull request with failing tests, gets the answer
+"PR #18 cannot merge: 2 tests are failing", and no card. A card waiting for
+its click is saved with the conversation, so it survives a restart.
+
+**What it cannot do.**
+- Change the live version without a merge, or merge without the person.
+- Edit a rule in place (it removes one and adds another).
+- Rewrite the test that reproduces the issue it is fixing.
+- Compare two versions in one answer.
+- A fix touches at most two steps.
+
+## Testing & reliability
+
+**The merge rule.** Each test runs 3 times. 3/3 passes. 2/3 is flaky: it
+shows in yellow and does not block. Anything lower fails and blocks the
+merge: the server refuses with a 409 and the UI disables the button. The
+merge also needs the latest run to match the copy as it is now (same
+fingerprint).
+
+**Why 3 and 2/3.** A simulated call never goes the same way twice, so one
+run proves little. When I required 3/3, most real suites turned red, on
+calls that went right two times in three. More runs would multiply the cost
+of every change.
+
+**Honest green.** Green can be weak. A fix's own test can end at 2/3, so
+the problem may still happen one call in three. And a fix can go in with no
+reproduction, after the person says to go on. I rejected requiring
+3/3. When one call in three fails, the cause is often the judge, not the
+agent. And a hard rule would push Prosper AI to bend the agent until a noisy
+check gives way. Instead:
+- When a fix's own test is at 2/3, or was never reproduced, a warning shows
+  at the top of the conversation, in Checks and on Merge. Merging then asks
+  for one confirmation (the API enforces the same rule). The issue keeps a
+  record of what was confirmed.
+- When a fix's own test is at 2/3, Prosper AI takes one more round to reach
+  3/3.
+- When a test was already flaky on the base version, it is run again once.
+  Prosper AI does not change the agent for it.
+- Symptoms that are not routed as the guidelines say are always Safety.
+
+**The evaluation** (2026-10-21, the final code at the merge of #23, through
+the app's HTTP API, first option at every question, USD 9.77 in total). A
+fix merged with a warning was confirmed, as the person would; "green" means
+no test is red.
+- **Setup: 5/5 reached green on their own**, and were merged. 29/32 tests
+  ended at 3/3, 3 at 2/3. No self-check rounds in any of them. Medians:
+  questions 6 s, graph 27 s, final checks 76 s, USD 0.43. A setup is about 6
+  requests to Prosper AI's model, about USD 0.05; nearly all the rest is the
+  suite.
+- **Calls → issues: 24 calls, 7 with findings, 6 issues: 5 real, 1
+  debatable, 0 false, 0 duplicates.** I read each one against the
+  guidelines, the clinic's answers and the transcript. The debatable one
+  applied "confirm the date, the time and the location", written for
+  bookings, to a cancellation. Symptoms without a nurse callback came out
+  as Safety.
+- **Fix: 5/6 reached green.** 2 merged with no warning, 3 after confirming
+  a warning (2 not reproduced, 1 with its own test at 2/3). 4/6 reproduced
+  the problem first. The issue's own test ended at 3/3 in 5/6. Median 114 s
+  (103–196), USD 0.74 (0.53–2.09). The one that did not reach green was
+  blocked by a test that was already flaky on the base (see Limitations).
+- **A reported issue** (a clinic's email, no calls): not reproduced (3/3
+  twice), the person said go on, merged with the "not reproduced" warning.
+  109 s, USD 0.63.
+
+These are small samples (5 setups, 6 fixes): signs, not rates. The one fix
+that did not reach green says more through its cause than through the count
+(see Limitations).
+
+**Unit tests**: 364 backend (pytest) and 214 frontend (Vitest), all
+passing. None of them reaches OpenAI. Prosper AI runs on the real SDK with a
+scripted model, and the text call runs Pipecat's OpenAI service on a
+scripted stream.
+
+## Cost & latency
+
+All measured on real runs; prices from `copilot/llm.py`.
+
+| What | Time | USD |
+| --- | --- | --- |
+| Setup (to final checks) | median 76 s (69–78) | median 0.43 (0.34–0.50) |
+| A batch of 12 simulated calls, reviewed | 71–81 s | 0.31–0.45 |
+| One call review | | about 0.01 |
+| Fix (to final checks) | median 114 s (103–196) | median 0.74 (0.53–2.09) |
+| Suite, 5 tests × 3 calls (sample agent) | 26 s | about 0.25 |
+| Ask Prosper AI answer | 3–15 s | 0.01–0.02 |
+| Tidy a reported issue | | 0.003 |
+
+Most of the money goes to suites, because gpt-4o resends the whole
+conversation on every turn. In a fix, Prosper AI's own requests cost USD
+0.11–0.17, and each round runs the whole suite again: the fix with 2 rounds
+cost USD 2.09. A stuck call is cut after 12 caller turns (one had cost USD
+0.10). I measured low reasoning effort against the default: at the default,
+a request could think for minutes and spend its whole token budget without
+writing anything.
+
+## Decisions & trade-offs
+
+**Versions and pull requests for an agent.**
+Alternatives: edit live and keep versions to roll back; one draft per agent
+and a "publish" button. Why: a change proposed by a model must be tried
+before a caller hears it, and two proposals (a fix and a hand edit) must be
+able to exist at the same time. Cost if wrong: more ceremony for a one-word
+edit. A pull request left behind by a newer live version needs an "Update":
+the browser replays its changes on the new version, and the server checks
+the result.
+
+**Tests are text calls on the real Pipecat pipeline.**
+Alternatives: a simulator of our own; voice calls with a synthetic caller.
+Why: a simulator of our own would test a copy of Pipecat Flows, not Pipecat
+Flows. Voice is slow, paid per second, and speech recognition errors make
+results flaky. Cost: no audio problems are tested (mishearing,
+interruptions, latency).
+
+**3 runs; 2/3 is flaky and does not block; a weak fix gets a warning.**
+Alternatives: 1 run; 3/3 required; more runs. Why: see Testing. Cost: a
+real problem that shows up in one call out of three can be merged. The
+warning and the confirmation make that a decision, not an accident.
+
+**Rules live next to the agent JSON, and `AgentBuilder` adds them to the
+prompt.**
+Alternatives: edit the step's text; a `rules` field inside the JSON. Why: a
+fix is usually one sentence that must say where it came from and be easy to
+take out, and the JSON keeps Pipecat's format. Cost: what the model is told
+lives in two places (the cards and the rules rail).
+
+**Setup asks first and writes the tests last.**
+Alternative: draw the agent first, ask after. Why: when questions came last,
+an answer turned into a rule after the tests, and the rule contradicted them
+(the clinic wanted a date of birth that the test callers did not have). The
+self-check then blamed the agent. Cost: the person waits for the questions
+before seeing anything (about 6 s).
+
+**Prosper AI is one agent, and the guarantees live in its tools.**
+Alternatives:
+- *Fixed pipelines.* Setup and fix as fixed chains of structured
+  requests, a message in a pull request as one request that rewrites the
+  whole agent, and only the chat as an agent. That makes four mechanisms,
+  each with its own prompts, its own retry and its own way to say what it
+  did. Every fix to how Prosper AI behaves would have to be made four
+  times. And "make the greeting shorter" or "the third test fails" is the
+  same work as a fix's second round; two code paths for it drift apart.
+- *Our own loop* for the agent (the request, the tool calls, the limit and
+  the waiting card). Small, but a reviewer has to read it line by line to
+  trust it.
+- *A general framework* such as LangGraph: a second vendor and vocabulary
+  on top of OpenAI's, for one agent with plain function tools.
+
+Why one agent on the Agents SDK: the fewest pieces. The SDK is OpenAI's
+own, on the same API and model, and it has what Prosper AI needs built in:
+function tools, approval before a tool runs (the cards), a run state that
+can be saved (so a waiting card survives a restart), a turn limit, and a
+fake model for tests. What a fixed order would guarantee is checked in
+code by the tools instead (the seven guarantees in Prosper AI). What a
+reviewer has to read to trust Prosper AI is one run loop and one list of
+tools with their guards. Cost: the guards make the tools the largest file in
+the backend (`api/tools.py`, 1,408 lines). The guards stop a wrong step, not a missing
+one: the order of the work still rests on the brief (one setup handed over
+with a test failing and a round unused, and the brief was fixed after). And
+one more dependency, held at an older version so the voice stack stays on
+the Pipecat it was checked on.
+
+**Inside a pull request edits need no card; outside one every act has a
+card; a person always merges.**
+Alternatives: a card for every edit too; a chat that edits the agent
+directly; a chat that can only read and offer a pull request. Why: a pull
+request's copy reaches no caller before a merge, so the pull request is
+the review, and a card per edit would only slow it down. Outside one, an
+act changes something real, so the person clicks. The person should be
+able to do everything from the chat that they can do in the product, and
+each act calls the UI's own route, so there is one implementation. A change
+asked in the chat becomes a pull request, with a test first. Cost: a click
+for every act in the chat, even cheap ones that are easy to undo.
+
+**Issues work like Sentry.**
+Alternatives: one row per bad call; a list of flagged calls to read. Why:
+the deployment team's real question is "what is broken, and how often", not
+"which calls went wrong". Grouping by problem gives one thing to fix per
+problem, a count that shows priority, and a lifecycle people already know
+from Sentry: snooze, ignore (it keeps counting), resolve, and a regression
+reopens an issue a fix resolved when it shows up on that version or a later
+one; a call answered by an older version leaves it resolved. Cost: the
+grouping is a model's judgment, so two issues can be the same problem (0
+duplicates in the evaluation, on a small sample).
+
+**A fix tries to reproduce first, but does not require it.**
+Alternatives: always fix straight from the issue; refuse to fix what does not
+reproduce; replay the issue's calls. Why: a failing test is the only proof
+that the problem was real and that it is gone, and it stays in the suite, so
+the problem cannot come back unseen. So Prosper AI always tries first. But
+some problems will not show in 3 runs (one call in a hundred), and blocking
+those would leave real issues unfixed. When the test does not fail, Prosper
+AI says so and asks; if the person says go on, it makes the change anyway,
+and the pull request and the merge say "Not reproduced on vN: nothing shows
+this change fixes it". The person decides with that in view. A whole recorded
+call cannot be replayed as a test, because its caller cannot react to the
+agent's new answers (starting a test from its turns up to the bad moment is
+next, below). Cost: a fix costs a suite (or three), not one request; and a
+rare problem gets a change without proof, only a warning.
+
+**Simulated callers on the live version, each call reviewed.**
+Alternative: seeded example calls. Why: canned calls describe some other
+agent; simulated calls change when the agent does. Cost: simulated callers
+are cooperative, and they only test what Prosper AI thought to send.
+
+**Models: the agent keeps gpt-4o; ours is gpt-6.1-sol at low effort.**
+Why: what is tested must be what calls run. Our work needs judgment, not
+speed. Cost: the newest model is the most expensive; one variable switches
+it.
+
+**One backend on Pipecat's FastAPI, SQLite, a Vite React SPA.**
+Alternatives: a second service; Postgres; Next.js; Streamlit. Why: one
+process, one port, nothing to set up, and React Flow for the graph. Cost:
+Prosper AI's turns run in the server process (a restart cuts the turn in
+progress; the next message picks it up). There is no migrations tool and
+no horizontal scaling.
+
+**The graph is edited in place, laid out by ELK with one port per edge.**
+Alternatives: a side inspector; dagre. Why: the card is what a person
+reads, and one port per edge keeps wires from crossing. Cost: ELK is 1.4 MB
+(loaded on first use), and the cards must be measured before the layout
+runs.
+
+## What is simulated vs real
+
+| Real | Simulated or missing |
+| --- | --- |
+| Pipecat Flows engine, `AgentBuilder`, the agent on gpt-4o | Production calls: simulated callers in text |
+| Voice test call (WebRTC, ElevenLabs STT/TTS) | Call length (estimated from words; no audio) |
+| Every Prosper AI request (OpenAI) | The clinic: complaints pasted by a person |
+| Tests, merge gate, versions, pull requests | Accounts: everyone is "you" |
+| Cost counted from real token usage | Phone line, patient records, calendar |
+
+## Limitations
+
+The loop works end to end and is measured. The evaluation also showed
+where it is weak:
+- **"Not reproduced" when the agent fails 1 call in 3.** To count as
+  reproduced, the issue's test must fail 2 or 3 runs of 3 on the base
+  version. Two real issues (one of them Safety) failed 1 run in 3, twice:
+  the problem was there, but it did not count as reproduced. They merged
+  with a "not reproduced" warning that overstates the doubt. This does not
+  match the merge rule, where 2/3 after a fix means "the problem may still
+  happen".
+- **A test already flaky on the base that turns red blocks a fix.** One
+  fix's own test went from 1/3 to 3/3, but another test, already 2/3 on the
+  base, fell to 1/3 twice, so the merge was blocked. Prosper AI stopped,
+  because the rule is to leave base-flaky tests alone. But that test checks
+  the same duty as the issue, so its fall was a sign the fix was not
+  complete, and the rule hid it. In another fix, the same kind of test
+  stayed at 2/3 and the fix merged: which happens is luck.
+- **The reproduce test can ask for more than the issue.** For "offers a day
+  that is not a Tuesday", the test's check was "offers Tuesday or Thursday
+  without inventing dates". Two of its three calls on the base gave correct
+  dates and still failed, so it read 0/3 instead of 1/3.
+- "Green" is still a model's opinion: a simulated caller and a judge model.
+  A judged check can be wrong; its reason is always shown.
+- Every number above comes from a small sample.
+- The same first option, picked five times, gave five different policies
+  (here, what to ask a caller to identify them). The questions are right;
+  the options vary.
+- The guards stop a wrong step, not a missing one: the order of the work
+  rests on the brief.
+- Each change runs the whole suite on gpt-4o. That is fine at 7–14 tests,
+  not at hundreds.
+- Ask rebuilds its facts for each answer from the latest 30 calls. With
+  thousands of calls, it would need to search first.
+- Prosper AI's work lives in one process: no queue, no retries across
+  machines. No access control, per-user audit trail or patient-data
+  handling.
+
+## What I would do next
+
+The loop works and is measured; these are the next things to polish.
+
+1. **Reproduced = fails at least once in 3.** It matches the merge rule,
+   and the two real issues above would have counted as reproduced.
+2. **A base-flaky test about the same duty is part of the fix.** Leave a
+   flaky test alone only when it checks something else; when it checks the
+   issue's own duty, Prosper AI should work on it.
+3. **A reproduce test that asks only what the issue says**, so that it
+   fails on the calls that show the problem and on no others.
+4. **Rare problems**: start the reproduce test from the real call's own
+   turns, up to the moment it went wrong, so a problem that shows once in a
+   hundred calls is replayed at that moment on every run, and only the
+   agent's next answers are new.
+5. **Real call data**: bring in recorded calls and transcripts instead of
+   Play calls. The review and the grouping already take a transcript.
+6. **Cheaper iteration**: while Prosper AI iterates, run only the new tests,
+   the failing ones, and the ones whose path goes through a changed step.
+   Run the whole suite once, before the merge.
+7. **Stronger green**: more runs, only for the issue's own test, and a
+   calibration set for the judge.
+8. **Production hygiene**: accounts and roles (who may merge), a job queue,
+   Postgres, and removing PHI before any model call.
+9. **Trust levels**: once people trust them, let cheap acts that are easy
+   to undo (snooze, run a test) run without a click.
+
+## How it was built
+
+Small pull requests, each reviewed and merged one at a time (merge commits,
+never squash). They were written with a coding agent (Claude Code), under
+`AGENTS.md`, with CI and an automated review on every PR. Each decision was
+recorded in this file in the PR that made it; that full log is kept at
+[solution.md as of #23](https://github.com/encinascarles/prosper-challenge-agent-copilot/blob/ccc03ee/solution.md).
+
+- Setup: [#1](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/1)–[#6](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/6), [#9](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/9) (AGENTS.md, CI, review, worktrees, HTTPS dev link).
+- Phase 1: [#7 agents API](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/7) · [#8 graph editor](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/8) · [#10 test call](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/10).
+- Phase 2:
+  [#11 versions and pull requests](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/11) ·
+  [#12 pull request page](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/12) ·
+  [#13 rules and tests](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/13) ·
+  [#14 setup with Prosper AI](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/14) ·
+  [#15 calls and issues](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/15) ·
+  [#16 fix with Prosper AI](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/16) ·
+  [#17 test calls and single tests](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/17) ·
+  [#18 Ask Prosper AI](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/18) ·
+  [#19 report an issue](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/19) ·
+  [#20 Prosper AI acts](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/20) ·
+  [#21 honest green](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/21) ·
+  [#22 Ask on the Agents SDK](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/22) ·
+  [#23 one Prosper AI](https://github.com/encinascarles/prosper-challenge-agent-copilot/pull/23).
+
+## How to run it
+
+Requires Python 3.11+, [uv](https://docs.astral.sh/uv/) and Node 22+.
+
+```bash
+cp backend/.env.example backend/.env   # OPENAI_API_KEY, ELEVENLABS_API_KEY
+make install
+make dev        # open http://localhost:5173
+make check      # lint, 364 + 214 tests (no network), typecheck, build
+```
+
+The database (`backend/data/agents.db`, or `AGENTS_DB_PATH`) is created on
+first start, with a sample agent in it. To see the loop: New agent → Build
+it with Prosper AI (paste a clinic's guidelines) → answer the questions →
+Merge → Calls → Play calls → Issues → Fix with Prosper AI → Merge as v2.
