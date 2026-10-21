@@ -14,6 +14,9 @@
 # at once; the run writes each result to the store as it comes, and the editor
 # reads them from there.
 #
+# Prosper AI runs a pull request's tests the same way, and waits for them
+# (`finish`) to read how they went.
+#
 # `services` is who the simulated calls talk to. The tests swap it for fakes.
 #
 
@@ -26,7 +29,6 @@ from loguru import logger
 
 import simulate
 import store
-from copilot import setup
 from store.suite import fingerprint
 
 services: Optional[simulate.Services] = None
@@ -93,23 +95,19 @@ def start_test(
         run = store.start_run(
             agent_id, copy["tests"], simulate.REPEATS, ran_on, pull, version, only=test_id
         )
-    _launch(agent_id, run, copy, [test], pull, version, whole=False)
+    _launch(agent_id, run, copy, [test], pull, version)
     return run, alone
 
 
-def run_again(agent_id: str, pull: int, test_ids: list[str]) -> dict:
-    """Run some tests of the pull request's latest run again, into it, as its suite.
-
-    For Prosper AI: a test that was already flaky before its change gets one
-    more go before it counts against the change. When they are done, Prosper
-    AI looks at the checks again, as after a whole suite.
-    """
-    copy = _copy(agent_id, pull, None)
-    last = store.get_run(agent_id, pull=pull)
-    run = store.runs.rerun_tests(last["id"], test_ids)
-    tests = [test for test in copy["tests"] if test["id"] in test_ids]
-    _launch(agent_id, run, copy, tests, pull, None)
-    return run
+def finish(agent_id: str, pull: int, timeout: float) -> None:
+    """Wait for the run on the pull request's copy in progress, if any, to end."""
+    with _lock:
+        future = _running.get((agent_id, pull, None))
+    if future is not None:
+        try:
+            future.result(timeout)
+        except Exception:  # noqa: BLE001 - cancelled by a newer run, or failed: it is over
+            pass
 
 
 def _copy(agent_id: str, pull: Optional[int], version: Optional[int]) -> dict:
@@ -125,12 +123,8 @@ def _launch(
     tests: list,
     pull: Optional[int],
     version: Optional[int],
-    whole: bool = True,
 ) -> None:
-    """Run `tests` into `run` on the checks' loop, replacing whatever ran on the copy.
-
-    `whole`: they are the copy's suite, not one test looked at again.
-    """
+    """Run `tests` into `run` on the checks' loop, replacing whatever ran on the copy."""
     key = (agent_id, pull, version)
     with _lock:
         before = _running.pop(key, None)
@@ -138,7 +132,7 @@ def _launch(
         before.cancel()
     if run["state"] == "running":
         future = asyncio.run_coroutine_threadsafe(
-            _run(agent_id, run, copy, tests, pull, whole), _the_loop()
+            _run(agent_id, run, copy, tests, pull), _the_loop()
         )
         with _lock:
             _running[key] = future
@@ -151,9 +145,7 @@ def _forget(key: tuple, future: Future) -> None:
             del _running[key]
 
 
-async def _run(
-    agent_id: str, run: dict, copy: dict, tests: list, pull: Optional[int], whole: bool
-) -> None:
+async def _run(agent_id: str, run: dict, copy: dict, tests: list, pull: Optional[int]) -> None:
     """Run `tests` of the copy into `run`; `pull`: the open pull request it is the copy of."""
 
     def keep(test: dict, result: dict) -> None:
@@ -179,13 +171,6 @@ async def _run(
                 store.record_checks(agent_id, pull, latest)
     finally:
         store.finish_run(run["id"])
-    # Prosper AI checks its own work after the suite its change started, not
-    # after a person looked at one test again.
-    if pull is not None and whole:
-        try:
-            setup.after_checks(agent_id, pull)
-        except Exception:  # noqa: BLE001 - the run is over either way
-            logger.exception(f"Prosper AI could not look at the checks of agent {agent_id}")
 
 
 def wait(timeout: float = 30) -> None:

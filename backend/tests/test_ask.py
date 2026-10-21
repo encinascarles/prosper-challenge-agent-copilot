@@ -6,13 +6,12 @@
 # reaches OpenAI. Its other tools: test_ask_tools.py.
 #
 
-import copy
 
 import pytest
 
 import store
 from api import checks
-from copilot import artifacts, ask
+from copilot import agent
 from tests.conftest import settle
 from tests.fakes import tool
 from tests.test_fix import EXAMPLE, ISSUE, two_callers, verdicts, with_issue  # noqa: F401
@@ -37,11 +36,14 @@ RULE = {
     "step": "Collect details",
     "text": "Ask whether the visit is for the caller or someone else.",
 }
-CHANGE = {
-    "reply": "Added a rule in Collect details: ask who the visit is for.",
-    "agent": artifacts.from_config(EXAMPLE),
-    "rules": [RULE],
-}
+SAID = "Added a rule in Collect details: ask who the visit is for."
+# The change as Prosper AI makes it in the pull request: a test of it first.
+CHANGE = [
+    tool("reproduce", **TEST),
+    tool("add_rules", rules=[{**RULE, "source": None, "quote": None}]),
+    tool("run_all", said=SAID),
+    {"answer": "Done: it asks who the visit is for, and every check passes.", "links": []},
+]
 
 
 def _ask(client, agent_id, text, chat=None, pull=None, status=None):
@@ -187,11 +189,7 @@ def test_the_offer_opens_a_change_where_a_test_fails_first_then_passes(
     verdicts,  # noqa: F811
 ):
     agent_id, chat = offered
-    prosper_model.script = {
-        "ask": [NOTHING_MORE],
-        "capture": [TEST],
-        "fix": [copy.deepcopy(CHANGE)],
-    }
+    prosper_model.script = {"ask": [NOTHING_MORE], "work": list(CHANGE)}
     verdicts += [False, False, False]  # the new test fails on v1, all three calls
 
     index = len(chat["messages"]) - 1
@@ -206,7 +204,16 @@ def test_the_offer_opens_a_change_where_a_test_fails_first_then_passes(
     )
     assert pull["chat"] == {"id": chat["id"], "title": "Can it book for a child?"}
     types = [event["type"] for event in pull["events"]]
-    assert types == ["request", "opened", "reproduced", "proposed", "rule", "checks", "proved"]
+    assert types == [
+        "request",
+        "opened",
+        "reproduced",
+        "proposed",
+        "rule",
+        "checks",
+        "proved",
+        "message",
+    ]
     assert pull["events"][0]["text"] == "Yes, have it ask who the visit is for."
     assert pull["events"][1]["chat"] == chat["id"]
     assert pull["events"][2]["text"] == "Wrote a test of it: it fails on v1 as it is · 0/3"
@@ -221,13 +228,15 @@ def test_the_offer_opens_a_change_where_a_test_fails_first_then_passes(
     [rule] = pull["rules"]
     assert (rule["step"], rule["source"]["kind"]) == ("collect_details", "request")
     assert pull["checks"]["state"] == "passed"
-    assert pull["events"][-1]["text"] == (
+    assert pull["events"][-2]["text"] == (
         "All checks passed · 1/1 · 3 runs each · the new test 0/3 on v1 → 3/3"
     )
-    # The test was written from the person's words and the card.
-    capture = prosper_model.asked["capture"][0][1]["content"]
-    assert '"Yes, have it ask who the visit is for."' in capture
-    assert CHANGE_ASKED["what"] in capture
+    # The work started from the person's words and the card, with the change's brief.
+    [start] = [asked for asked in prosper_model.asked["work"] if len(asked) == 2]
+    facts = start[1]["content"]
+    assert '"Yes, have it ask who the visit is for."' in facts
+    assert CHANGE_ASKED["what"] in facts
+    assert "a change asked for in a chat, on v1" in facts
 
     # The card says which pull request it opened, and opens no other.
     assert opened["messages"][index]["action"]["result"]["text"] == f"Opened PR #{number}"
@@ -246,7 +255,7 @@ def test_when_the_test_already_passes_it_says_so_and_asks_whether_to_go_on(
 ):
     agent_id, chat = offered
     # One try: the judge passes it.
-    prosper_model.script = {"ask": [NOTHING_MORE], "capture": [TEST]}
+    prosper_model.script = {"ask": [NOTHING_MORE], "work": [CHANGE[0]]}
 
     number = _opened(_take(client, agent_id, chat), len(chat["messages"]) - 1)
     pull = client.get(f"/api/agents/{agent_id}/pulls/{number}").json()
@@ -257,7 +266,7 @@ def test_when_the_test_already_passes_it_says_so_and_asks_whether_to_go_on(
     )
     assert question["text"] == "Propose the change anyway, with the test I wrote?"
     assert pull["prosper"]["state"] == "waiting"
-    assert len(prosper_model.asked["capture"]) == 1
+    assert len(prosper_model.asked["work"]) == 1  # one try: a request has no calls
 
 
 def test_a_message_that_proposes_nothing_does_nothing(client, live_agent, prosper_model):
@@ -272,7 +281,7 @@ def test_a_message_that_proposes_nothing_does_nothing(client, live_agent, prospe
 
 def test_an_older_chats_offer_still_opens_its_pull_request(client, live_agent, prosper_model):
     agent_id = live_agent()
-    prosper_model.script = {"ask": [ANSWER], "capture": [TEST]}
+    prosper_model.script = {"ask": [ANSWER], "work": [CHANGE[0]]}
     chat = _ask(client, agent_id, "Have it ask who the visit is for.")
     offer = {"by": "Prosper AI", "text": "I can.", "offer": {**CHANGE_ASKED, "pull": None}}
     chat = store.chats.add_message(agent_id, chat["id"], offer)
@@ -300,10 +309,10 @@ def test_a_question_from_a_pull_request_is_answered_from_its_copy(client, new_ag
 
 def test_titles_are_the_first_question_on_one_line():
     assert (
-        ask.store.chats.title_of("  Can she\nbook   for a child? ") == "Can she book for a child?"
+        agent.store.chats.title_of("  Can she\nbook   for a child? ") == "Can she book for a child?"
     )
     long = "Why " + "did the call go there " * 6
-    title = ask.store.chats.title_of(long)
+    title = agent.store.chats.title_of(long)
     assert len(title) <= 80 and title.endswith("…")
 
 
@@ -325,24 +334,22 @@ def test_a_change_names_its_own_test_not_one_a_fix_left_in_live(
             "before": {"version": 0, "passed": 1, "runs": 3},
         },
     }
-    store.prosper.write(agent_id, 1, {"type": "test", "by": "you", "at": "now"}, tests=(earlier,))
+    added = {"type": "test", "by": "you", "at": "now"}
+    store.prosper.change(agent_id, 1, None, tests=[{"id": "earlier", **earlier}], step=added)
     checks.start(agent_id, pull=1)
     settle()
     assert client.post(f"/api/agents/{agent_id}/pulls/1/merge").status_code == 200
-    prosper_model.script = {
-        "ask": [PROPOSE, NOTHING_MORE],
-        "capture": [TEST],
-        "fix": [copy.deepcopy(CHANGE)],
-    }
+    prosper_model.script = {"ask": [PROPOSE, NOTHING_MORE], "work": list(CHANGE)}
     chat = _ask(client, agent_id, "Have it ask who the visit is for.")
     verdicts += [False, False, False]
 
     number = _opened(_take(client, agent_id, chat), 1)
 
     pull = client.get(f"/api/agents/{agent_id}/pulls/{number}").json()
-    assert pull["events"][-1]["text"].endswith("the new test 0/3 on v1 → 3/3")
-    proposal = prosper_model.asked["fix"][0][1]["content"]
-    assert "must make pass: Asks who the visit is for" in proposal
+    assert pull["events"][-2]["text"].endswith("the new test 0/3 on v1 → 3/3")
+    ran = prosper_model.asked["work"][-1][-1]["output"]
+    assert "Asks who the visit is for · passed, 3/3 · the test of what this pull" in ran
+    assert "Offers only open times · passed, 3/3\n" in ran + "\n"
 
 
 def test_a_question_about_a_pull_request_that_does_not_exist_stores_nothing(

@@ -1,7 +1,8 @@
 #
-# What Prosper AI writes, one artifact per request: the agent, its rules, its
-# tests and its questions. For each: the JSON schema the model answers in, the
-# check its answer must pass, and the conversion into what the store keeps.
+# What Prosper AI writes into an agent: its steps, its rules, its tests. For
+# each: the JSON shape the model writes it in, the check it must pass, and the
+# conversion into what the store keeps. Its tools (api/tools.py) run them on
+# every edit, and say what they refuse back to the model.
 #
 # The agent is asked for in a shape of its own, close to AgentConfig but not
 # AgentConfig itself. Structured Outputs in strict mode needs every object's
@@ -21,8 +22,8 @@
 #
 # What Prosper AI writes is kept short and in the product's words (steps,
 # "moves on", never edge or node), and that is checked too, not only asked
-# for: a step's task is at most three short sentences, a rule is one, and a
-# change is held to that only where it changes something. Tests check what
+# for: a step's task is at most three short sentences, a rule is one, and an
+# edit is held to that only where it changes something. Tests check what
 # the guidelines (or the person's answers) ask for: 2 to 4 checks, at
 # most one judged, and never style or wording, which no guideline states and
 # a judge reads differently each time.
@@ -38,7 +39,7 @@ from agent_builder import AgentBuilder
 from agent_builder.schema import DEFAULT_MODEL, DEFAULT_VOICE_ID
 from simulate.checks import parse, unknown_name
 
-MAX_QUESTIONS = 2
+MAX_QUESTIONS = 2  # asked about an agent already drawn
 MAX_TASK_SENTENCES = 3
 MAX_TASK_CHARS = 360
 MAX_RULE_CHARS = 200
@@ -88,54 +89,10 @@ _EDGE = _object(description=_TEXT, target=_TEXT, fields=_list(_FIELD))
 _NODE = _object(name=_TEXT, task=_TEXT, end={"type": "boolean"}, edges=_list(_EDGE))
 AGENT = _object(persona=_TEXT, initial_node=_TEXT, nodes=_list(_NODE))
 
-RULES = _object(rules=_list(_object(step=_STEP, text=_TEXT, source=_TEXT, quote=_TEXT)))
-
-_TEST = _object(name=_TEXT, caller=_TEXT, checks=_list(_TEXT))
-TESTS = _object(tests=_list(_TEST))
-
-_OPTION = _object(label=_TEXT, rule=_object(step=_STEP, text=_TEXT))
-QUESTIONS = _object(questions=_list(_object(text=_TEXT, options=_list(_OPTION))))
-# Asked before anything is drawn, so an option is only what the clinic can pick:
-# the answer shapes the agent, and becomes rules once there are steps to put them on.
-FIRST_QUESTIONS = _object(questions=_list(_object(text=_TEXT, options=_list(_TEXT))))
-MAX_FIRST_QUESTIONS = 3
+MAX_FIRST_QUESTIONS = 3  # asked before anything is drawn
 ANSWER = "your answer"  # the source a rule names when it comes from the clinic's answer
-
-# A change asked for in the pull request's conversation: the agent whole, as it
-# should be after it, what to add to its rules and tests, and which of them to
-# take out (by id: only those this pull request added can go).
-CHANGE = _object(
-    reply=_TEXT,
-    agent=AGENT,
-    rules=_list(_object(step=_STEP, text=_TEXT)),
-    tests=_list(_TEST),
-    remove=_list(_TEXT),
-)
-
-
-# A fix of an issue: the agent whole, as it should be after the smallest change
-# that fixes it, and rules to add. No tests: the test that reproduces the
-# issue is written first, on its own.
-FIX = _object(reply=_TEXT, agent=AGENT, rules=_list(_object(step=_STEP, text=_TEXT)))
 # A fix changes this many steps at most: more is a rewrite, not a fix.
 MAX_FIXED_STEPS = 2
-# The test that reproduces an issue, written from its calls.
-REPRODUCE = _object(name=_TEXT, caller=_TEXT, checks=_list(_TEXT))
-
-# Prosper AI checking its own draft after a run: a verdict per failing test,
-# and what it changes for each.
-VERDICTS = ("agent", "test", "gap")
-REVIEW = _object(
-    summary=_TEXT,
-    verdicts=_list(
-        _object(test=_TEXT, verdict={"type": "string", "enum": list(VERDICTS)}, why=_TEXT)
-    ),
-    agent=AGENT,
-    rules=_list(_object(step=_STEP, text=_TEXT)),
-    remove_rules=_list(_TEXT),
-    tests=_list(_object(id=_TEXT, name=_TEXT, caller=_TEXT, checks=_list(_TEXT))),
-    questions=_list(_object(text=_TEXT, options=_list(_OPTION))),
-)
 
 
 # ---- names -------------------------------------------------------------------
@@ -395,12 +352,17 @@ def step_of(step: Optional[str]) -> Optional[str]:
     return None if step is None or not step.strip() else to_name(step)
 
 
-def _plain(text: str) -> str:
+def plain(text: str) -> str:
+    """`text` as a quote is compared: curly quotes straight, one case, single spaces."""
     text = text.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
     return " ".join(text.lower().split())
 
 
-def _check_step(rule: dict, steps: set) -> None:
+def check_rule(rule: dict, steps: set) -> Optional[str]:
+    """Raise ValueError if the rule is not one short sentence on a step the agent has.
+
+    Returns its step as stored, None for every step.
+    """
     check_rule_text(rule["text"])
     step = step_of(rule["step"])
     if step is not None and step not in steps:
@@ -408,83 +370,32 @@ def _check_step(rule: dict, steps: set) -> None:
             f"Rule '{rule['text']}' is for step '{rule['step']}', which the agent does not "
             f"have. Use one of: {', '.join(sorted(steps))}, or null for every step."
         )
+    return step
 
 
-def check_first_questions(answer: dict) -> None:
-    problems = Problems()
-    if len(answer["questions"]) > MAX_FIRST_QUESTIONS:
-        problems.found.append(f"Ask {MAX_FIRST_QUESTIONS} questions at most: the ones that matter.")
-    for question in answer["questions"]:
-        if not 2 <= len(question["options"]) <= 3:
-            problems.found.append(f"Question '{question['text']}' needs 2 or 3 options.")
-    problems.raise_any()
-
-
-def check_rules(answer: dict, config: dict, sources: list[dict], answers: tuple = ()) -> None:
-    """Every rule traced to a line of the guidelines, or to one of the clinic's `answers`.
-
-    Each answer becomes at least one rule, quoting it, on the step it is about.
-    """
-    problems = Problems()
-    for rule in answer["rules"]:
-        if rule["source"] == ANSWER:
-            problems.check(_check_answer_rule, rule, config, answers)
-        else:
-            problems.check(_check_rule, rule, config, sources)
-    quoted = {_plain(r["quote"]) for r in answer["rules"] if r["source"] == ANSWER}
-    for given in answers:
-        if _plain(given) not in quoted:
-            problems.found.append(
-                f"The clinic answered '{given}': write it as a rule on the step it is about, "
-                f"with source '{ANSWER}' and that answer as its quote."
+def check_quote(rule: dict, sources: list[dict], answers: list[str]) -> dict:
+    """The rule's source as stored, from the line it quotes: of the guidelines, word for word,
+    or one of the clinic's `answers` (source "your answer"). Raises ValueError otherwise:
+    a quote the model made up would point the person at a sentence nobody wrote."""
+    if rule["source"] == ANSWER:
+        if plain(rule["quote"]) not in {plain(a) for a in answers}:
+            raise ValueError(
+                f"Rule '{rule['text']}' quotes '{rule['quote']}', which is not one of the "
+                f"clinic's answers: {', '.join(answers) or 'none'}."
             )
-    problems.raise_any()
-
-
-def _check_answer_rule(rule: dict, config: dict, answers: tuple) -> None:
-    _check_step(rule, {node["name"] for node in config["nodes"]})
-    if _plain(rule["quote"]) not in {_plain(a) for a in answers}:
-        raise ValueError(
-            f"Rule '{rule['text']}' quotes '{rule['quote']}', which is not one of the clinic's "
-            f"answers: {', '.join(answers) or 'none'}."
-        )
-
-
-def _check_rule(rule: dict, config: dict, sources: list[dict]) -> None:
-    steps = {node["name"] for node in config["nodes"]}
-    texts = {source["name"]: _plain(source["text"]) for source in sources}
-    _check_step(rule, steps)
+        return {"kind": "answer", "quote": rule["quote"]}
+    texts = {source["name"]: plain(source["text"]) for source in sources}
     if rule["source"] not in texts:
         raise ValueError(
             f"Rule '{rule['text']}' quotes '{rule['source']}', which is not one of the "
-            f"sources: {', '.join(texts)}."
+            f"sources: {', '.join([*texts, ANSWER])}."
         )
-    if _plain(rule["quote"]).strip(" .") not in texts[rule["source"]]:
+    if plain(rule["quote"]).strip(" .") not in texts[rule["source"]]:
         raise ValueError(
             f"The quote of rule '{rule['text']}' is not in '{rule['source']}' word for "
             "word. Copy the line exactly as it is written there."
         )
-
-
-def rules_from(answer: dict, pull: int) -> list[dict]:
-    """The rules of an answer to RULES, each with its source: a line of the guidelines."""
-    return [
-        {
-            "step": step_of(rule["step"]),
-            "text": rule["text"],
-            "source": (
-                {"kind": "answer", "pull": pull, "quote": rule["quote"]}
-                if rule["source"] == ANSWER
-                else {
-                    "kind": "guidelines",
-                    "pull": pull,
-                    "file": rule["source"],
-                    "quote": rule["quote"],
-                }
-            ),
-        }
-        for rule in answer["rules"]
-    ]
+    return {"kind": "guidelines", "file": rule["source"], "quote": rule["quote"]}
 
 
 # ---- tests -------------------------------------------------------------------
@@ -542,105 +453,27 @@ def _check_test(test: dict, steps: list, fields: list) -> None:
 # ---- questions ---------------------------------------------------------------
 
 
-def check_questions(answer: dict, config: dict) -> None:
-    steps = {node["name"] for node in config["nodes"]}
-    if len(answer["questions"]) > MAX_QUESTIONS:
-        raise ValueError(f"Ask {MAX_QUESTIONS} questions at most: only the ones that matter.")
-    for question in answer["questions"]:
+def check_questions(questions: list[dict], steps: Optional[set]) -> None:
+    """Raise ValueError for questions that cannot be asked as they are.
+
+    `steps`: the agent's, when it is drawn; None before, when there is nothing
+    for an option's rule to go on yet, so an option is only what the clinic picks.
+    """
+    most = MAX_QUESTIONS if steps is not None else MAX_FIRST_QUESTIONS
+    if len(questions) > most:
+        raise ValueError(f"Ask {most} questions at most: only the ones that matter.")
+    for question in questions:
         if not 2 <= len(question["options"]) <= 3:
             raise ValueError(f"Question '{question['text']}' needs 2 or 3 options.")
         for option in question["options"]:
-            check_rule_text(option["rule"]["text"])
-            step = step_of(option["rule"]["step"])
-            if step is not None and step not in steps:
+            if option["rule"] is None:
+                continue
+            if steps is None:
                 raise ValueError(
-                    f"The rule of option '{option['label']}' is for step '{step}', which the "
-                    f"agent does not have. Use one of: {', '.join(sorted(steps))}, or null."
+                    "Nothing is drawn yet: an option is only what the clinic picks. "
+                    "Leave its rule null; their answer becomes rules once there are steps."
                 )
-
-
-# ---- a change ----------------------------------------------------------------
-
-
-def check_change(answer: dict, name: str, before: dict, removable: set = frozenset()) -> dict:
-    """The agent JSON the change makes. Raises ValueError like the checks above.
-
-    `removable` are the ids of the rules and tests the change may take out.
-    """
-    for item in answer.get("remove", []):
-        if item not in removable:
-            raise ValueError(
-                f"'{item}' is not the id of a rule or test that can be taken out. "
-                f"Those that can: {', '.join(sorted(removable)) or 'none'}."
-            )
-    config = keep_extras(to_config(name, answer["agent"]), before)
-    check_agent(config)
-    problems = Problems()
-    problems.check(check_concise, config, before)
-    steps = {node["name"] for node in config["nodes"]}
-    for rule in answer["rules"]:
-        problems.check(_check_step, rule, steps)
-    for test in answer["tests"]:
-        problems.check(check_tests, [test], config)
-    problems.raise_any()
-    return config
-
-
-# ---- checking its own draft --------------------------------------------------
-
-
-def check_review(
-    answer: dict, failing: dict, before: dict, removable: set, kept: set = frozenset()
-) -> dict:
-    """The agent JSON a review makes. Raises ValueError like the checks above.
-
-    `failing` maps the failing tests' ids to their names: each gets exactly
-    one verdict, and only a test judged too strict is rewritten. A test is
-    never taken out. `removable` are the rules the review may take out. `kept`
-    are tests never rewritten: the one that reproduces the issue a fix is for.
-    """
-    verdicts = {}
-    for item in answer["verdicts"]:
-        if item["test"] not in failing:
-            raise ValueError(
-                f"'{item['test']}' is not a failing test. Failing: {', '.join(sorted(failing))}."
-            )
-        if item["test"] in kept and item["verdict"] == "test":
-            raise ValueError(
-                f"Test '{item['test']}' reproduces the issue this pull request fixes: it says "
-                "what the agent must do. The agent is what is wrong."
-            )
-        verdicts[item["test"]] = item["verdict"]
-    if missing := set(failing) - set(verdicts):
-        raise ValueError(f"Give a verdict for every failing test; missing: {', '.join(missing)}.")
-    rewritten = {test["id"] for test in answer["tests"]}
-    too_strict = {test for test, verdict in verdicts.items() if verdict == "test"}
-    if rewritten != too_strict:
-        raise ValueError(
-            "Rewrite exactly the tests whose verdict is 'test', by their id: "
-            f"{', '.join(sorted(too_strict)) or 'none'}."
-        )
-    for item in answer["remove_rules"]:
-        if item not in removable:
-            raise ValueError(f"'{item}' is not the id of a rule that can be taken out.")
-    config = keep_extras(to_config(before["name"], answer["agent"]), before)
-    check_agent(config)
-    problems = Problems()
-    problems.check(check_concise, config, before)
-    steps = {node["name"] for node in config["nodes"]}
-    for rule in answer["rules"]:
-        problems.check(_check_step, rule, steps)
-    for test in answer["tests"]:
-        problems.check(check_tests, [test], config)
-    problems.check(check_questions, {"questions": answer["questions"]}, config)
-    problems.raise_any()
-    if "agent" in verdicts.values() and not (
-        config != before or answer["rules"] or answer["remove_rules"]
-    ):
-        raise ValueError("A verdict says the agent is wrong, but nothing in the agent changed.")
-    if "gap" in verdicts.values() and not answer["questions"]:
-        raise ValueError("A verdict says the guidelines leave a gap: ask about it.")
-    return config
+            check_rule(option["rule"], steps)
 
 
 # ---- a fix -------------------------------------------------------------------
@@ -662,27 +495,3 @@ def changed_steps(before: dict, after: dict) -> list[tuple[str, str]]:
         ):
             changes.append((name, "edges"))
     return changes
-
-
-def check_fix(answer: dict, before: dict) -> dict:
-    """The agent JSON a fix makes. Raises ValueError like a change, and if it is not small.
-
-    It must change something (a step or a rule), and at most MAX_FIXED_STEPS steps.
-    """
-    config = check_change({**answer, "tests": [], "remove": []}, before["name"], before)
-    touched = changed_steps(before, config)
-    persona = config.get("persona") != before.get("persona")
-    if not touched and not answer["rules"] and not persona:
-        raise ValueError("Nothing changed: the fix must change a step, an edge or add a rule.")
-    if len(touched) > MAX_FIXED_STEPS:
-        names = ", ".join(name for name, _ in touched)
-        raise ValueError(
-            f"The fix changes {len(touched)} steps ({names}): change the one where it goes "
-            f"wrong, {MAX_FIXED_STEPS} at most, or add a rule on that step instead."
-        )
-    return config
-
-
-def check_reproduction(answer: dict, config: dict) -> None:
-    """A test that reproduces an issue reads like any test, with a judged check or a path one."""
-    check_tests([answer], config)

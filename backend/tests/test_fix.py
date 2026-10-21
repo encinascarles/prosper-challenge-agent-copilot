@@ -1,14 +1,17 @@
 #
 # Fixing an issue, through the API: "Fix with Prosper AI" opens a pull request
-# where Prosper AI reproduces the issue with a test, proposes the smallest
-# change and proves it on the whole suite; merging it resolves the issue, and
-# a call on the fixed version with the same problem opens it again. "Fix it
-# yourself" opens the same kind of pull request for the person. The model is
-# scripted and the calls run on fakes: nothing here reaches OpenAI.
+# where Prosper AI reproduces the issue with a test, makes the smallest change
+# and proves it on the whole suite; merging it resolves the issue, and a call
+# on the fixed version with the same problem opens it again. "Fix it
+# yourself" opens the same kind of pull request for the person. The guards of
+# a fix are its tools': nothing changes before the issue is reproduced (or the
+# person says to go on), its own test stays as it is, two steps at most.
 #
-# The fake judge decides the test that reproduces the issue: its verdicts are
-# given in order, so a test can fail on the version with the issue and pass on
-# the fix (the reproduction runs before the suite does).
+# Prosper AI's model is scripted (each answer a tool call or its last word)
+# and the calls run on fakes: nothing here reaches OpenAI. The fake judge
+# decides the test that reproduces the issue: its verdicts are given in
+# order, so a test can fail on the version with the issue and pass on the fix
+# (the reproduction runs before the suite does).
 #
 
 import copy
@@ -18,8 +21,12 @@ from pathlib import Path
 import pytest
 
 import store
-from copilot import artifacts, audit
+from api.tools import TOOLS
+from copilot import agent as prosper
+from copilot import audit, work
+from copilot.agent import Work
 from tests.conftest import settle
+from tests.fakes import tool
 from tests.test_live import CALLERS, REVIEW
 
 EXAMPLE = json.loads((Path(__file__).parent.parent / "example_flow.json").read_text())
@@ -31,12 +38,18 @@ TEST = {
     "checks": ["Reaches Offer times", "Offers only times the clinic is open"],
 }
 RULE = {"step": "Offer times", "text": "Offer only Tuesday at 10 AM."}
-FIX = {
-    "reply": "Added a rule in Offer times: offer only Tuesday at 10 AM, as the clinic is "
-    "closed on Thursday afternoons.",
-    "agent": artifacts.from_config(EXAMPLE),
-    "rules": [RULE],
-}
+SAID = (
+    "Added a rule in Offer times: offer only Tuesday at 10 AM, as the clinic is closed on "
+    "Thursday afternoons."
+)
+END = {"answer": "All checks pass, and the new test went from 0/3 to 3/3. Merge it.", "links": []}
+# A fix as Prosper AI makes it: reproduce, a rule, the suite, its last word.
+FIX = [
+    tool("reproduce", **TEST),
+    tool("add_rules", rules=[{**RULE, "source": None, "quote": None}]),
+    tool("run_all", said=SAID),
+    END,
+]
 
 
 @pytest.fixture(autouse=True)
@@ -76,6 +89,10 @@ def with_issue(client, live_agent, prosper_model):
     return make
 
 
+def _script(model, *steps) -> None:
+    model.script = {"work": list(steps)}
+
+
 def _fix(client, agent_id, prosper=True, status=201) -> dict:
     response = client.post(f"/api/agents/{agent_id}/issues/{ISSUE}/fix", json={"prosper": prosper})
     assert response.status_code == status, response.text
@@ -95,11 +112,30 @@ def _types(pull: dict) -> list[str]:
     return [event["type"] for event in pull["events"]]
 
 
-def test_prosper_ai_reproduces_the_issue_proposes_a_fix_and_proves_it(
+def _told(model, turn: int = -1) -> str:
+    """What a turn of the work started from: the facts, its first message."""
+    return [asked for asked in model.asked["work"] if len(asked) == 2][turn][1]["content"]
+
+
+def _outputs(model) -> list[str]:
+    return [asked[-1]["output"] for asked in model.asked["work"] if "output" in asked[-1]]
+
+
+def _answer(client, agent_id, number, option: int) -> None:
+    question = _pull(client, agent_id, number)["events"][-1]["question"]
+    answer = {"question": question, "option": option}
+    assert (
+        client.post(f"/api/agents/{agent_id}/pulls/{number}/answers", json=answer).status_code
+        == 200
+    )
+    settle()
+
+
+def test_prosper_ai_reproduces_the_issue_makes_a_fix_and_proves_it(
     client, with_issue, prosper_model, verdicts
 ):
     agent_id = with_issue()
-    prosper_model.script = {"reproduce": [TEST], "fix": [FIX]}
+    _script(prosper_model, *FIX)
     verdicts += [False, False, False]  # the test fails on v1, all three calls
 
     opened = _fix(client, agent_id)
@@ -107,7 +143,15 @@ def test_prosper_ai_reproduces_the_issue_proposes_a_fix_and_proves_it(
 
     assert (pull["kind"], pull["fixes"], pull["base_version"]) == ("fix", ISSUE, 1)
     assert pull["title"] == "Fix: Offers Thursday afternoons"
-    assert _types(pull) == ["opened", "reproduced", "proposed", "rule", "checks", "proved"]
+    assert _types(pull) == [
+        "opened",
+        "reproduced",
+        "proposed",
+        "rule",
+        "checks",
+        "proved",
+        "message",
+    ]
     reproduced = pull["events"][1]
     assert reproduced["text"] == (
         "Reproduced it: a test that calls like these 2 callers fails on v1 · 0/3"
@@ -125,20 +169,23 @@ def test_prosper_ai_reproduces_the_issue_proposes_a_fix_and_proves_it(
     }
     [rule] = pull["rules"]
     assert (rule["step"], rule["source"]["kind"]) == ("offer_times", "issue")
-    assert pull["events"][2]["text"].startswith("Added a rule in Offer times")
+    proposed = pull["events"][2]
+    assert (proposed["text"], proposed["changed"]) == (SAID, True)
     assert pull["checks"]["state"] == "passed"
-    assert pull["events"][-1]["text"] == (
+    assert pull["events"][-2]["text"] == (
         "All checks passed · 1/1 · 3 runs each · the new test 0/3 on v1 → 3/3"
     )
+    assert pull["events"][-1]["text"] == END["answer"]
     assert pull["prosper"]["state"] == "done"
+    assert pull["warnings"] == []
 
-    # What it was asked: the issue, and its call up to the bad turn.
-    [asked] = prosper_model.asked["reproduce"]
-    assert "Offers Thursday afternoons" in asked[1]["content"]
-    assert "Ana Ruiz, on v1" in asked[1]["content"]
-    assert "Tom Lee, on v1" in asked[1]["content"]
-    [proposal] = prosper_model.asked["fix"]
-    assert "on v1: passed 0 of 3 calls" in proposal[1]["content"]
+    # What it started from: the issue, and its calls up to the bad turn.
+    facts = _told(prosper_model)
+    assert "What it fixes: Issue #2" in facts and "Offers Thursday afternoons" in facts
+    assert "Ana Ruiz, on v1" in facts and "Tom Lee, on v1" in facts
+    assert "Not reproduced yet: 2 tries left on v1." in facts
+    # Told what reproducing did, before it changed anything.
+    assert _outputs(prosper_model)[0].startswith("Reproduced: it fails on v1, 0/3.")
 
     issue = _issue(client, agent_id)
     assert issue["state"] == "open"
@@ -158,7 +205,7 @@ def test_a_test_that_passes_is_tried_again_with_a_sharper_caller(
 ):
     agent_id = with_issue()
     sharper = {**TEST, "caller": "You are Ana Ruiz and insist on Thursday at 2 PM."}
-    prosper_model.script = {"reproduce": [TEST, sharper], "fix": [FIX]}
+    _script(prosper_model, FIX[0], tool("reproduce", **sharper), *FIX[1:])
     verdicts += [True, True, True, False, False, True]
 
     pull = _pull(client, agent_id, _fix(client, agent_id)["number"])
@@ -167,16 +214,15 @@ def test_a_test_that_passes_is_tried_again_with_a_sharper_caller(
     assert pull["events"][1]["text"] == "A first test passed 3/3 on v1: trying a sharper caller"
     assert pull["events"][2]["text"].endswith("fails on v1 · 1/3")
     assert pull["tests"][0]["caller"] == sharper["caller"]
-    # The second request was told how the first test went.
-    second = prosper_model.asked["reproduce"][1][1]["content"]
-    assert "passed 3 of 3 calls on v1" in second
+    # It was told how the first test went.
+    assert "It passed 3 of 3 calls on v1: it does not reproduce" in _outputs(prosper_model)[0]
 
 
 def test_when_it_cannot_reproduce_it_says_so_and_asks_whether_to_go_on(
     client, with_issue, prosper_model
 ):
     agent_id = with_issue()
-    prosper_model.script = {"reproduce": [TEST, TEST], "fix": [FIX]}
+    _script(prosper_model, FIX[0], FIX[0], *FIX[1:])
 
     number = _fix(client, agent_id)["number"]
     pull = _pull(client, agent_id, number)
@@ -185,18 +231,16 @@ def test_when_it_cannot_reproduce_it_says_so_and_asks_whether_to_go_on(
     assert pull["events"][-2]["text"] == (
         "Could not reproduce it on v1: 3/3. It may be rare or already fixed."
     )
+    assert pull["events"][-1]["options"] == ["Yes, propose a fix anyway", "No, leave it as it is"]
     assert pull["prosper"]["state"] == "waiting"
     assert pull["tests"] == []
     # Nothing merges while it waits for the answer.
     assert client.post(f"/api/agents/{agent_id}/pulls/{number}/merge").status_code == 409
 
-    question = pull["events"][-1]["question"]
-    answer = {"question": question, "option": 0}
-    client.post(f"/api/agents/{agent_id}/pulls/{number}/answers", json=answer)
-    settle()
+    _answer(client, agent_id, number, 0)
 
     pull = _pull(client, agent_id, number)
-    assert _types(pull)[-7:] == [
+    assert _types(pull)[-8:] == [
         "question",
         "answer",
         "step",
@@ -204,21 +248,25 @@ def test_when_it_cannot_reproduce_it_says_so_and_asks_whether_to_go_on(
         "rule",
         "checks",
         "proved",
+        "message",
     ]
-    assert pull["events"][-5]["text"] == "Added the test anyway: 3/3 on v1"
+    assert pull["events"][-6]["text"] == "Added the test anyway: 3/3 on v1"
     assert pull["tests"][0]["source"]["before"] == {"version": 1, "passed": 3, "runs": 3}
+    assert "They said to go on without a reproduction." in _told(prosper_model)
+    # Green, and warned of: nothing shows the change fixes it.
+    assert pull["warnings"] == ["Not reproduced on v1: nothing shows this change fixes it."]
+    assert client.post(f"/api/agents/{agent_id}/pulls/{number}/merge").status_code == 409
+    merged = client.post(f"/api/agents/{agent_id}/pulls/{number}/merge", json={"anyway": True})
+    assert merged.status_code == 200
+    assert _issue(client, agent_id)["events"][-1]["text"] == "merged without reproducing it on v1"
 
 
 def test_told_to_stop_it_leaves_the_copy_as_it_is(client, with_issue, prosper_model):
     agent_id = with_issue()
-    prosper_model.script = {"reproduce": [TEST, TEST]}
+    _script(prosper_model, FIX[0], FIX[0])
     number = _fix(client, agent_id)["number"]
-    question = _pull(client, agent_id, number)["events"][-1]["question"]
 
-    client.post(
-        f"/api/agents/{agent_id}/pulls/{number}/answers", json={"question": question, "option": 1}
-    )
-    settle()
+    _answer(client, agent_id, number, 1)
 
     pull = _pull(client, agent_id, number)
     assert pull["events"][-1]["text"].startswith("Left it as it is: v1 stays unchanged.")
@@ -226,11 +274,25 @@ def test_told_to_stop_it_leaves_the_copy_as_it_is(client, with_issue, prosper_mo
     assert (pull["tests"], pull["rules"]) == ([], [])
 
 
+def test_going_on_without_the_test_it_wrote_says_so_and_stops(client, with_issue, prosper_model):
+    agent_id = with_issue()
+    _script(prosper_model, FIX[0], FIX[0])
+    number = _fix(client, agent_id)["number"]
+    store.prosper.update(agent_id, number, candidate=None)  # the record lost it
+
+    _answer(client, agent_id, number, 0)
+
+    pull = _pull(client, agent_id, number)
+    assert pull["events"][-1]["text"].startswith("I no longer have the test I wrote")
+    assert pull["prosper"]["state"] == "done"
+    assert pull["tests"] == []
+
+
 def test_merging_the_fix_resolves_the_issue_in_the_new_version(
     client, with_issue, prosper_model, verdicts
 ):
     agent_id = with_issue()
-    prosper_model.script = {"reproduce": [TEST], "fix": [FIX]}
+    _script(prosper_model, *FIX)
     verdicts += [False] * 3
     number = _fix(client, agent_id)["number"]
 
@@ -299,11 +361,28 @@ def _call_on(agent_id: str, version: int) -> int:
     )
 
 
+@pytest.mark.parametrize("state", ["ignore", "resolve"])
+def test_merging_a_fix_leaves_an_issue_the_person_closed_as_they_left_it(client, with_issue, state):
+    agent_id = with_issue()
+    number = _fix(client, agent_id, prosper=False)["number"]
+    client.post(f"/api/agents/{agent_id}/issues/{ISSUE}/{state}")
+    left = _issue(client, agent_id)
+
+    with store.db.connect() as conn:
+        store.issues.resolve_by_fix(conn, agent_id, ISSUE, number, 2, "you")
+
+    issue = _issue(client, agent_id)
+    assert (issue["state"], issue["fixed"]) == (left["state"], None)
+    merged = issue["events"][-1]
+    assert (merged["type"], merged["pull"], merged["version"]) == ("fix_merged", number, 2)
+    assert merged["text"] == left["state"]
+
+
 def test_the_same_problem_on_the_fixed_version_opens_the_issue_again(
     client, with_issue, prosper_model, verdicts
 ):
     agent_id = with_issue()
-    prosper_model.script = {"reproduce": [TEST], "fix": [FIX]}
+    _script(prosper_model, *FIX)
     verdicts += [False] * 3
     number = _fix(client, agent_id)["number"]
     client.post(f"/api/agents/{agent_id}/pulls/{number}/merge")
@@ -328,17 +407,21 @@ def test_an_issue_resolved_by_hand_is_not_joined(client, with_issue):
     assert store.issues.joinable(agent_id) == []
 
 
+# ---- a message is the next turn ---------------------------------------------------
+
+
 def test_a_message_refines_the_fix_and_the_checks_run_again(
     client, with_issue, prosper_model, verdicts
 ):
     agent_id = with_issue()
     phone = {"step": "Collect details", "text": "If they don't know it, ask for their phone."}
-    change = {"reply": "Added a rule in Collect details.", "agent": FIX["agent"], "rules": [phone]}
-    prosper_model.script = {
-        "reproduce": [TEST],
-        "fix": [FIX],
-        "change": [{**change, "tests": [], "remove": []}],
-    }
+    _script(
+        prosper_model,
+        *FIX,
+        tool("add_rules", rules=[{**phone, "source": None, "quote": None}]),
+        tool("run_all", said="Added a rule in Collect details: ask for their phone."),
+        {"answer": "Added it; the checks still pass.", "links": []},
+    )
     verdicts += [False] * 3
     number = _fix(client, agent_id)["number"]
 
@@ -349,17 +432,25 @@ def test_a_message_refines_the_fix_and_the_checks_run_again(
     settle()
 
     pull = _pull(client, agent_id, number)
-    assert _types(pull)[-5:] == ["message", "message", "rule", "checks", "proved"]
+    assert _types(pull)[-6:] == ["message", "proposed", "rule", "checks", "proved", "message"]
     assert len(pull["rules"]) == 2
-    # The request knew which issue it fixes.
-    assert "This pull request fixes Issue #2" in prosper_model.asked["change"][0][1]["content"]
+    # The turn knew which issue it fixes, that it is reproduced, and their words.
+    facts = _told(prosper_model)
+    assert "What it fixes: Issue #2" in facts
+    assert '- Reproduced: "Offers only times the clinic is open" passed 0/3 on v1.' not in facts
+    assert '- Reproduced: "Offers only open times" passed 0/3 on v1.' in facts
+    assert "Their message: If they don't know it, use their phone number" in facts
 
 
 def test_prosper_ai_takes_a_message_on_any_open_pull_request(client, live_agent, prosper_model):
     agent_id = live_agent()
     number = client.post(f"/api/agents/{agent_id}/pulls", json={"title": "Mine"}).json()["number"]
-    change = {"reply": "Added a rule.", "agent": FIX["agent"], "rules": [RULE]}
-    prosper_model.script = {"change": [{**change, "tests": [], "remove": []}]}
+    _script(
+        prosper_model,
+        tool("add_rules", rules=[{**RULE, "source": None, "quote": None}]),
+        tool("run_all", said="Added a rule in Offer times: only Tuesdays."),
+        {"answer": "Done: it offers only Tuesdays now.", "links": []},
+    )
 
     response = client.post(
         f"/api/agents/{agent_id}/pulls/{number}/messages", json={"text": "Only Tuesdays"}
@@ -369,115 +460,103 @@ def test_prosper_ai_takes_a_message_on_any_open_pull_request(client, live_agent,
 
     pull = _pull(client, agent_id, number)
     assert [r["text"] for r in pull["rules"]] == [RULE["text"]]
+    assert pull["rules"][0]["source"] == {**pull["rules"][0]["source"], "kind": "request"}
     assert pull["prosper"]["state"] == "done"
     # Hand-drawn: no guidelines to read, and its functions keep their names.
-    assert "No written guidelines" in prosper_model.asked["change"][0][1]["content"]
+    assert "No written guidelines" in _told(prosper_model)
     assert pull["config"] == EXAMPLE | {"name": "Dental Recall"}
 
 
 # ---- what a fix is held to ------------------------------------------------------
 
 
-def test_a_fix_changes_something_and_two_steps_at_most():
-    nothing = {**FIX, "rules": []}
-    with pytest.raises(ValueError, match="Nothing changed"):
-        artifacts.check_fix(nothing, EXAMPLE)
-    agent = copy.deepcopy(FIX["agent"])
-    for node in agent["nodes"][:3]:
-        node["task"] = "Say hi."
-    with pytest.raises(ValueError, match="changes 3 steps"):
-        artifacts.check_fix({**FIX, "agent": agent}, EXAMPLE)
-    assert artifacts.check_fix(FIX, EXAMPLE) == EXAMPLE
+def _edit(agent_id: str, number: int, tool_name: str, **args) -> str:
+    return TOOLS[tool_name].edit(Work(agent_id, number, prosper.llm.new_llm()), args)
 
 
-def test_the_test_that_reproduces_the_issue_is_never_rewritten():
-    answer = {
-        "summary": "s",
-        "verdicts": [{"test": "t1", "verdict": "test", "why": "w"}],
-        "agent": FIX["agent"],
-        "rules": [],
-        "remove_rules": [],
-        "tests": [{"id": "t1", **TEST}],
-        "questions": [],
-    }
-    with pytest.raises(ValueError, match="reproduces the issue"):
-        artifacts.check_review(answer, {"t1": "Offers"}, EXAMPLE, set(), {"t1"})
+def test_nothing_changes_before_the_issue_is_reproduced(client, with_issue, prosper_model):
+    agent_id = with_issue()
+    _script(prosper_model, FIX[0], FIX[0])  # it never fails: the person is asked
+    number = _fix(client, agent_id)["number"]
+
+    with pytest.raises(prosper.ToolError, match="Reproduce it first"):
+        _edit(agent_id, number, "set_task", step="Greeting", task="Say hi.")
+    with pytest.raises(prosper.ToolError, match="Reproduce it first"):
+        _edit(agent_id, number, "add_rules", rules=[{**RULE, "source": None, "quote": None}])
+    with pytest.raises(prosper.ToolError, match="Reproduce it first"):
+        _edit(agent_id, number, "run_all", said="")
+    with pytest.raises(prosper.ToolError, match="No tries left"):
+        _edit(agent_id, number, "reproduce", **TEST)
+    with pytest.raises(prosper.ToolError, match="Only a setup draws the agent whole"):
+        _edit(agent_id, number, "draw_agent", agent={})
 
 
-def test_a_new_message_gets_its_own_rounds_of_checking(client, live_agent):
-    agent_id = live_agent()
-    number = client.post(f"/api/agents/{agent_id}/pulls", json={"title": "Mine"}).json()["number"]
-    store.prosper.update(agent_id, number, state="done", rounds=2, handed_over=True)
-
-    store.prosper.take_message(agent_id, number, "Only Tuesdays")
-
-    work = store.prosper.work_of(agent_id, number)
-    assert "rounds" not in work and "handed_over" not in work
-
-
-@pytest.mark.parametrize("state", ["ignore", "resolve"])
-def test_merging_a_fix_leaves_an_issue_the_person_closed_as_they_left_it(
-    client, with_issue, state
+def test_its_own_test_stays_and_two_steps_change_at_most(
+    client, with_issue, prosper_model, verdicts
 ):
     agent_id = with_issue()
-    number = _fix(client, agent_id, prosper=False)["number"]
-    client.post(f"/api/agents/{agent_id}/issues/{ISSUE}/{state}")
-    left = _issue(client, agent_id)
-
-    with store.db.connect() as conn:
-        store.issues.resolve_by_fix(conn, agent_id, ISSUE, number, 2, "you")
-
-    issue = _issue(client, agent_id)
-    assert (issue["state"], issue["fixed"]) == (left["state"], None)
-    merged = issue["events"][-1]
-    assert (merged["type"], merged["pull"], merged["version"]) == ("fix_merged", number, 2)
-    assert merged["text"] == left["state"]
-
-
-def test_going_on_without_the_test_it_wrote_says_so_and_stops(client, with_issue, prosper_model):
-    agent_id = with_issue()
-    prosper_model.script = {"reproduce": [TEST, TEST]}
+    _script(prosper_model, *FIX)
+    verdicts += [False] * 3
     number = _fix(client, agent_id)["number"]
-    question = _pull(client, agent_id, number)["events"][-1]["question"]
-    store.prosper.update(agent_id, number, candidate=None)  # the record lost it
+    own = _pull(client, agent_id, number)["tests"][0]
 
-    answer = {"question": question, "option": 0}
-    client.post(f"/api/agents/{agent_id}/pulls/{number}/answers", json=answer)
+    with pytest.raises(prosper.ToolError, match="That test reproduces what this pull request"):
+        _edit(agent_id, number, "rewrite_test", test=own["id"], why="Too strict.", **TEST)
+    with pytest.raises(prosper.ToolError, match="That test reproduces what this pull request"):
+        _edit(agent_id, number, "remove_test", test=own["id"])
+    _edit(agent_id, number, "set_task", step="Greeting", task="Say hi and ask what they need.")
+    _edit(agent_id, number, "set_task", step="Offer times", task="Offer Tuesday at 10 AM.")
+    with pytest.raises(prosper.ToolError, match="would change 3 steps of v1"):
+        _edit(agent_id, number, "set_task", step="Confirm", task="Read it back.")
+    with pytest.raises(prosper.ToolError, match="There is no step 'Waitlist'"):
+        _edit(agent_id, number, "set_task", step="Waitlist", task="Offer the waitlist.")
+    with pytest.raises(prosper.ToolError, match="is 4 sentences"):
+        _edit(agent_id, number, "set_task", step="Greeting", task="Hi. Ask. Listen. Go.")
+
+
+def test_a_restart_mid_fix_is_picked_up_by_the_next_message(
+    client, with_issue, prosper_model, verdicts
+):
+    # Reproduced, and the server stops before the change.
+    agent_id = with_issue()
+    _script(prosper_model, FIX[0])
+    verdicts += [False] * 3
+    number = _fix(client, agent_id)["number"]
+    store.prosper.set_state(agent_id, number, "working", "Proposing the smallest change")
+
+    store.init_db()  # the server starting again
+
+    pull = _pull(client, agent_id, number)
+    assert (pull["prosper"]["state"], _types(pull)[-1]) == ("failed", "interrupted")
+    _script(prosper_model, *FIX[1:])
+    client.post(f"/api/agents/{agent_id}/pulls/{number}/messages", json={"text": "Go on"})
     settle()
 
     pull = _pull(client, agent_id, number)
-    assert pull["events"][-1]["text"].startswith("I no longer have the test I wrote on v1")
-    assert pull["prosper"]["state"] == "done"
-    assert pull["tests"] == []
+    assert '- Reproduced: "Offers only open times" passed 0/3 on v1.' in _told(prosper_model)
+    assert _types(pull)[-5:] == ["proposed", "rule", "checks", "proved", "message"]
+    assert pull["warnings"] == []
 
 
 # ---- A fix that may not fix its issue: warned of, never blocked ---------------------
 
 
-def _steady(test_id: str) -> dict:
-    """A review of the fix's own test at 2 of 3: a plainer rule."""
-    return {
-        "summary": "Made the rule in Offer times plainer.",
-        "verdicts": [{"test": test_id, "verdict": "agent", "why": "It offered Thursday once."}],
-        "agent": FIX["agent"],
-        "rules": [{"step": "Offer times", "text": "Never offer Thursday."}],
-        "remove_rules": [],
-        "tests": [],
-        "questions": [],
-    }
-
-
 @pytest.fixture
 def fixed_at(client, with_issue, prosper_model, verdicts, monkeypatch):
     """A fix whose own test (id "repro") fails on v1, then scores `after` (one list per run
-    of the suite). Returns (agent id, pull)."""
-    from copilot import fix
+    of the suite, a rule made plainer between). Returns (agent id, pull)."""
+    monkeypatch.setattr(work, "new_id", lambda: "repro")
 
-    monkeypatch.setattr(fix, "new_id", lambda: "repro")
-
-    def make(*after: list[bool], steady: list | None = None) -> tuple[str, dict]:
+    def make(*after: list[bool]) -> tuple[str, dict]:
         agent_id = with_issue()
-        prosper_model.script = {"reproduce": [TEST], "fix": [FIX], "review": steady or []}
+        plainer = {
+            "step": "Offer times",
+            "text": "Never offer Thursday.",
+            "source": None,
+            "quote": None,
+        }
+        rounds = [tool("add_rules", rules=[plainer]), tool("run_all", said="Made it plainer.")]
+        _script(prosper_model, *FIX[:3], *rounds * (len(after) - 1), END)
         verdicts.extend([False] * 3)
         for run in after:
             verdicts.extend(run)
@@ -499,19 +578,14 @@ def test_a_fix_whose_test_passes_three_of_three_merges_with_no_warning(client, f
 def test_a_fix_whose_test_stays_at_two_of_three_warns_and_asks_to_confirm(
     client, fixed_at, prosper_model
 ):
-    agent_id, pull = fixed_at([False, True, True], [False, True, True], steady=[_steady("repro")])
+    agent_id, pull = fixed_at([False, True, True], [False, True, True])
     number = pull["number"]
 
-    # One more round on the fix's own test, then it says it did not get there.
-    [asked] = prosper_model.asked["review"]
-    assert "passed only 2 of 3" in asked[1]["content"]
+    # Told after each run that its own test passes only 2 of 3: it took one more round.
+    told = [said for said in _outputs(prosper_model) if "passes only 2/3" in said]
+    assert len(told) == 2
     assert pull["rules"][-1]["text"] == "Never offer Thursday."
     assert pull["checks"]["state"] == "passed"
-    assert pull["events"][-1]["text"] == (
-        f"The test for Issue #{ISSUE} passes 2 of 3: the problem may still happen in some calls. "
-        "One more round did not make it pass every call. You can still merge it, or tell me "
-        "what to try."
-    )
     warning = (
         f"The test for Issue #{ISSUE} passes 2 of 3: the problem may still happen in some calls."
     )
@@ -531,44 +605,15 @@ def test_a_fix_whose_test_stays_at_two_of_three_warns_and_asks_to_confirm(
 
 
 def test_one_more_round_can_bring_the_fix_to_three_of_three(client, fixed_at):
-    agent_id, pull = fixed_at([False, True, True], [True] * 3, steady=[_steady("repro")])
+    agent_id, pull = fixed_at([False, True, True], [True] * 3)
 
-    assert pull["events"][-1]["type"] == "proved"
-    assert pull["events"][-1]["text"].endswith("the new test 0/3 on v1 → 3/3")
+    assert pull["events"][-2]["type"] == "proved"
+    assert pull["events"][-2]["text"].endswith("the new test 0/3 on v1 → 3/3")
     assert pull["warnings"] == []
 
 
-def test_with_no_round_left_it_says_so(client, fixed_at, monkeypatch):
-    from copilot import setup
-
-    monkeypatch.setattr(setup, "MAX_ROUNDS", 0)
-    _, pull = fixed_at([False, True, True])
-
-    assert "I had no round left" in pull["events"][-1]["text"]
-    assert len(pull["warnings"]) == 1
-
-
-def test_a_fix_not_reproduced_warns_and_asks_to_confirm(client, with_issue, prosper_model):
-    agent_id = with_issue()
-    prosper_model.script = {"reproduce": [TEST, TEST], "fix": [FIX]}
-    number = _fix(client, agent_id)["number"]
-    question = _pull(client, agent_id, number)["events"][-1]["question"]
-    client.post(
-        f"/api/agents/{agent_id}/pulls/{number}/answers", json={"question": question, "option": 0}
-    )
-    settle()
-
-    pull = _pull(client, agent_id, number)
-    assert pull["checks"]["state"] == "passed"
-    assert pull["warnings"] == ["Not reproduced on v1: nothing shows this change fixes it."]
-    assert client.post(f"/api/agents/{agent_id}/pulls/{number}/merge").status_code == 409
-    merged = client.post(f"/api/agents/{agent_id}/pulls/{number}/merge", json={"anyway": True})
-    assert merged.status_code == 200
-    assert _issue(client, agent_id)["events"][-1]["text"] == "merged without reproducing it on v1"
-
-
-def test_a_test_already_flaky_on_the_base_is_run_again_not_fixed_for(
-    client, new_agent, prosper_model, fake_checks, monkeypatch
+def test_a_test_already_flaky_on_the_base_is_said_so_and_run_again(
+    client, new_agent, prosper_model, fake_checks
 ):
     """v1 has a test that passed 2 of 3; it fails on the fix: run again, the agent untouched."""
     friendly = {"name": "Sounds friendly", "caller": "You are Ana.", "checks": ["Is friendly"]}
@@ -591,17 +636,14 @@ def test_a_test_already_flaky_on_the_base_is_run_again_not_fixed_for(
     client.post(f"/api/agents/{agent_id}/calls/play")
     settle()
     said["Offers only times the clinic is open"] = [False] * 3  # reproduced; then it passes
-    prosper_model.script = {"reproduce": [TEST], "fix": [FIX]}
+    _script(prosper_model, *FIX[:3], tool("run_one", test="Sounds friendly"), END)
 
     number = _fix(client, agent_id)["number"]
     pull = _pull(client, agent_id, number)
 
-    assert "review" not in prosper_model.asked  # no round spent on it
-    again = next(e for e in pull["events"] if e["type"] == "message")
-    assert again["text"] == (
-        "Already flaky on v1: left as it is · Sounds friendly. "
-        "Running it again: one more unlucky call is not this change."
-    )
+    ran = _outputs(prosper_model)[2]
+    assert "Sounds friendly · failing, 1/3 · already flaky on v1 (2/3 there)" in ran
+    assert "Already flaky (2/3) on v1: Sounds friendly." in _told(prosper_model)
     assert [r["text"] for r in pull["rules"]] == [RULE["text"]]  # only the fix's
     assert pull["checks"]["state"] == "passed"
-    assert pull["events"][-1]["type"] == "proved"
+    assert _types(pull)[-2:] == ["proved", "message"]

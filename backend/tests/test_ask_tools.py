@@ -14,12 +14,11 @@ import pytest
 
 import store
 from api import live, pulls, suite, tools
-from copilot import ask
+from copilot import agent
 from tests.conftest import settle
 from tests.fakes import tool
 from tests.test_fix import (  # noqa: F401
     ISSUE,
-    _steady,
     fixed_at,
     two_callers,
     verdicts,
@@ -187,13 +186,15 @@ def test_an_act_refused_on_do_it_says_why_and_tells_the_model(client, with_issue
 
 def test_a_message_makes_a_bounded_number_of_tool_calls(client, with_issue, prosper_model):  # noqa: F811
     agent_id = with_issue()
-    reads = [tool("list_versions")] * ask.MAX_TOOL_CALLS
+    reads = [tool("list_versions")] * agent.MAX_TOOL_CALLS
     prosper_model.script = {"ask": [*reads, ANSWER]}
 
     chat = _ask(client, agent_id, "Read everything.")
 
     assert chat["messages"][-1]["text"] == ANSWER["answer"]
-    assert prosper_model.tools[-ask.MAX_TOOL_CALLS - 1 :] == [True] * ask.MAX_TOOL_CALLS + [False]
+    assert prosper_model.tools[-agent.MAX_TOOL_CALLS - 1 :] == [True] * agent.MAX_TOOL_CALLS + [
+        False
+    ]
 
 
 def test_after_an_act_it_may_have_nothing_to_add(client, with_issue, prosper_model):  # noqa: F811
@@ -264,7 +265,7 @@ def test_a_merge_card_says_the_warnings_and_do_it_confirms_them(
     fixed_at,  # noqa: F811
     prosper_model,
 ):
-    agent_id, pull = fixed_at([False, True, True], [False, True, True], steady=[_steady("repro")])
+    agent_id, pull = fixed_at([False, True, True], [False, True, True])
     number = pull["number"]
     prosper_model.script = {"ask": [tool("merge_pull", number=number), NOTHING_MORE]}
     chat = _ask(client, agent_id, "Merge the fix.")
@@ -287,7 +288,7 @@ ACTS = [
     ("tidy_issue", {"number": 1}, [(live, "tidy_issue"), (live, "edit_issue")]),
     ("fix_issue", {"number": 1}, [(live, "fix")]),
     ("open_pull_request", {"title": "T", "what": "W"},
-     [(store.chats, "open_change"), (tools.setup, "fix")]),
+     [(store.chats, "open_change"), (tools.agent, "start")]),
     ("run_tests", {"pull": None, "test": None}, [(suite, "run_version_checks")]),
     ("run_tests", {"pull": None, "test": "Books an appointment"}, [(suite, "run_version_test")]),
     ("run_tests", {"pull": 2, "test": None}, [(suite, "run_pull_checks")]),
@@ -384,7 +385,7 @@ def test_a_pull_request_opened_is_linked_even_if_prosper_ai_cannot_start(
     def broken(*args):
         raise RuntimeError("the job pool is shut down")
 
-    monkeypatch.setattr(tools.setup, "fix", broken)
+    monkeypatch.setattr(tools.agent, "start", broken)
     args = {"title": "Ask who the visit is for", "what": "Collect details asks it."}
     done = tools.TOOLS["open_pull_request"].act(agent_id, args, {"chat": chat["id"], "message": 1})
 
@@ -393,9 +394,8 @@ def test_a_pull_request_opened_is_linked_even_if_prosper_ai_cannot_start(
         "Opened PR #2 · Prosper AI could not start: the job pool is shut down"
         " · write to it to retry"
     )
-    # Failed with its job kept, like one cut by a restart: a message to it retries.
-    work = store.prosper.work_of(agent_id, 2)
-    assert (work["state"], work["job"]) == ("failed", {"kind": "fix"})
+    # Failed, like work cut by a restart: a message to it goes on.
+    assert store.prosper.work_of(agent_id, 2)["state"] == "failed"
 
 
 def test_cards_show_the_words_an_act_will_keep(client, with_issue, new_agent):  # noqa: F811
@@ -515,5 +515,5 @@ def test_every_request_is_counted_and_nothing_is_traced(client, with_issue, pros
     chat = _ask(client, agent_id, "Which versions are there?")
 
     assert chat["usage"]["requests"] == 2
-    assert ask._RUN.tracing_disabled
+    assert agent._RUN.tracing_disabled
     assert agents.tracing.get_trace_provider()._manual_disabled

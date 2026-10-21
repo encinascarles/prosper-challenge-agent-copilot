@@ -138,9 +138,9 @@ class FakeServices(Services):
         return {"pass": self.verdict, "detail": reason, "tokens": {"prompt": 7, "completion": 3}}
 
 
-def tool(name: str, **arguments) -> dict:
-    """A step of a scripted conversation where the model calls the tool `name`."""
-    return {"tool": name, "arguments": arguments}
+def tool(called: str, /, **arguments) -> dict:
+    """A step of a scripted conversation where the model calls the tool `called`."""
+    return {"tool": called, "arguments": arguments}
 
 
 class ScriptedModel(LLM):
@@ -167,8 +167,8 @@ class ScriptedModel(LLM):
             raise AssertionError(f"Nothing scripted for '{name}'.")
         return json.dumps(answers.pop(0))
 
-    def agent_model(self) -> "ScriptedAgentModel":
-        return ScriptedAgentModel(self, "ask")
+    def agent_model(self, run: str) -> "ScriptedAgentModel":
+        return ScriptedAgentModel(self, run)
 
 
 class ScriptedAgentModel(Model):

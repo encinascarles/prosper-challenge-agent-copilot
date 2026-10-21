@@ -20,7 +20,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field, StringConstraints
 
 import store
-from copilot import ask, setup
+from copilot import agent, facts
 
 from .models import Problem
 from .pulls import _MISSING, _REFUSED, Pull, _answer
@@ -121,9 +121,9 @@ def list_chats(agent_id: str) -> list[dict]:
 @router.post("", status_code=201, response_model=Chat, responses=_NO_CHAT)
 def new_chat(agent_id: str, body: Question) -> dict:
     """Start a chat with a question, and get Prosper AI's answer."""
-    about = _answer(ask.copy_of, agent_id, body.pull)
+    about = _answer(facts.copy_of, agent_id, body.pull)
     chat = _answer(store.chats.create_chat, agent_id, body.text)
-    return _answer(ask.answer, agent_id, chat["id"], about, TOOLS)
+    return _answer(agent.answer, agent_id, chat["id"], about, TOOLS)
 
 
 @router.get("/{chat_id}", response_model=Chat, responses=_NO_CHAT)
@@ -134,9 +134,9 @@ def get_chat(agent_id: str, chat_id: int) -> dict:
 @router.post("/{chat_id}/messages", response_model=Chat, responses=_NO_CHAT)
 def ask_more(agent_id: str, chat_id: int, body: Question) -> dict:
     """Ask Prosper AI something more in the chat, and get its answer."""
-    about = _answer(ask.copy_of, agent_id, body.pull)
+    about = _answer(facts.copy_of, agent_id, body.pull)
     _answer(store.chats.add_message, agent_id, chat_id, {"by": "you", "text": body.text})
-    return _answer(ask.answer, agent_id, chat_id, about, TOOLS)
+    return _answer(agent.answer, agent_id, chat_id, about, TOOLS)
 
 
 @router.post(
@@ -144,7 +144,7 @@ def ask_more(agent_id: str, chat_id: int, body: Question) -> dict:
 )
 def decide(agent_id: str, chat_id: int, index: int, body: Decision) -> dict:
     """Do or cancel what message `index` proposes. Done, Prosper AI says what is next."""
-    return _answer(ask.decide, agent_id, chat_id, index, body.do, TOOLS)
+    return _answer(agent.decide, agent_id, chat_id, index, body.do, TOOLS)
 
 
 @router.post(
@@ -157,5 +157,5 @@ def create_pull(agent_id: str, chat_id: int, index: int) -> Any:
     """Open the pull request message `index` of an older chat offers; Prosper AI starts on it."""
     work = {"state": "working", "doing": "Writing a test of it", "questions": []}
     pull, chat = _answer(store.chats.open_offer, agent_id, chat_id, index, work)
-    setup.fix(agent_id, pull["number"])
+    agent.start(agent_id, pull["number"])
     return {"pull": pull, "chat": chat}

@@ -1,6 +1,6 @@
 // A pull request read again every second while something is happening on it:
 // Prosper AI working, or its checks running. Each step Prosper AI finishes is
-// written to the pull request as it lands (backend/copilot/setup.py), so this
+// written to the pull request as it lands (backend/copilot/agent.py), so this
 // is how a screen shows it coming in. Polling, not a stream: a setup lasts
 // about a minute, a read is one row, and both screens that follow it already
 // poll their checks the same way.

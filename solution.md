@@ -394,6 +394,8 @@ each other.
   and nothing can be shown until all of it is written.
 - *Questions, then the agent, its rules and its tests, each one request with
   a strict JSON schema.* Chosen. Plain OpenAI SDK (`copilot/llm.py`).
+  (Later replaced by the one agent and its tools: "Prosper AI is one agent",
+  below. What a setup asks, draws and checks stayed the same.)
 
 **Why questions first and tests last.** At first the questions came after the
 agent and its tests were written. An answer turned into a rule then
@@ -760,7 +762,7 @@ everything the person can do in the product, from the same chat, in words.
 **How it works.** "Ask Prosper AI" in the top bar (⌘J) opens a panel at the
 right of every section: new chat, past chats (stored per agent, titled by the
 first question), the chat, a composer. Each answer starts as one request through
-`llm.py` on Prosper AI's model at low effort (`copilot/ask.py`). It reads:
+`llm.py` on Prosper AI's model at low effort (`copilot/agent.py`). It reads:
 the guidelines and the clinic's answers, the copy the person is on (live or
 the pull request) with its rules, its tests and how each last went, the
 versions, pull requests and issues, a tally of all calls and of today's, the
@@ -771,7 +773,7 @@ and every issue, pull request or call it links to must exist; a refused
 answer goes back with the reason. Links are chips that open what they name.
 
 Then tools, on the OpenAI Agents SDK (why: the next section),
-one call per step and at most 8 per message (`copilot/ask.py`, tools in
+one call per step and at most 8 per message (`copilot/agent.py`, tools in
 `api/tools.py`). Nine read (search calls by caller, outcome, issue, version or
 day; read a call; list and read issues and pull requests; read the tests of
 live or a pull request with their last results; read the steps and rules of
@@ -922,7 +924,7 @@ and a reviewer has to read ours line by line to trust it.
   turn bound (`max_turns`), and a custom `Model` for tests.
 
 **How it maps.** The 20 tools stay in `api/tools.py`, each the route the UI
-calls; `copilot/ask.py` wraps each in a `FunctionTool` and adds no logic. A
+calls; `copilot/agent.py` wraps each in a `FunctionTool` and adds no logic. A
 read runs when the model calls it. An act has `needs_approval`, which makes
 the card: a card the act would be refused for is not put to the person, the
 refusal goes back to the model as before. The run stops at the act, and its
@@ -942,7 +944,8 @@ with a scripted `Model`: never OpenAI.
 The SDK is held at 0.19: 0.22 needs openai 3, which would pull in a newer
 Pipecat than the voice stack is verified on.
 
-**The jobs stay pipelines.** Setup, the call review, a fix and tidying an
+**The jobs stay pipelines.** (Reversed for setup and fix in the next
+section; the call review and tidying are still single requests.) Setup, the call review, a fix and tidying an
 issue have known steps in a known order (questions, agent, rules, tests,
 suite; or test, change, suite, self-check). An agent choosing that order
 would be slower, cost more, and be harder to test and to price; each step
@@ -978,6 +981,96 @@ passes 2 of 3) → Do it → v2 live. The chat's requests cost USD 0.09 before
 and 0.14 after (two more questions); with the suites and the two fixes, the
 whole check spent about USD 3.5.
 
+
+### Prosper AI is one agent, with one set of tools
+
+**Context.** Prosper AI had grown into four mechanisms: the setup pipeline,
+the fix pipeline, a "change" request in a pull request's conversation that
+rewrote the whole agent in one answer, and the chat's agent with 20 tools.
+Each had its own prompts, its own retry and its own way to say what it did;
+a message in a pull request went through a different path than the same
+words in the chat. The goal was the fewest pieces.
+
+**Options.**
+- *Keep the pipelines, add the chat as a fourth.* Rejected: four ways to
+  reach the same copy, and every fix to how Prosper AI behaves is made four
+  times.
+- *Pipelines for the known steps, the agent only for messages.* Rejected:
+  "make the greeting shorter" and "the third test fails" are the same work
+  as a fix's second round; two code paths for them drift apart.
+- *One agent, one tool box; setup and fix are how its work starts.* Chosen.
+
+**What.** The chat's agent (`copilot/agent.py`, on the Agents SDK as
+before, same model at low effort, cost counted, tracing off) also works in a
+pull request's conversation. It gets the same tools (`api/tools.py`) plus
+work on the pull request's copy in small pieces: draw a new agent whole, add
+a step, set a step's task, set or remove when it moves on, add or remove a
+field, add or remove rules, add, rewrite or remove tests, ask the person a
+question with options, reproduce on the base version, run all the tests or
+one, read the results and a test's call. In a pull request these run with no
+card: nothing there reaches callers before a person merges it, so the pull
+request is the review. In the chat every act keeps its card, and a change to
+the agent is a pull request where the same agent goes on. "Build it with
+Prosper AI" and "Fix with Prosper AI" open the pull request and start the
+agent with a brief (`prompts/setup.md`, `fix.md`; `change.md` for a change
+asked in a chat or a message on the person's own pull request). A message or
+an answer in the conversation is the next turn of that work. The per-call
+review, the grouping, the issue title and tidy, and the callers of a batch
+stay single requests: each judges one input with no tools, and an agent
+would only add.
+
+**The guarantees moved into the tools.** Every edit is checked before it is
+written, the way a save is (`AgentBuilder`) and the way Prosper AI's writing
+always was (a task of three short sentences, a rule quoting its line word for
+word, a check that names a real step, the product's words); what is refused
+goes back to the model as the tool's error, in the sentence a person would
+read. Where the work stands is checked too, in code (`copilot/work.py`), so
+no wording of a brief can get past it: a setup asks first and draws nothing
+until every answer is in, never takes a test out, and runs its tests only
+with 5 to 7 of them and every answer quoted by a rule; a fix changes nothing
+before its test has failed on the base (or the person said to go on; that
+question is asked in code), never rewrites that test, and changes two steps
+at most; a turn runs the whole suite three times at most. The honest-green
+warnings and the merge confirm are the store's, unchanged.
+
+**How it reads.** Edits are written at once but said under Prosper AI's next
+message, so a fix still reads as three cards: reproduced, a proposed change
+with its lines and "See the diff", the checks passing with its test before
+and after. While a new agent is drawn, each piece is a step, as before.
+
+**Turns start from the store.** Every turn starts from the pull request as
+stored: the guidelines and answers, the copy and how its tests went, where
+the work stands, the conversation. Nothing is kept in memory between turns,
+so a question ends a turn and its answer starts the next, and a turn cut by
+a restart is picked up by the next message ("write to it to try again", as
+the conversation already said). The limit is 30 model requests per turn: a
+setup takes about 12, a fix about 10.
+
+**What it cost in code.** Fewer pieces, not fewer lines. `copilot/setup.py`
+and `fix.py` (1,086 lines), the "change" path and seven prompts are gone;
+`copilot/` is 3,398 → 3,043 lines and its prompts 480 → 339. The tool box
+grew by the work tools (`api/tools.py` 818 → 1,408), so the backend without
+tests went 11,018 → 11,118 (`wc -l`). What a reviewer has to read to trust
+Prosper AI is now one run loop and one list of tools with their guards.
+
+**What the real runs showed** (through the UI, on a copy of the demo state,
+first option at every question). Setups from the sample files and notes:
+one green at its first run (7/7, 78 s from the last answer, USD 0.40 with
+its suite), one green after a round of its own (6/6, 114 s, USD 0.83), and
+one that handed over with a test failing and a round unused; a message
+("the confirmation must always give the address") made it green in 46 s,
+and the brief now says to use the rounds. Questions arrived in 5–7 s. The
+earlier pipeline's median was 161 s to the final checks and USD 0.53. Fixes
+on Anna's issues: #4 (safety, 4 calls) reproduced at 0/3, two ways on to
+Nurse callback, 8/8 and its test 3/3, in 117 s; #5 reproduced at 0/3, two
+rounds, green with its test at 2/3 (the merge warned and asked); #3 not
+reproduced in two tries, the person said go on, green with the "not
+reproduced" warning. 90–134 s each, against a 198 s median before. In the
+chat: an answer, a clinic's email opened as an issue from its card, and
+"fix that issue" opened PR #12, where the agent reproduced it (0/3) and went
+green (3/3) in 90 s. The whole check spent about USD 8.2, nearly all of it
+the suites (gpt-4o calls); Prosper AI's own requests were USD 0.05–0.12 per
+pull request, and 0.55 where it played two reproductions.
 
 ### Issues a person reports: the clinic's complaints in the same list
 

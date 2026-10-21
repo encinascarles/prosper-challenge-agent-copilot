@@ -13,7 +13,7 @@ import pytest
 import store
 from copilot import audit
 from tests.conftest import settle
-from tests.test_fix import FIX, TEST
+from tests.test_fix import FIX
 from tests.test_live import CALLERS, REVIEW
 
 COMPLAINT = {
@@ -161,7 +161,7 @@ def test_prosper_ai_fixes_a_reported_issue_with_no_calls(
 ):
     agent_id = live_agent()
     number = _report(client, agent_id)["number"]
-    prosper_model.script = {"reproduce": [TEST], "fix": [FIX]}
+    prosper_model.script = {"work": list(FIX)}
     verdicts += [False, False, False]  # the test fails on v1
 
     opened = client.post(f"/api/agents/{agent_id}/issues/{number}/fix", json={"prosper": True})
@@ -177,15 +177,16 @@ def test_prosper_ai_fixes_a_reported_issue_with_no_calls(
         "rule",
         "checks",
         "proved",
+        "message",
     ]
     assert pull["events"][1]["text"] == (
         "Reproduced it: a test that calls like the one reported fails on v1 · 0/3"
     )
     # The caller is written from what the clinic said.
-    [asked] = prosper_model.asked["reproduce"]
-    assert "reported by the clinic (step not known)" in asked[1]["content"]
-    assert "we are closed" in asked[1]["content"]
-    assert "It has no calls" in asked[1]["content"]
+    facts = prosper_model.asked["work"][0][1]["content"]
+    assert "reported by the clinic (step not known)" in facts
+    assert "we are closed" in facts
+    assert "It has no calls" in facts
 
     merged = client.post(f"/api/agents/{agent_id}/pulls/{pull['number']}/merge")
     assert merged.status_code == 200, merged.text
