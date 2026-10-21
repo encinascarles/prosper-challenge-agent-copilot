@@ -208,12 +208,11 @@ def ask(
     """Ask the person `questions`, each { text, options: [{ label, rule }] }. Returns the PR.
 
     Each is logged as one event with its options; the rule each option becomes
-    stays in the store until it is picked. Prosper AI then waits. A `setup`
-    question is asked before anything is drawn: its options have no rule, and
-    once all of them have answers the setup goes on to draw the agent. A
+    stays in the store until it is picked; an option may have none. Prosper AI
+    then waits: once every question has its answer, its next turn starts. A
+    `setup` question is asked before anything is drawn, so it has no rules. A
     question of another `kind` asks what to do next (a fix it could not
-    reproduce: go on or stop); its options have no rule either, and the job
-    that asked it reads the answer.
+    reproduce: go on or stop), and the API acts on its answer itself.
     """
     with connect() as conn:
         _require(conn, agent_id, number)

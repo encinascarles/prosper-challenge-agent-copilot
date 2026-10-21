@@ -396,7 +396,7 @@ def open_pull_card(agent_id: str, args: dict) -> dict:
 
 def open_pull(agent_id: str, args: dict, at: dict) -> dict:
     # What "Create pull request" on an offer did: a change opened on live,
-    # starting from the person's words, with Prosper AI working on it (fix.py).
+    # starting from the person's words, with Prosper AI working on it.
     record = {"state": "working", "doing": "Writing a test of it", "questions": []}
     pull = _call(
         store.chats.open_change,
