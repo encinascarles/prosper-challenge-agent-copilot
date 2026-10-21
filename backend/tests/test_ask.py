@@ -12,7 +12,7 @@ import pytest
 
 import store
 from api import checks
-from copilot import artifacts, ask
+from copilot import agent, artifacts
 from tests.conftest import settle
 from tests.fakes import tool
 from tests.test_fix import EXAMPLE, ISSUE, two_callers, verdicts, with_issue  # noqa: F401
@@ -300,10 +300,10 @@ def test_a_question_from_a_pull_request_is_answered_from_its_copy(client, new_ag
 
 def test_titles_are_the_first_question_on_one_line():
     assert (
-        ask.store.chats.title_of("  Can she\nbook   for a child? ") == "Can she book for a child?"
+        agent.store.chats.title_of("  Can she\nbook   for a child? ") == "Can she book for a child?"
     )
     long = "Why " + "did the call go there " * 6
-    title = ask.store.chats.title_of(long)
+    title = agent.store.chats.title_of(long)
     assert len(title) <= 80 and title.endswith("…")
 
 

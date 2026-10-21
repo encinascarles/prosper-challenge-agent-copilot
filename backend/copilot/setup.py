@@ -44,7 +44,7 @@
 import json
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Callable, Optional
+from typing import Optional
 
 from loguru import logger
 
@@ -55,10 +55,8 @@ from store.runs import verdict
 from store.suite import added_in
 
 from . import artifacts
+from . import llm as llm_module
 from .llm import LLM
-
-# Who Prosper AI talks to. The tests swap it for a scripted model.
-new_llm: Callable[[], LLM] = LLM
 
 # Times Prosper AI checks its own work after a run, before it hands over.
 MAX_ROUNDS = 2
@@ -119,7 +117,7 @@ def _submit(job: dict, agent_id: str, number: int) -> Future:
 
 
 def _guarded(job: dict, agent_id: str, number: int) -> None:
-    llm = new_llm()
+    llm = llm_module.new_llm()
     try:
         store.prosper.set_job(agent_id, number, {k: v for k, v in job.items() if k != "said"})
         _run(llm, agent_id, number, job)

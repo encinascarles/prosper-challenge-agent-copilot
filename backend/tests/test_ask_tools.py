@@ -14,7 +14,7 @@ import pytest
 
 import store
 from api import live, pulls, suite, tools
-from copilot import ask
+from copilot import agent
 from tests.conftest import settle
 from tests.fakes import tool
 from tests.test_fix import (  # noqa: F401
@@ -187,13 +187,15 @@ def test_an_act_refused_on_do_it_says_why_and_tells_the_model(client, with_issue
 
 def test_a_message_makes_a_bounded_number_of_tool_calls(client, with_issue, prosper_model):  # noqa: F811
     agent_id = with_issue()
-    reads = [tool("list_versions")] * ask.MAX_TOOL_CALLS
+    reads = [tool("list_versions")] * agent.MAX_TOOL_CALLS
     prosper_model.script = {"ask": [*reads, ANSWER]}
 
     chat = _ask(client, agent_id, "Read everything.")
 
     assert chat["messages"][-1]["text"] == ANSWER["answer"]
-    assert prosper_model.tools[-ask.MAX_TOOL_CALLS - 1 :] == [True] * ask.MAX_TOOL_CALLS + [False]
+    assert prosper_model.tools[-agent.MAX_TOOL_CALLS - 1 :] == [True] * agent.MAX_TOOL_CALLS + [
+        False
+    ]
 
 
 def test_after_an_act_it_may_have_nothing_to_add(client, with_issue, prosper_model):  # noqa: F811
@@ -515,5 +517,5 @@ def test_every_request_is_counted_and_nothing_is_traced(client, with_issue, pros
     chat = _ask(client, agent_id, "Which versions are there?")
 
     assert chat["usage"]["requests"] == 2
-    assert ask._RUN.tracing_disabled
+    assert agent._RUN.tracing_disabled
     assert agents.tracing.get_trace_provider()._manual_disabled

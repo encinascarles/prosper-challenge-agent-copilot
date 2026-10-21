@@ -23,10 +23,11 @@ from openai import OpenAIError
 
 import store
 
-from . import setup
+from . import llm
+from .agent import _STORED_NAME
 from .artifacts import _list, _object, check_words
-from .ask import _STORED_NAME, _when
 from .calls import _ENDED
+from .facts import when as _when
 from .llm import Failed
 
 MAX_TITLE_CHARS = 80
@@ -56,7 +57,7 @@ def report(agent_id: str, title: str, description: str, *args) -> dict:
     if title:
         return issue
     try:
-        written = setup.new_llm().ask("title", description, TITLE, check_title)["title"]
+        written = llm.new_llm().ask("title", description, TITLE, check_title)["title"]
     except (Failed, OpenAIError) as error:
         logger.warning(f"Prosper AI · title · {store.issues.label(issue['number'])}: {error}")
         return issue
@@ -99,8 +100,8 @@ def tidy(agent_id: str, number: int) -> dict:
     steps = {node["name"] for node in live["config"]["nodes"]}
     calls = store.calls.list_calls(agent_id)[:CALLS_LISTED]
     known = {call["id"] for call in calls}
-    llm = setup.new_llm()
-    answer = llm.ask(
+    model = llm.new_llm()
+    answer = model.ask(
         "tidy",
         _facts(agent_id, issue, live, calls),
         TIDY,
@@ -110,7 +111,7 @@ def tidy(agent_id: str, number: int) -> dict:
     return {
         **answer,
         "calls": [c for c in dict.fromkeys(answer["calls"]) if c not in linked],
-        "usd": llm.usage["usd"],
+        "usd": model.usage["usd"],
     }
 
 

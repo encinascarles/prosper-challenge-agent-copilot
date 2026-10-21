@@ -12,7 +12,7 @@
 # model answers again: twice at most, then the job says it could not.
 #
 # Ask Prosper AI's chat is the one agent with tools, on the OpenAI Agents SDK
-# (copilot/ask.py): `agent_model` hands it this same model, and its requests
+# (copilot/agent.py): `agent_model` hands it this same model, and its requests
 # are counted here too.
 #
 # Every request's tokens are counted and priced, so a setup can say what it
@@ -201,3 +201,8 @@ class LLM:
             self.usage["cached"] += cached
             self.usage["completion"] += completion
             self.usage["usd"] = round(self.usage["usd"] + usd, 4)
+
+
+# Who Prosper AI talks to, for every request and for its agent. The tests
+# swap it for a scripted model.
+new_llm: Callable[[], LLM] = LLM

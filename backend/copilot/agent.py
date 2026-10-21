@@ -37,9 +37,7 @@ import asyncio
 import json
 import re
 import time
-from collections import Counter
 from dataclasses import dataclass, replace
-from datetime import datetime
 from typing import Callable, Literal, Optional
 
 from agents import (
@@ -61,12 +59,9 @@ from openai.types.shared import Reasoning
 from pydantic import BaseModel
 
 import store
-from simulate.suite import REPEATS
 from store.prosper import PROSPER
-from store.runs import verdict
 
-from . import setup
-from .calls import _ENDED, _context
+from . import facts, llm
 from .llm import ATTEMPTS, EFFORT, MAX_TOKENS, Failed, prompt
 
 set_tracing_disabled(True)  # nothing of a chat leaves through the SDK's tracing
@@ -75,9 +70,6 @@ MAX_ANSWER_CHARS = 600
 MAX_TITLE_CHARS = 60
 MAX_LINKS = 4
 MAX_TOOL_CALLS = 8  # per message: past them, it answers with what it has
-CALLS_LISTED = 30  # the latest, one line each
-CALLS_IN_FULL = 3  # of those the chat names
-CHAT_SHOWN = 8  # messages of the chat so far, the latest
 
 
 class _Link(BaseModel):
@@ -128,11 +120,10 @@ def answer(agent_id: str, chat_id: int, about: tuple[dict, str], tools: dict[str
     """
     chat = store.chats.get_chat(agent_id, chat_id)
     copy, name = about
-    llm = setup.new_llm()
-    facts = _facts(agent_id, copy, name, chat["messages"])
-    start = [{"role": "user", "content": facts}]
-    message = asyncio.run(_converse(_agent(tools, llm), llm, name, start, _scope(agent_id)))
-    return store.chats.add_message(agent_id, chat_id, message, llm.usage)
+    model = llm.new_llm()
+    start = [{"role": "user", "content": facts.for_chat(agent_id, copy, name, chat["messages"])}]
+    message = asyncio.run(_converse(_agent(tools, model), model, name, start, _scope(agent_id)))
+    return store.chats.add_message(agent_id, chat_id, message, model.usage)
 
 
 def decide(agent_id: str, chat_id: int, index: int, do: bool, tools: dict[str, Tool]) -> dict:
@@ -153,17 +144,17 @@ def decide(agent_id: str, chat_id: int, index: int, do: bool, tools: dict[str, T
         # A card from before the run was kept with it: done, with nothing to go on from.
         _act(tools[action["tool"]], scope, action["args"])
         return store.chats.get_chat(agent_id, chat_id)
-    llm = setup.new_llm()
+    model = llm.new_llm()
     follow = None
     try:
-        follow = asyncio.run(_resume(_agent(tools, llm), llm, message["about"], saved, scope))
+        follow = asyncio.run(_resume(_agent(tools, model), model, message["about"], saved, scope))
     except Exception:  # noqa: BLE001 - what was done is done; the rest is a nicety
         logger.exception("Ask Prosper AI · could not go on after an action")
     if not scope["settled"]:
         _settle(scope, None, "It could not be done: the conversation could not be picked up.")
     if follow is None:
         return store.chats.get_chat(agent_id, chat_id)
-    return store.chats.add_message(agent_id, chat_id, follow, llm.usage)
+    return store.chats.add_message(agent_id, chat_id, follow, model.usage)
 
 
 def _scope(agent_id: str, at: Optional[dict] = None) -> dict:
@@ -189,11 +180,11 @@ _SETTINGS = ModelSettings(
 _RUN = RunConfig(tracing_disabled=True, tool_not_found_behavior="return_error_to_model")
 
 
-def _agent(tools: dict[str, Tool], llm) -> Agent:
+def _agent(tools: dict[str, Tool], model) -> Agent:
     return Agent(
         name=PROSPER,
         instructions=prompt("ask"),
-        model=llm.agent_model(),
+        model=model.agent_model(),
         model_settings=_SETTINGS,
         tools=[_function(tool) for tool in tools.values()],
         output_type=_Said,
@@ -259,32 +250,32 @@ def _settle(scope: dict, result: Optional[dict], error: Optional[str]) -> None:
 
 
 class _Counted(RunHooks):
-    """Every request of a run counted and priced on `llm`, and logged with its time."""
+    """Every request of a run counted and priced on `model`, and logged with its time."""
 
-    def __init__(self, llm):
-        self.llm = llm
+    def __init__(self, model):
+        self.model = model
         self.started = 0.0
 
     async def on_llm_start(self, context, agent, system_prompt, input_items) -> None:
         self.started = time.monotonic()
 
     async def on_llm_end(self, context, agent, response) -> None:
-        self.llm.count(response.usage)
+        self.model.count(response.usage)
         calls = [item.name for item in response.output if item.type == "function_call"]
         did = f"calls {calls[0]}" if calls else "answers"
         logger.info(f"Prosper AI · ask · {did} · {time.monotonic() - self.started:.1f}s")
 
 
-async def _resume(agent: Agent, llm, name: str, saved: dict, scope: dict) -> Optional[dict]:
+async def _resume(agent: Agent, model, name: str, saved: dict, scope: dict) -> Optional[dict]:
     """Pick up the run kept with a card, its act approved: the act runs, then the run goes on."""
     state = await RunState.from_json(agent, saved, context_override=scope)
     for pending in state.get_interruptions():
         state.approve(pending)
-    return await _converse(agent, llm, name, state, scope, after_action=True)
+    return await _converse(agent, model, name, state, scope, after_action=True)
 
 
 async def _converse(
-    agent: Agent, llm, name: str, start, scope: dict, after_action: bool = False
+    agent: Agent, model, name: str, start, scope: dict, after_action: bool = False
 ) -> Optional[dict]:
     """Run the agent from `start` (the facts, or a run picked up) until it answers or proposes
     an act: its message.
@@ -292,7 +283,7 @@ async def _converse(
     At most MAX_TOOL_CALLS tool calls, then it answers with what it has.
     After an action, Prosper AI may have nothing to add: then None.
     """
-    hooks = _Counted(llm)
+    hooks = _Counted(model)
     quiet = agent.clone(model_settings=replace(_SETTINGS, tool_choice="none"))
     base = {"by": PROSPER, "about": name, "links": [], "reads": scope["reads"]}
 
@@ -380,259 +371,3 @@ def _known(agent_id: str) -> dict:
         "pull": {pull["number"] for pull in store.list_pulls(agent_id)},
         "call": {call["id"] for call in store.calls.list_calls(agent_id)},
     }
-
-
-def copy_of(agent_id: str, pull: Optional[int]) -> tuple[dict, str]:
-    """The copy the person is looking at, and its name: live ("v2"), or "PR #5".
-
-    Before the agent is live, its PR #1. Raises NotFound: resolved before the
-    question is stored, so a question about nothing leaves nothing behind.
-    """
-    agent = store.get_agent(agent_id)
-    if agent is None:
-        raise store.NotFound(f"No agent with id '{agent_id}'.")
-    if pull is None and agent["live_version"]:
-        version = store.get_version(agent_id, agent["live_version"])
-        return {**version, "pull": None}, f"v{version['number']}"
-    if pull is None:
-        open_ = store.list_pulls(agent_id, state="open")
-        pull = next((p["number"] for p in open_ if p["kind"] == "setup"), None)
-    found = store.get_pull(agent_id, pull) if pull is not None else None
-    if found is None:
-        raise store.NotFound(f"The agent has no {store.label(pull or 0)}.")
-    return {**found, "pull": found["number"], "version": None}, store.label(found["number"])
-
-
-def _when(at: Optional[str]) -> str:
-    """A stored time as the person reads it: in the server's time zone, the clinic's."""
-    if not at:
-        return "never"
-    return datetime.fromisoformat(at).astimezone().strftime("%a %d %b %H:%M")
-
-
-def _facts(agent_id: str, copy: dict, name: str, messages: list[dict]) -> str:
-    agent = store.get_agent(agent_id)
-    now = datetime.now().astimezone().strftime("%A %d %B %Y, %H:%M")
-    live = f"v{agent['live_version']}" if agent["live_version"] else "nothing yet"
-    about = f"live, {name}" if copy["pull"] is None else f"{name}, a pull request not merged yet"
-    calls = store.calls.list_calls(agent_id)
-    parts = [
-        f"Now: {now}. Live: {live}. The person is looking at {about}.",
-        _context(agent_id, copy, name),
-        tests_of(agent_id, copy, name),
-        versions_of(agent_id),
-        _pulls(agent_id),
-        _issues(agent_id),
-        _calls(calls),
-        _in_full(agent_id, calls, messages),
-        _chat(messages),
-    ]
-    return "\n\n".join(part for part in parts if part)
-
-
-def tests_of(agent_id: str, copy: dict, name: str) -> str:
-    if copy["pull"] is not None:
-        run = store.get_run(agent_id, pull=copy["pull"])
-    else:
-        run = store.get_run(agent_id, version=copy["number"])
-    results = {test["id"]: test for test in (run or {}).get("tests", [])}
-    repeats = (run or {}).get("repeats", REPEATS)
-    lines = []
-    for test in copy["tests"]:
-        result = results.get(test["id"])
-        if result is None or not result["runs"]:
-            how = "not run yet"
-        else:
-            passed = sum(1 for r in result["runs"] if r["passed"])
-            how = f"{verdict(result, repeats)}, {passed}/{len(result['runs'])}"
-            failed = [c for r in result["runs"] for c in r["checks"] if not c["pass"]]
-            if failed:
-                how += f' · failed "{failed[0]["text"]}": {failed[0]["detail"]}'
-        lines.append(
-            f"- {test['name']} · {how}\n  caller: {test['caller']}\n"
-            f"  checks: {'; '.join(test['checks'])}"
-        )
-    ran = f"last run {_when(run['started_at'])}" if run else "never run"
-    rule = (
-        f"A test passes at {repeats}/{repeats}, is flaky one short of it (shown, and does not "
-        "block a merge), and is failing below that (blocks a merge)."
-    )
-    head = f"Its tests on {name} ({ran}, {repeats} calls each). {rule}"
-    if (summary := store.runs.summary(run)) and summary["state"] != "running":
-        head += f" Now: {tally(summary)}."
-    return f"{head}\n" + ("\n".join(lines) or "(none)")
-
-
-def versions_of(agent_id: str) -> str:
-    lines = [
-        f"- v{v['number']}, {_when(v['created_at'])}"
-        + (f', from PR #{v["pull"]} "{v["title"]}"' if v["pull"] else "")
-        for v in store.list_versions(agent_id)
-    ]
-    return "Versions, live first:\n" + ("\n".join(lines) or "(none)")
-
-
-def _pulls(agent_id: str) -> str:
-    lines = [pull_line(pull) for pull in store.list_pulls(agent_id)]
-    return "Pull requests, newest first:\n" + ("\n".join(lines) or "(none)")
-
-
-def pull_line(pull: dict) -> str:
-    """A pull request in a line: number, title, kind, why, state and checks."""
-    state = f"merged as v{pull['merged_version']}" if pull["state"] == "merged" else pull["state"]
-    checks = pull["checks"]
-    if pull["state"] == "open" and checks:
-        state += f", checks {checks['state']}: {tally(checks)}"
-    why = f", fixes Issue #{pull['fixes']}" if pull["fixes"] else ""
-    if pull["chat"]:
-        why = f', asked for in the chat "{pull["chat"]["title"]}"'
-    return (
-        f'- PR #{pull["number"]} "{pull["title"]}" · {pull["kind"]}{why} · {state} · '
-        f"opened {_when(pull['created_at'])}"
-    )
-
-
-def _issues(agent_id: str) -> str:
-    lines = [issue_line(issue) for issue in store.issues.list_issues(agent_id)]
-    return "Issues, newest first:\n" + ("\n".join(lines) or "(none)")
-
-
-def tally(checks: dict) -> str:
-    """How a copy's tests went, by the 2/3 rule: "8 pass, 2 flaky (no block), 1 failing"."""
-    parts = [f"{checks['passed']} of {checks['total']} pass"]
-    if checks["flaky"]:
-        parts.append(f"{checks['flaky']} flaky (2/3: does not block a merge)")
-    if checks["failing"]:
-        parts.append(f"{checks['failing']} failing (blocks a merge)")
-    return ", ".join(parts)
-
-
-def issue_line(issue: dict) -> str:
-    """An issue in two lines: number, state, who found it, severity, step, calls; its words."""
-    fixed = f", fixed by PR #{issue['fixed']['pull']}" if issue["fixed"] else ""
-    who = {"you": "reported by the team", "clinic": "flagged by the clinic"}.get(
-        issue["reported"] or "", "found in calls"
-    )
-    last = f", last {_when(issue['last_seen'])}" if issue["last_seen"] else ""
-    return (
-        f"- Issue #{issue['number']} · {issue['state']}{fixed} · {who} · "
-        f"{issue['severity'] or 'severity not set'} · step {issue['step'] or 'not known'} · "
-        f"{issue['calls']} calls{last}\n"
-        f"  {issue['title']}. {issue['description']}"
-    )
-
-
-def _tally(calls: list[dict]) -> str:
-    """How many calls, and how they went, all of them and today's: what a count is asked of."""
-    today = datetime.now().astimezone().date()
-
-    def line(which: list[dict], name: str) -> str:
-        if not which:
-            return f"{name}: none."
-        versions = Counter(f"v{call['version']}" for call in which)
-        outcomes = Counter(call["outcome"] or "not reviewed" for call in which)
-        flagged = sum(1 for call in which if call["issues"])
-        return (
-            f"{name}: {len(which)} calls ({', '.join(f'{n} on {v}' for v, n in versions.items())}),"
-            f" {flagged} with an issue; outcomes: "
-            + ", ".join(f"{n} {outcome}" for outcome, n in outcomes.most_common())
-            + "."
-        )
-
-    on_day = [c for c in calls if datetime.fromisoformat(c["at"]).astimezone().date() == today]
-    return f"{line(calls, 'All calls')}\n{line(on_day, 'Today')}"
-
-
-def _calls(calls: list[dict]) -> str:
-    if not calls:
-        return "Calls: none yet."
-    lines = [call_line(call) for call in calls[:CALLS_LISTED]]
-    shown = f"the latest {len(lines)} of {len(calls)}" if len(calls) > len(lines) else "all"
-    return f"{_tally(calls)}\n\nCalls, latest first ({shown}):\n" + "\n".join(lines)
-
-
-def call_line(call: dict) -> str:
-    """A call in a line: id, caller, when, version, length, outcome, how it ended, its issues."""
-    issues = ", ".join(f"Issue #{n}" for n in call["issues"]) or "no issue"
-    outcome = call["outcome"] or f"review {call['review']}"
-    return (
-        f"- call {call['id']} · {call['caller']} · {_when(call['at'])} · v{call['version']}"
-        f" · {call['seconds']}s · {outcome} · {_ENDED.get(call['ended'], call['ended'])}"
-        f" · {issues}"
-    )
-
-
-def _named(calls: list[dict], text: str) -> list[int]:
-    """The calls `text` names: "call 12", or a caller's first or last name."""
-    low = text.lower()
-    ids = [int(n) for n in re.findall(r"\bcall\s*#?(\d+)", low)]
-    for call in calls:
-        names = [part for part in re.split(r"\W+", call["caller"].lower()) if len(part) > 2]
-        if any(re.search(rf"\b{re.escape(part)}\b", low) for part in names):
-            ids.append(call["id"])
-    return list(dict.fromkeys(ids))
-
-
-def _in_full(agent_id: str, calls: list[dict], messages: list[dict]) -> str:
-    """The calls the chat is about, whole: the latest question first, then what came before."""
-    wanted: list[int] = []
-    for message in reversed(messages[-CHAT_SHOWN:]):
-        wanted += _named(calls, message["text"])
-        wanted += [link["number"] for link in message.get("links", []) if link["kind"] == "call"]
-    shown = []
-    for call_id in list(dict.fromkeys(wanted))[:CALLS_IN_FULL]:
-        call = store.calls.get_call(agent_id, call_id)
-        if call is not None:
-            shown.append(call_in_full(call))
-    return "The calls this chat is about, in full:\n\n" + "\n\n".join(shown) if shown else ""
-
-
-def call_in_full(call: dict) -> str:
-    """A call whole: who called, its path, what it recorded, what it failed, its transcript."""
-    path = " > ".join(step["node"] for step in call["path"]) or "nowhere"
-    collected = {k: v for step in call["path"] for k, v in (step["collected"] or {}).items()}
-    lines = "\n".join(
-        f"  [{i}] {line['role']}: {line['text']}" for i, line in enumerate(call["transcript"])
-    )
-    failed = "; ".join(c["text"] for c in call["checks"] if not c["passed"]) or "none"
-    found = "\n".join(
-        f"  - Issue #{f['issue']}, turn {f['turn']}: {f['why']}" for f in call["findings"]
-    )
-    return (
-        f"call {call['id']} · {call['caller']} · {_when(call['at'])} · v{call['version']}\n"
-        f"  who they were: {call['situation']}\n  path: {path}\n"
-        f"  recorded: {collected or 'nothing'}\n  checks it failed: {failed}\n"
-        f"{found + chr(10) if found else ''}{lines}"
-    )
-
-
-def _chat(messages: list[dict]) -> str:
-    earlier = messages[:-1][-CHAT_SHOWN:]
-    said = "\n".join(
-        f"{'You' if m['by'] == PROSPER else 'They'}: {m['text']}{_did(m)}".rstrip() for m in earlier
-    )
-    chat = f"The chat so far:\n{said}\n\n" if said else ""
-    return f"{chat}Their question: {messages[-1]['text']}"
-
-
-def _did(message: dict) -> str:
-    """What a message of Prosper AI's proposed, and what came of it, for the chat so far."""
-    if message.get("offer"):
-        return f" [offered a pull request: {message['offer']['title']}]"
-    action = message.get("action")
-    if not action:
-        return ""
-    proposed = " · ".join(
-        part
-        for part in (action["title"], action["what"], *action["meta"], *action.get("warnings", []))
-        if part
-    )
-    outcome = {
-        "done": (action.get("result") or {}).get("text", "done"),
-        "failed": f"refused: {action.get('error')}",
-        "declined": "they declined it, nothing was done",
-        "skipped": "not done: they wrote again instead",
-        "pending": "waiting for them",
-        "running": "being done",
-    }[action["state"]]
-    return f" [proposed: {proposed} → {outcome}]"

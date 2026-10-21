@@ -1,6 +1,6 @@
 #
 # Prosper AI's tools in Ask Prosper AI: what it reads, and what it does once
-# the person says so. copilot/ask.py runs them; this is what they are.
+# the person says so. copilot/agent.py runs them; this is what they are.
 #
 # Each is a route the UI calls, called here as a function: an issue opened
 # from a chat goes through report_issue like one from New issue, a merge
@@ -31,9 +31,8 @@ from pydantic import BaseModel, ValidationError
 
 import store
 from copilot import artifacts, setup
-from copilot.ask import (
-    Tool,
-    ToolError,
+from copilot.agent import Tool, ToolError
+from copilot.facts import (
     call_in_full,
     call_line,
     copy_of,
