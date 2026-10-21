@@ -18,7 +18,7 @@
 from store.calls import OUTCOMES
 from store.issues import SEVERITIES
 
-from .artifacts import Problems, _list, _object, _plain, sentences
+from .artifacts import Problems, _list, _object, plain, sentences
 
 CALLERS_PER_BATCH = (10, 12)
 CHECKS_PER_CALL = (3, 8)
@@ -129,7 +129,7 @@ def _check_finding(finding: dict, transcript: list[dict]) -> None:
             f"The finding '{finding['title']}' is on turn {turn}, which is not a line of the "
             f"agent. The agent's turns are: {', '.join(map(str, agent))}."
         )
-    if _plain(finding["quote"]).strip(" .") not in _plain(transcript[turn]["text"]):
+    if plain(finding["quote"]).strip(" .") not in plain(transcript[turn]["text"]):
         raise ValueError(
             f"The quote of finding '{finding['title']}' is not in turn {turn} word for word. "
             "Copy words from that line exactly."

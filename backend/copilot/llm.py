@@ -3,15 +3,15 @@
 # answer, a check of what comes back, and the check's error fed back when it
 # fails.
 #
-# Plain OpenAI SDK, no agent framework, for the jobs: each artifact (an agent,
-# its rules, its tests, its questions) is one request with Structured
-# Outputs, so the answer always parses into the shape asked for. What a schema cannot say
-# (that an edge's target is a step that exists, that a quote is really in the
-# guidelines) is checked in code. A refused answer is sent back with the
-# sentence that says what is wrong, the same sentence a save would get, and the
-# model answers again: twice at most, then the job says it could not.
+# Plain OpenAI SDK, no agent framework, for what judges one input with no
+# tools: the review of a call and the grouping of its findings, the callers
+# of a batch, an issue's title and its tidy. Each is one request with
+# Structured Outputs, so the answer always parses into the shape asked for.
+# What a schema cannot say (that a quote is really in the transcript) is
+# checked in code. A refused answer is sent back with the sentence that says
+# what is wrong, and the model answers again: twice at most.
 #
-# Ask Prosper AI's chat is the one agent with tools, on the OpenAI Agents SDK
+# Prosper AI itself is one agent with tools, on the OpenAI Agents SDK
 # (copilot/agent.py): `agent_model` hands it this same model, and its requests
 # are counted here too.
 #
@@ -34,16 +34,13 @@ from simulate.suite import prosper_model
 
 PROMPTS = Path(__file__).parent / "prompts"
 ATTEMPTS = 3
-# Low reasoning effort: each artifact is a well-specified piece, and at the
+# Low reasoning effort: each request is a well-specified piece, and at the
 # default the model can think for minutes and spend the whole budget before it
 # writes a word. MAX_TOKENS bounds what one request can cost (USD 0.06 on
 # PROSPER_MODEL): a whole agent is about 2,000 tokens, and a request that runs
 # past it has got stuck, which happens now and then; it is tried once more.
 EFFORT = "low"
 MAX_TOKENS = 6000
-# A review or a change writes the whole agent back with its verdicts, tests and
-# rules: a real one ran past 6,000 tokens of plain answer, twice.
-LONGER = {"review": 12000, "change": 12000}
 
 # USD per million tokens: input, cached input, output. A model not listed is
 # counted in tokens only.
@@ -153,7 +150,7 @@ class LLM:
                 "format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}
             },
             reasoning={"effort": EFFORT},
-            max_output_tokens=LONGER.get(name, MAX_TOKENS),
+            max_output_tokens=MAX_TOKENS,
         )
         self.count(response.usage)
         for item in response.output:
@@ -173,9 +170,10 @@ class LLM:
             raise CutOff("The model ran out of room before it finished its answer.")
         return response.output_text or ""
 
-    def agent_model(self) -> Model:
-        """This model as the Agents SDK runs it, for Ask Prosper AI's chat. The tests
-        replace this, and never reach OpenAI."""
+    def agent_model(self, run: str) -> Model:
+        """This model as the Agents SDK runs it, for Prosper AI's agent; `run` says which
+        ("ask" in a chat, "work" in a pull request). The tests replace this, and never
+        reach OpenAI."""
         return OpenAIResponsesModel(model=self.model, openai_client=AsyncOpenAI())
 
     def add_cost(self, usd: float) -> None:

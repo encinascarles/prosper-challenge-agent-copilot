@@ -1,6 +1,7 @@
 #
-# Prosper AI's tools in Ask Prosper AI: what it reads, and what it does once
-# the person says so. copilot/agent.py runs them; this is what they are.
+# Prosper AI's tools: what it reads, what it does once the person says so (in
+# a chat), and how it works on a pull request's copy (in its conversation).
+# copilot/agent.py runs them; this is what they are, one set for both.
 #
 # Each is a route the UI calls, called here as a function: an issue opened
 # from a chat goes through report_issue like one from New issue, a merge
@@ -20,6 +21,16 @@
 # Reads answer in plain lines, the same as the facts Prosper AI starts from,
 # never JSON: shorter, and what the model reads best.
 #
+# Work on a pull request's copy runs at once, with no card: nothing there
+# reaches callers before a person merges it. It comes in small pieces (draw a
+# new agent whole, then one step's task, one way it moves on, one field, a
+# rule, a test), each written to the copy through the store like the editor's
+# saves, and each checked first as a save is (AgentBuilder) and as Prosper
+# AI's writing is (artifacts.py): a task of three short sentences, a rule
+# quoting its line word for word, a check naming a real step, the product's
+# words. Where the work stands is checked too (copilot/work.py). What is
+# refused goes back to the model in the sentence that says why.
+#
 
 import json
 from datetime import datetime
@@ -30,8 +41,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 import store
-from copilot import artifacts, setup
-from copilot.agent import Tool, ToolError
+from agent_builder.schema import DEFAULT_MODEL
+from copilot import agent, artifacts, work
+from copilot.agent import Tool, ToolError, Work
 from copilot.facts import (
     call_in_full,
     call_line,
@@ -39,6 +51,7 @@ from copilot.facts import (
     issue_line,
     pull_line,
     tests_of,
+    the_call,
     versions_of,
 )
 from copilot.tidy import first_line
@@ -384,7 +397,7 @@ def open_pull_card(agent_id: str, args: dict) -> dict:
 def open_pull(agent_id: str, args: dict, at: dict) -> dict:
     # What "Create pull request" on an offer did: a change opened on live,
     # starting from the person's words, with Prosper AI working on it (fix.py).
-    work = {"state": "working", "doing": "Writing a test of it", "questions": []}
+    record = {"state": "working", "doing": "Writing a test of it", "questions": []}
     pull = _call(
         store.chats.open_change,
         agent_id,
@@ -392,15 +405,14 @@ def open_pull(agent_id: str, args: dict, at: dict) -> dict:
         at["message"],
         args["title"].strip(),
         args["what"].strip(),
-        work,
+        record,
     )
     label, link = store.label(pull["number"]), _link("pull", pull["number"])
     try:
-        setup.fix(agent_id, pull["number"])
+        agent.start(agent_id, pull["number"])
     except Exception as error:  # noqa: BLE001 - the pull request exists: the card must link it
-        # Left as a failed job, like one cut by a restart: a message to it retries.
+        # Left failed, like work cut by a restart: a message to it goes on.
         reason = str(error) or type(error).__name__
-        store.prosper.set_job(agent_id, pull["number"], {"kind": "fix"})
         store.prosper.set_state(agent_id, pull["number"], "failed")
         text = f"Opened {label} · Prosper AI could not start: {reason} · write to it to retry"
         return {"text": text, "link": link, "said": text}
@@ -642,6 +654,429 @@ def add_test(agent_id: str, args: dict, at: dict) -> dict:
     return {"text": text, "link": _link("pull", pull["number"]), "said": text + "; checks run."}
 
 
+# --- Work on a pull request's copy ---------------------------------------------
+
+
+def _now_event(kind: str, **more) -> dict:
+    return work.event(kind, **more)
+
+
+def _said(text: str, what: str) -> str:
+    """`text` as a person will read it, or ToolError: said, short, steps named as words."""
+    text = text.strip()
+    try:
+        agent.check_answer({"answer": text, "links": []}, {})
+    except ValueError as error:
+        raise ToolError(f"{what}: {error}") from error
+    return text
+
+
+def _shape(pull: dict) -> dict:
+    return artifacts.from_config(pull["config"])
+
+
+def _node(shape: dict, step: str) -> dict:
+    name = artifacts.to_name(step)
+    found = next((node for node in shape["nodes"] if node["name"] == name), None)
+    if found is None:
+        steps = ", ".join(_words(node["name"]) for node in shape["nodes"]) or "none yet"
+        raise ToolError(f"There is no step '{step}'. The steps: {steps}.")
+    return found
+
+
+def _edge(node: dict, to: str) -> dict:
+    name = artifacts.to_name(to)
+    found = next(
+        (edge for edge in node["edges"] if artifacts.to_name(edge["target"]) == name), None
+    )
+    if found is None:
+        ways = ", ".join(_words(edge["target"]) for edge in node["edges"]) or "nowhere"
+        raise ToolError(
+            f"{_words(node['name'])} does not move on to '{to}'. It moves on to: {ways}."
+        )
+    return found
+
+
+def _write(at: Work, pull: dict, line: str, step: Optional[str] = None, **copy) -> None:
+    """Write the change to the copy: said at once while a new agent is drawn (`step`, or the
+    line), else kept to go under Prosper AI's next message."""
+    if work.building(at.agent_id, pull):
+        event = _now_event("step", text=step or line)
+        store.prosper.change(at.agent_id, at.number, None, step=event, **copy)
+    else:
+        store.prosper.change(at.agent_id, at.number, line, **copy)
+
+
+def _save(at: Work, shape: dict, line: str, step: Optional[str] = None) -> str:
+    """The copy with the agent `shape` drew, checked as a save and as Prosper AI's writing."""
+    pull = work.pull_of(at)
+    work.may_edit(at, pull)
+    before = pull["config"]
+    drawn = artifacts.to_config(before["name"], shape, before.get("model", DEFAULT_MODEL))
+    config = artifacts.keep_extras(drawn, before) if before["nodes"] else drawn
+    try:
+        artifacts.check_agent(config)
+        artifacts.check_concise(config, before if before["nodes"] else None)
+    except ValueError as error:
+        raise ToolError(str(error)) from error
+    work.small_enough(at.agent_id, pull, config)
+    _write(at, pull, line, step, config=config)
+    return f"Done: {line}."
+
+
+def draw_agent(at: Work, args: dict) -> str:
+    pull = work.pull_of(at)
+    if pull["kind"] != "setup":
+        raise ToolError("Only a setup draws the agent whole: change it one step at a time.")
+    shape = args["agent"]
+    count = len(shape["nodes"])
+    line = f"Drew {count} step{'s' if count != 1 else ''}"
+    return _save(
+        at, shape, line if not pull["config"]["nodes"] else f"Drew the agent again: {count} steps"
+    )
+
+
+def add_step(at: Work, args: dict) -> str:
+    shape = _shape(work.pull_of(at))
+    name = artifacts.to_name(args["name"])
+    if any(node["name"] == name for node in shape["nodes"]):
+        raise ToolError(f"There is a step '{args['name']}' already: change it instead.")
+    node = {"name": name, "task": args["task"], "end": args["ends_call"], "edges": args["moves_on"]}
+    shape["nodes"].append(node)
+    said = _save(at, shape, f"Added step {_words(name)}")
+    return f"{said} Nothing moves on to it yet: set_move_on from the step that leads there."
+
+
+def set_task(at: Work, args: dict) -> str:
+    shape = _shape(work.pull_of(at))
+    node = _node(shape, args["step"])
+    node["task"] = args["task"]
+    return _save(at, shape, f"Changed what {_words(node['name'])} says")
+
+
+def set_move_on(at: Work, args: dict) -> str:
+    shape = _shape(work.pull_of(at))
+    node = _node(shape, args["step"])
+    if node["end"]:
+        raise ToolError(f"{_words(node['name'])} ends the call: it moves on nowhere.")
+    _node(shape, args["to"])
+    if args["instead_of"]:
+        edge = _edge(node, args["instead_of"])
+        edge.update(target=args["to"], description=args["when"])
+    elif any(
+        artifacts.to_name(e["target"]) == artifacts.to_name(args["to"]) for e in node["edges"]
+    ):
+        _edge(node, args["to"])["description"] = args["when"]
+    else:
+        node["edges"].append({"description": args["when"], "target": args["to"], "fields": []})
+    return _save(at, shape, f"Changed when {_words(node['name'])} moves on")
+
+
+def remove_move_on(at: Work, args: dict) -> str:
+    shape = _shape(work.pull_of(at))
+    node = _node(shape, args["step"])
+    edge = _edge(node, args["to"])
+    node["edges"].remove(edge)
+    return _save(at, shape, f"Changed when {_words(node['name'])} moves on")
+
+
+def add_field(at: Work, args: dict) -> str:
+    shape = _shape(work.pull_of(at))
+    node = _node(shape, args["step"])
+    edge = _edge(node, args["to"])
+    field = args["field"]
+    if any(
+        artifacts.to_name(f["name"]) == artifacts.to_name(field["name"]) for f in edge["fields"]
+    ):
+        raise ToolError(f"It records '{field['name']}' already.")
+    if field["type"] == "choice" and len(field["options"]) < 2:
+        raise ToolError("A choice needs its options: two at least.")
+    edge["fields"].append(field)
+    return _save(at, shape, f"Changed what {_words(node['name'])} records")
+
+
+def remove_field(at: Work, args: dict) -> str:
+    shape = _shape(work.pull_of(at))
+    node = _node(shape, args["step"])
+    edge = _edge(node, args["to"])
+    name = artifacts.to_name(args["name"])
+    kept = [f for f in edge["fields"] if artifacts.to_name(f["name"]) != name]
+    if len(kept) == len(edge["fields"]):
+        raise ToolError(f"It records no '{args['name']}' there.")
+    edge["fields"] = kept
+    return _save(at, shape, f"Changed what {_words(node['name'])} records")
+
+
+def add_rules(at: Work, args: dict) -> str:
+    pull = work.pull_of(at)
+    work.may_edit(at, pull)
+    if not pull["config"]["nodes"]:
+        raise ToolError("Draw the agent first: a rule goes on its steps.")
+    steps = {node["name"] for node in pull["config"]["nodes"]}
+    sources, answers = _quotable(at.agent_id, pull)
+    have = {artifacts.plain(rule["text"]) for rule in pull["rules"]}
+    problems = artifacts.Problems()
+    added = []
+    for rule in args["rules"]:
+        try:
+            step = artifacts.check_rule(rule, steps)
+            if rule["source"] is not None:
+                source = {**artifacts.check_quote(rule, sources, answers), "pull": at.number}
+            elif pull["kind"] == "setup":
+                raise ValueError(
+                    f"Rule '{rule['text']}' needs its source: the line of the guidelines it "
+                    f"comes from, or '{artifacts.ANSWER}' with the clinic's answer, as its quote."
+                )
+            else:
+                source = work.source_of(at.agent_id, pull)
+        except ValueError as error:
+            problems.found.append(str(error))
+            continue
+        if artifacts.plain(rule["text"]) not in have:
+            added.append(
+                {"id": store.suite.new_id(), "step": step, "text": rule["text"], "source": source}
+            )
+    try:
+        problems.raise_any()
+    except ValueError as error:
+        raise ToolError(f"Nothing was added. {error}") from error
+    if not added:
+        return "It has those rules already."
+    events = tuple(_now_event("rule", step=r["step"], text=r["text"]) for r in added)
+    count = f"{len(added)} rule{'s' if len(added) != 1 else ''}"
+    line = f"Wrote {count}, each linked to its line or your answer"
+    if work.building(at.agent_id, pull):
+        store.prosper.change(
+            at.agent_id,
+            at.number,
+            None,
+            rules=[*pull["rules"], *added],
+            step=_now_event("step", text=line),
+        )
+    else:
+        store.prosper.change(
+            at.agent_id, at.number, None, rules=[*pull["rules"], *added], events=events
+        )
+    return f"Added {count}."
+
+
+def _quotable(agent_id: str, pull: dict) -> tuple[list[dict], list[str]]:
+    """What a rule may quote: the guidelines, and the clinic's answers."""
+    record = store.prosper.work_of(agent_id, pull["number"])
+    sources, answered = store.prosper.guidelines(agent_id)
+    if pull["kind"] == "setup":
+        sources, answered = record.get("sources", []), []
+    answers = [q["answer"] for q in [*answered, *record.get("questions", [])] if q["answer"]]
+    return sources, answers
+
+
+def remove_rule(at: Work, args: dict) -> str:
+    pull = work.pull_of(at)
+    work.may_edit(at, pull)
+    rule = next((r for r in pull["rules"] if r["id"] == args["rule"]), None)
+    if rule is None:
+        raise ToolError(f"There is no rule '{args['rule']}': use an id in brackets.")
+    if not store.suite.added_in(rule, at.number):
+        raise ToolError(
+            f"That rule is live already, and {store.label(at.number)} only adds: "
+            "add a rule that says what changes instead."
+        )
+    rules = [r for r in pull["rules"] if r["id"] != rule["id"]]
+    event = _now_event("rule", step=rule["step"], text=rule["text"], removed=True)
+    _write_items(at, pull, f"Took out the rule {rule['text']}", event, rules=rules)
+    return "Took it out."
+
+
+def _write_items(at: Work, pull: dict, line: str, event: dict, **copy) -> None:
+    if work.building(at.agent_id, pull):
+        store.prosper.change(
+            at.agent_id, at.number, None, step=_now_event("step", text=line), **copy
+        )
+    else:
+        store.prosper.change(at.agent_id, at.number, None, events=(event,), **copy)
+
+
+def _checked_tests(pull: dict, tests: list[dict]) -> None:
+    try:
+        artifacts.check_tests(tests, pull["config"])
+    except ValueError as error:
+        raise ToolError(str(error)) from error
+
+
+def add_tests(at: Work, args: dict) -> str:
+    pull = work.pull_of(at)
+    work.may_edit(at, pull)
+    if not pull["config"]["nodes"]:
+        raise ToolError("Draw the agent first: a test calls it.")
+    _checked_tests(pull, args["tests"])
+    if (
+        pull["kind"] == "setup"
+        and len(pull["tests"]) + len(args["tests"]) > artifacts.SETUP_TESTS[1]
+    ):
+        raise ToolError(
+            f"A setup writes {artifacts.SETUP_TESTS[1]} tests at most: the ones that matter."
+        )
+    source = work.source_of(at.agent_id, pull)
+    added = [{"id": store.suite.new_id(), **test, "source": source} for test in args["tests"]]
+    count = f"{len(added)} test{'s' if len(added) != 1 else ''}"
+    events = tuple(_now_event("test", text=t["name"]) for t in added)
+    tests = [*pull["tests"], *added]
+    if work.building(at.agent_id, pull):
+        store.prosper.change(
+            at.agent_id,
+            at.number,
+            None,
+            tests=tests,
+            step=_now_event("step", text=f"Wrote {count}"),
+        )
+    else:
+        store.prosper.change(at.agent_id, at.number, None, tests=tests, events=events)
+    return f"Added {count}: " + ", ".join(f"[{t['id']}] {t['name']}" for t in added)
+
+
+def _the_test(pull: dict, wanted: str) -> dict:
+    low = wanted.strip().lower()
+    for test in pull["tests"]:
+        if low in (test["id"].lower(), test["name"].lower()):
+            return test
+    names = "; ".join(f"[{t['id']}] {t['name']}" for t in pull["tests"]) or "none"
+    raise ToolError(f'There is no test "{wanted}". Its tests: {names}.')
+
+
+def rewrite_test(at: Work, args: dict) -> str:
+    pull = work.pull_of(at)
+    work.may_edit(at, pull)
+    test = _the_test(pull, args["test"])
+    work.may_change_test(pull, test, removing=False)
+    fields = {key: args[key] for key in ("name", "caller", "checks")}
+    _checked_tests(pull, [fields])
+    why = _said(args["why"], "Why")
+    tests = [{**t, **fields} if t["id"] == test["id"] else t for t in pull["tests"]]
+    event = _now_event("test", text=fields["name"], rewritten=True, why=why)
+    _write_items(at, pull, f"Rewrote the test {fields['name']}", event, tests=tests)
+    return "Rewrote it."
+
+
+def remove_test(at: Work, args: dict) -> str:
+    pull = work.pull_of(at)
+    work.may_edit(at, pull)
+    test = _the_test(pull, args["test"])
+    work.may_change_test(pull, test, removing=True)
+    tests = [t for t in pull["tests"] if t["id"] != test["id"]]
+    event = _now_event("test", text=test["name"], removed=True)
+    _write_items(at, pull, f"Took out the test {test['name']}", event, tests=tests)
+    return "Took it out."
+
+
+def ask(at: Work, args: dict) -> str:
+    pull = work.pull_of(at)
+    record = store.prosper.work_of(at.agent_id, at.number)
+    first = pull["kind"] == "setup" and "asked" not in record.get("built", [])
+    steps = {node["name"] for node in pull["config"]["nodes"]} or None
+    try:
+        artifacts.check_questions(args["questions"], None if first else steps)
+    except ValueError as error:
+        raise ToolError(str(error)) from error
+    if first and not args["questions"]:
+        store.prosper.mark_built(at.agent_id, at.number, "asked")
+        line = f"Found no gaps in the guidelines that change how {pull['config']['name']} behaves"
+        store.prosper.log(at.agent_id, at.number, _now_event("step", text=line))
+        return "Nothing to ask: go on and draw the agent."
+    if not args["questions"]:
+        raise ToolError("Ask at least one question, or say what you need in your answer instead.")
+    said = _said(args["said"], "What you say before the questions")
+    questions = [
+        {
+            "text": question["text"],
+            "options": [
+                {
+                    "label": option["label"],
+                    "rule": option["rule"]
+                    and {
+                        "step": artifacts.step_of(option["rule"]["step"]),
+                        "text": option["rule"]["text"],
+                    },
+                }
+                for option in question["options"]
+            ],
+        }
+        for question in args["questions"]
+    ]
+    store.prosper.say(at.agent_id, at.number, _now_event("message", text=said))
+    store.prosper.ask(at.agent_id, at.number, questions, setup=first)
+    if first:
+        store.prosper.mark_built(at.agent_id, at.number, "asked")
+    at.waiting = True
+    return "Asked. Stop here: their answers start your next turn."
+
+
+def reproduce(at: Work, args: dict) -> str:
+    return work.reproduce(at, {key: args[key] for key in ("name", "caller", "checks")})
+
+
+def run_all(at: Work, args: dict) -> str:
+    pull = work.pull_of(at)
+    work.ready_to_run(at, pull)
+    if store.prosper.unsaid(at.agent_id, at.number):
+        if not args["said"].strip():
+            raise ToolError("Say in `said` what you changed since the tests last ran, and why.")
+        said = _said(args["said"], "What you changed")
+        kind = "message" if pull["kind"] == "setup" else "proposed"
+        store.prosper.say(at.agent_id, at.number, _now_event(kind, text=said))
+    at.runs += 1
+    run = work.run(at)
+    pull = work.pull_of(at)
+    checks = store.runs.summary(run)
+    if pull["kind"] in ("fix", "change") and checks and checks["state"] == "passed":
+        work.proved(at.agent_id, at.number)
+    told = work.results(at.agent_id, pull)
+    own = next((t for t in pull["tests"] if work.is_test_of(t, at.number)), None)
+    result = next((r for r in run["tests"] if own and r["id"] == own["id"]), None)
+    if result is not None and store.runs.verdict(result, run["repeats"]) == "flaky":
+        told += (
+            "\n\nThe test of what this pull request is for passes only 2/3: the problem may "
+            "still happen in some calls."
+        )
+    return told
+
+
+def run_one(at: Work, args: dict) -> str:
+    pull = work.pull_of(at)
+    work.may_edit(at, pull)
+    test = _the_test(pull, args["test"])
+    run = work.run(at, test["id"])
+    checks = store.runs.summary(run)
+    if pull["kind"] in ("fix", "change") and checks and checks["state"] == "passed":
+        work.proved(at.agent_id, at.number)  # the run it went into passes now
+    result = next(r for r in run["tests"] if r["id"] == test["id"])
+    score = f"{sum(1 for r in result['runs'] if r['passed'])}/{len(result['runs'])}"
+    kind = store.runs.verdict(result, run["repeats"])
+    bad = [r for r in result["runs"] if not r["passed"]]
+    how = f"\n{the_call(bad[0])}" if bad else ""
+    return f"{test['name']}, run again: {kind}, {score}.{how}"
+
+
+def read_results(at: Work, args: dict) -> str:
+    return work.results(at.agent_id, work.pull_of(at))
+
+
+def read_test_call(at: Work, args: dict) -> str:
+    pull = work.pull_of(at)
+    test = _the_test(pull, args["test"])
+    return work.test_call(at.agent_id, pull, test["id"], args["call"])
+
+
+_TEST = artifacts._object(
+    name=_TEXT,
+    caller={**_TEXT, "description": "Who calls and what they want, to the person playing them."},
+    checks=artifacts._list(_TEXT),
+)
+_RULE = artifacts._object(step=_maybe(_TEXT), text=_TEXT, source=_maybe(_TEXT), quote=_maybe(_TEXT))
+_OPTION = artifacts._object(
+    label=_TEXT,
+    rule={"anyOf": [artifacts._object(step=_maybe(_TEXT), text=_TEXT), {"type": "null"}]},
+)
+_QUESTION = artifacts._object(text=_TEXT, options=artifacts._list(_OPTION))
 _PULL = "An open pull request's number; null for live."
 _STATES = _enum("open", "snoozed", "resolved", "ignored")
 
@@ -812,6 +1247,160 @@ TOOLS: dict[str, Tool] = {
             ),
             card=add_test_card,
             act=add_test,
+        ),
+        # --- In a pull request's conversation: work on its copy, no card.
+        Tool(
+            "ask",
+            "Ask the person questions with 2 or 3 options each, and stop until they answer. "
+            "In a setup, first of all: what the guidelines leave open (no questions: an empty "
+            "list, and go on). An option's rule is what picking it adds; null for none.",
+            _args(
+                said={**_TEXT, "description": "One sentence to the person before the questions."},
+                questions=artifacts._list(_QUESTION),
+            ),
+            edit=ask,
+            doing="Asking you",
+        ),
+        Tool(
+            "draw_agent",
+            "A setup only: draw the whole agent (persona, start step, steps with how each moves "
+            "on and what it records). Steps are snake_case names.",
+            _args(agent=artifacts.AGENT),
+            edit=draw_agent,
+            doing="Drawing the steps",
+        ),
+        Tool(
+            "add_step",
+            "Add a step, with how it moves on (none if it ends the call). Then make another "
+            "step move on to it with set_move_on.",
+            _args(
+                name=_TEXT,
+                task=_TEXT,
+                ends_call={"type": "boolean"},
+                moves_on=artifacts._list(artifacts._EDGE),
+            ),
+            edit=add_step,
+            doing="Adding a step",
+        ),
+        Tool(
+            "set_task",
+            "Rewrite what a step tells the agent to do: at most 3 short sentences.",
+            _args(step=_TEXT, task=_TEXT),
+            edit=set_task,
+            doing="Changing a step",
+        ),
+        Tool(
+            "set_move_on",
+            "Set when `step` moves on to `to`: its condition. Adds the way on if it has none to "
+            "`to`; with `instead_of`, the way that went there now goes to `to`.",
+            _args(
+                step=_TEXT,
+                to=_TEXT,
+                when={**_TEXT, "description": "The condition, plainly: 'Once the caller ...'"},
+                instead_of=_maybe({**_TEXT, "description": "The step it moved on to before."}),
+            ),
+            edit=set_move_on,
+            doing="Changing when a step moves on",
+        ),
+        Tool(
+            "remove_move_on",
+            "Take out the way `step` moves on to `to`.",
+            _args(step=_TEXT, to=_TEXT),
+            edit=remove_move_on,
+            doing="Changing when a step moves on",
+        ),
+        Tool(
+            "add_field",
+            "Make the way `step` moves on to `to` record a field.",
+            _args(step=_TEXT, to=_TEXT, field=artifacts._FIELD),
+            edit=add_field,
+            doing="Changing what a step records",
+        ),
+        Tool(
+            "remove_field",
+            "Stop the way `step` moves on to `to` recording a field.",
+            _args(step=_TEXT, to=_TEXT, name=_TEXT),
+            edit=remove_field,
+            doing="Changing what a step records",
+        ),
+        Tool(
+            "add_rules",
+            "Add rules: one short sentence each, on a step or (null) every step. `source` and "
+            "`quote`: the source's name and its line word for word, or 'your answer' and the "
+            "clinic's answer; null on a fix or a change, whose rules come from what it is for.",
+            _args(rules=artifacts._list(_RULE)),
+            edit=add_rules,
+            doing="Writing the rules",
+        ),
+        Tool(
+            "remove_rule",
+            "Take out a rule this pull request added, by its id.",
+            _args(rule=_TEXT),
+            edit=remove_rule,
+            doing="Changing the rules",
+        ),
+        Tool(
+            "add_tests",
+            "Add tests: each a simulated caller and 2 to 4 checks.",
+            _args(tests=artifacts._list(_TEST)),
+            edit=add_tests,
+            doing="Writing the tests",
+        ),
+        Tool(
+            "rewrite_test",
+            "Rewrite a test (by its id) that asks for more than the guidelines say, saying why.",
+            _args(test=_TEXT, name=_TEXT, caller=_TEXT, checks=artifacts._list(_TEXT), why=_TEXT),
+            edit=rewrite_test,
+            doing="Rewriting a test",
+        ),
+        Tool(
+            "remove_test",
+            "Take out a test this pull request added, by its id. Never in a setup.",
+            _args(test=_TEXT),
+            edit=remove_test,
+            doing="Changing the tests",
+        ),
+        Tool(
+            "reproduce",
+            "A fix or a change, first: play a test on the version it is based on, 3 calls. "
+            "Failing, it joins the copy as the test of what the pull request is for.",
+            _args(name=_TEXT, caller=_TEXT, checks=artifacts._list(_TEXT)),
+            edit=reproduce,
+            doing="Reproducing it",
+        ),
+        Tool(
+            "run_all",
+            "Run all the copy's tests, 3 calls each, and wait for how they went (minutes).",
+            _args(
+                said={
+                    **_TEXT,
+                    "description": "What you changed since they last ran, and why, for the "
+                    "person: one or two sentences, starting with a verb. Empty if nothing.",
+                }
+            ),
+            edit=run_all,
+            doing="Running the tests",
+        ),
+        Tool(
+            "run_one",
+            "Run one test of the copy again, 3 calls, by its id or name.",
+            _args(test=_TEXT),
+            edit=run_one,
+            doing="Running a test again",
+        ),
+        Tool(
+            "read_results",
+            "Read how the copy's tests last went, with a call of each that failed.",
+            _args(),
+            edit=read_results,
+            doing="Reading the checks",
+        ),
+        Tool(
+            "read_test_call",
+            "Read one call of a test in the copy's last run, whole: `call` from 1.",
+            _args(test=_TEXT, call=_INT),
+            edit=read_test_call,
+            doing="Reading a test's call",
         ),
     ]
 }

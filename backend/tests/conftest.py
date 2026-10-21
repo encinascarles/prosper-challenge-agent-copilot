@@ -17,7 +17,8 @@ from fastapi.testclient import TestClient
 import api
 import store
 from api import checks
-from copilot import calls, llm, setup
+from copilot import agent as prosper
+from copilot import calls, llm
 from store.db import DB_PATH_ENV
 from tests.fakes import FakeServices, ScriptedModel
 
@@ -46,7 +47,7 @@ def prosper_model(monkeypatch) -> ScriptedModel:
 def settle() -> None:
     """Wait until Prosper AI, the checks and the calls are idle: each can start another."""
     for _ in range(8):
-        setup.wait()
+        prosper.wait()
         checks.wait()
         calls.wait()
 

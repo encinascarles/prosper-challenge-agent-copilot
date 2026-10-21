@@ -21,8 +21,8 @@ from pydantic import BaseModel, Field, field_validator
 
 import simulate
 import store
+from copilot import agent, tidy
 from copilot import calls as playing
-from copilot import setup, tidy
 from copilot.llm import Failed
 
 from . import checks
@@ -424,11 +424,11 @@ def reopen(agent_id: str, number: int) -> dict:
 def fix(agent_id: str, number: int, body: Fix) -> dict:
     """Open a pull request that fixes the issue, on a copy of live: "Fix: <its title>".
 
-    With Prosper AI, it opens it and starts on it at once (copilot/fix.py).
+    With Prosper AI, it opens it and starts on it at once, with the fix brief.
     """
     if not body.prosper:
         return _answer(store.open_fix, agent_id, number, YOU)
     work = {"state": "working", "doing": "Reading the issue and its calls", "questions": []}
     pull = _answer(store.open_fix, agent_id, number, store.PROSPER, work)
-    setup.fix(agent_id, pull["number"])
+    agent.start(agent_id, pull["number"])
     return pull

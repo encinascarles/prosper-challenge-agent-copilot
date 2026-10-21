@@ -10,7 +10,15 @@
 # conversation and the Build screen read it from the same place.
 #
 # A new agent built from guidelines starts here: its PR #1 is opened by Prosper
-# AI on an empty copy, which the job (copilot/setup.py) then fills in.
+# AI on an empty copy, which Prosper AI (copilot/agent.py) then fills in.
+#
+# Prosper AI changes the copy in small pieces (a step's task, a rule, a test).
+# Each is written at once, so a restart loses none, but said in the
+# conversation only when Prosper AI says why: the change's lines and its rule
+# and test events wait in the record, and go under its next message as one
+# turn ("Added a rule in Offer times · Changed when Greeting moves on").
+# While it draws a new agent, each piece is said as a step at once instead
+# ("Drew 6 steps"), for the person watching it build.
 #
 
 import json
@@ -18,7 +26,7 @@ import sqlite3
 from typing import Optional
 
 from .agents import _insert_agent, select_agent
-from .db import Conflict, connect, prune
+from .db import Conflict, connect, now, prune
 from .pulls import PROSPER, _event, _record_event, _require, _select, insert_pull
 from .suite import new_id, prune_rules
 
@@ -88,52 +96,8 @@ def spend(agent_id: str, number: int, usage: dict) -> None:
         _put(conn, agent_id, number, work)
 
 
-def write(
-    agent_id: str,
-    number: int,
-    event: dict,
-    config: Optional[dict] = None,
-    rules: tuple = (),
-    tests: tuple = (),
-    state: Optional[str] = None,
-    doing: Optional[str] = None,
-    built: Optional[str] = None,
-) -> dict:
-    """Prosper AI changes the pull request's copy and logs `event`, in one write. Returns it.
-
-    `config` replaces the agent when given (positions and rules of steps it no
-    longer has go with them); `rules` and `tests` are added, each given an id.
-    `built` names the step of a setup this finishes, so a retry skips it.
-    """
-    with connect() as conn:
-        pull = _require(conn, agent_id, number, by=PROSPER)
-        fields: dict = {}
-        current = pull["config"]
-        if config is not None:
-            current = config
-            fields["config"] = json.dumps(config)
-            fields["layout"] = json.dumps(prune(pull["layout"], config))
-        kept = prune_rules(pull["rules"], current)
-        added = [{"id": new_id(), **rule} for rule in rules]
-        if config is not None or rules:
-            fields["rules"] = json.dumps(prune_rules([*kept, *added], current))
-        if tests:
-            fields["tests"] = json.dumps([*pull["tests"], *({"id": new_id(), **t} for t in tests)])
-        _record_event(conn, agent_id, pull, event, **fields)
-        if config is not None and pull["kind"] == "setup":
-            conn.execute("UPDATE agents SET name = ? WHERE id = ?", (config["name"], agent_id))
-        if state is not None or built is not None:
-            work = _work(conn, agent_id, number)
-            if state is not None:
-                work.update(state=state, doing=doing)
-            if built is not None:
-                work["built"] = [*work.get("built", []), built]
-            _put(conn, agent_id, number, work)
-        return _select(conn, agent_id, number)
-
-
 def mark_built(agent_id: str, number: int, step: str) -> None:
-    """Record that the setup finished `step`, so a retry skips it."""
+    """Record that Prosper AI's work got past `step` ("asked", "reproduced"): its guards read it."""
     with connect() as conn:
         work = _work(conn, agent_id, number)
         work["built"] = [*work.get("built", []), step]
@@ -148,26 +112,77 @@ def update(agent_id: str, number: int, **fields) -> None:
         _put(conn, agent_id, number, work)
 
 
-def rewrite_test(agent_id: str, number: int, test_id: str, test: dict, why: str) -> dict:
-    """Prosper AI rewrites a test of the copy in place (same id and source), saying why."""
+def change(
+    agent_id: str,
+    number: int,
+    line: Optional[str],
+    config: Optional[dict] = None,
+    rules: Optional[list] = None,
+    tests: Optional[list] = None,
+    events: tuple = (),
+    step: Optional[dict] = None,
+) -> dict:
+    """Prosper AI changes the copy: `config`, and its `rules` and `tests` whole, when given.
+
+    With `step`, the change is said at once, as that event. Otherwise `line`
+    (what changed, in a few words, or None) and the rule and test `events` wait
+    for Prosper AI's next message (`say`). Rules of steps that are gone go.
+    Returns the pull request.
+    """
     with connect() as conn:
         pull = _require(conn, agent_id, number, by=PROSPER)
-        tests = [{**t, **test, "id": t["id"]} if t["id"] == test_id else t for t in pull["tests"]]
-        event = _event("test", PROSPER, text=test["name"], rewritten=True, why=why)
-        _record_event(conn, agent_id, pull, event, tests=json.dumps(tests))
+        current = config if config is not None else pull["config"]
+        fields: dict = {}
+        if config is not None:
+            fields["config"] = json.dumps(config)
+            fields["layout"] = json.dumps(prune(pull["layout"], config))
+        if config is not None or rules is not None:
+            fields["rules"] = json.dumps(
+                prune_rules(pull["rules"] if rules is None else rules, current)
+            )
+        if tests is not None:
+            fields["tests"] = json.dumps(tests)
+        if step is not None:
+            _record_event(conn, agent_id, pull, step, **fields)
+            return _select(conn, agent_id, number)
+        fields["updated_at"] = now()
+        assignments = ", ".join(f"{name} = ?" for name in fields)
+        conn.execute(
+            f"UPDATE pulls SET {assignments} WHERE agent_id = ? AND number = ?",
+            (*fields.values(), agent_id, number),
+        )
+        work = _work(conn, agent_id, number)
+        pending = work.get("pending") or {"lines": [], "events": []}
+        if line and line not in pending["lines"]:
+            pending["lines"].append(line)
+        pending["events"] += list(events)
+        work["pending"] = pending
+        _put(conn, agent_id, number, work)
         return _select(conn, agent_id, number)
 
 
-def set_job(agent_id: str, number: int, job: Optional[dict]) -> None:
-    """Remember what Prosper AI is doing ({ kind, … }), or forget it once done.
-
-    A job that fails or is interrupted stays remembered: it is what the next
-    message to Prosper AI retries.
+def say(agent_id: str, number: int, event: dict) -> dict:
+    """Log Prosper AI's `event` (a message, a proposed change) with the changes it made since it
+    last spoke under it: their lines in its details, their rules and tests after it. Returns it.
     """
     with connect() as conn:
+        pull = _require(conn, agent_id, number)
         work = _work(conn, agent_id, number)
-        work["job"] = job
+        pending = work.pop("pending", None) or {"lines": [], "events": []}
+        if pending["lines"] or pending["events"]:
+            details = [*event.get("details", []), *pending["lines"]]
+            event = {**event, "details": details, "changed": True}
+        _record_event(conn, agent_id, pull, event)
+        for change in pending["events"]:
+            _record_event(conn, agent_id, _select(conn, agent_id, number), change)
         _put(conn, agent_id, number, work)
+        return _select(conn, agent_id, number)
+
+
+def unsaid(agent_id: str, number: int) -> bool:
+    """Whether Prosper AI changed the copy since it last said why."""
+    pending = work_of(agent_id, number).get("pending") or {}
+    return bool(pending.get("lines") or pending.get("events"))
 
 
 def log(agent_id: str, number: int, event: dict) -> dict:
@@ -231,16 +246,12 @@ def _open_question(work: dict, question: Optional[str]) -> dict:
 def pick(
     agent_id: str, number: int, question: str, option: int
 ) -> tuple[dict, bool, Optional[str]]:
-    """The person picks option `option` of `question`: its rule goes into the copy.
+    """The person picks option `option` of `question`; an option that is a rule goes into the copy.
 
     Returns the pull request, whether every question has its answer now, and
-    the question's kind: "setup" for a setup question (no rule yet: the answer
-    is kept for the drawing, and Prosper AI goes on with it once every one has
-    its answer), another kind for a question whose answer the job reads, or
-    None for one whose option was a rule.
-    The rule's source is the answer, in this pull request. Refused while
-    Prosper AI works (on an answer written to another question, say): the
-    job would write over it, and checks could start halfway through.
+    the question's kind ("setup", "go_on", or None): Prosper AI goes on once
+    every one has its answer. Refused while Prosper AI works: it would write
+    over the copy as the rule goes in.
     """
     with connect() as conn:
         pull = _require(conn, agent_id, number, by="you")
@@ -250,76 +261,61 @@ def pick(
             raise Conflict(f"That question has no option {option + 1}.")
         chosen = asked["options"][option]
         asked["answer"] = chosen["label"]
-        done = all(q["answer"] is not None for q in work["questions"])
-        answered = _event("answer", "you", question=question, text=chosen["label"])
-        if asked.get("setup"):
-            work.update(
-                state="working" if done else "waiting", doing="Drawing the steps" if done else None
-            )
-            _put(conn, agent_id, number, work)
-            _record_event(conn, agent_id, pull, answered)
-            return _select(conn, agent_id, number), done, "setup"
-        if asked.get("kind"):
-            # The job goes on with the answer, or stops: either way it decides.
-            work.update(state="working", doing="Reading your answer")
-            _put(conn, agent_id, number, work)
-            _record_event(conn, agent_id, pull, answered)
-            return _select(conn, agent_id, number), done, asked["kind"]
-        rule = {
-            "id": new_id(),
-            "step": chosen["rule"]["step"],
-            "text": chosen["rule"]["text"],
-            "source": {"kind": "answer", "pull": number, "quote": chosen["label"]},
-        }
-        work.update(state="done" if done else "waiting", doing=None)
+        done = _answered(work)
         _put(conn, agent_id, number, work)
-        _record_event(conn, agent_id, pull, answered)
-        pull = _select(conn, agent_id, number)
-        added = _event("rule", PROSPER, step=rule["step"], text=rule["text"])
-        rules = prune_rules([*pull["rules"], rule], pull["config"])
-        _record_event(conn, agent_id, pull, added, rules=json.dumps(rules))
-        return _select(conn, agent_id, number), done, None
+        _record_event(
+            conn, agent_id, pull, _event("answer", "you", question=question, text=chosen["label"])
+        )
+        if chosen.get("rule"):
+            rule = {
+                "id": new_id(),
+                "step": chosen["rule"]["step"],
+                "text": chosen["rule"]["text"],
+                "source": {"kind": "answer", "pull": number, "quote": chosen["label"]},
+            }
+            pull = _select(conn, agent_id, number)
+            added = _event("rule", PROSPER, step=rule["step"], text=rule["text"])
+            rules = prune_rules([*pull["rules"], rule], pull["config"])
+            _record_event(conn, agent_id, pull, added, rules=json.dumps(rules))
+        return _select(conn, agent_id, number), done, _kind(asked)
 
 
-def take_message(
-    agent_id: str, number: int, text: str
-) -> tuple[dict, Optional[dict], Optional[dict]]:
-    """Log the person's message to Prosper AI, which starts working on it.
+def _kind(question: dict) -> Optional[str]:
+    return "setup" if question.get("setup") else question.get("kind")
 
-    Returns the pull request, the question the message answers and the job it
-    retries. While Prosper AI waits for an answer, the message is the answer
-    to its first open question. After it failed or was interrupted, the
-    message retries what failed (the setup from the step it stopped at, or
-    the change with the answer it was for). Refused while Prosper AI works.
+
+def _answered(work: dict) -> bool:
+    """Whether every question has its answer; if so, Prosper AI goes on, else it waits."""
+    done = all(q["answer"] is not None for q in work.get("questions", []))
+    work.update(
+        state="working" if done else "waiting", doing="Reading your answer" if done else None
+    )
+    return done
+
+
+def take_message(agent_id: str, number: int, text: str) -> tuple[dict, Optional[dict], bool]:
+    """Log the person's message to Prosper AI. Returns the pull request, the question it
+    answers (while Prosper AI waits for one, the first still open), and whether Prosper AI
+    goes on now: not while other questions wait for their answers. Refused while it works.
     """
     with connect() as conn:
         pull = _require(conn, agent_id, number, by="you")
         work = _work(conn, agent_id, number)
         answers = None
-        retry = work.get("job") if work.get("state") == "failed" else None
-        doing = "Working on it"
-        if work.get("state") == "waiting":
+        if work.get("state") == "waiting" and any(
+            q["answer"] is None for q in work.get("questions", [])
+        ):
             answers = _open_question(work, None)
             answers["answer"] = text
             event = _event("answer", "you", question=answers["id"], text=text)
-            if answers.get("setup"):
-                # Kept for the drawing, like a picked option: no change to make yet.
-                doing = "Drawing the steps"
+            going = _answered(work)
         else:
             event = _event("message", "you", text=text)
-        if retry is None:
-            # A new request gets its own rounds of checking: the ones spent on
-            # the last one (a fix's own) are not this one's.
-            for key in ("rounds", "handed_over", "steadied", "rerun"):
-                work.pop(key, None)
-        open_left = [q for q in work.get("questions", []) if q["answer"] is None]
-        if answers is not None and answers.get("setup") and open_left:
-            work.update(state="waiting", doing=None)
-        else:
-            work.update(state="working", doing=doing)
+            work.update(state="working", doing="Reading your message")
+            going = True
         _put(conn, agent_id, number, work)
         _record_event(conn, agent_id, pull, event)
-        return _select(conn, agent_id, number), answers, retry
+        return _select(conn, agent_id, number), answers, going
 
 
 def guidelines(agent_id: str) -> tuple[list[dict], list[dict]]:

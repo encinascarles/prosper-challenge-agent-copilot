@@ -147,9 +147,7 @@ def test_a_change_keeps_what_the_draft_has_no_place_for():
     before["nodes"][0]["role_message"] = "Speak Spanish."
     before["voice_id"] = "another-voice"
 
-    config = artifacts.check_change(
-        {"agent": DRAFT, "rules": [], "tests": [], "reply": "Done."}, "Riverside", before
-    )
+    config = artifacts.keep_extras(artifacts.to_config("Riverside", DRAFT), before)
 
     assert config["nodes"][0]["role_message"] == "Speak Spanish."
     assert config["voice_id"] == "another-voice"
@@ -165,37 +163,44 @@ def _rule(**changes) -> dict:
         "source": "your notes",
         "quote": "never give  Medical advice",
     }
-    return {"rules": [{**rule, **changes}]}
+    return {**rule, **changes}
+
+
+def _check(rule: dict, answers: tuple = ()) -> tuple:
+    steps = {node["name"] for node in _config()["nodes"]}
+    return artifacts.check_rule(rule, steps), artifacts.check_quote(rule, SOURCES, list(answers))
 
 
 def test_a_rule_quotes_its_source_and_names_a_step():
-    answer = _rule()
+    step, source = _check(_rule())
 
-    artifacts.check_rules(answer, _config(), SOURCES)
-    (rule,) = artifacts.rules_from(answer, 1)
-    assert rule == {
-        "step": "collect_details",
-        "text": "No medical advice.",
-        "source": {
-            "kind": "guidelines",
-            "pull": 1,
-            "file": "your notes",
-            "quote": "never give  Medical advice",
-        },
+    assert step == "collect_details"
+    assert source == {
+        "kind": "guidelines",
+        "file": "your notes",
+        "quote": "never give  Medical advice",
     }
+    # Or one of the clinic's answers, as given.
+    answer = _rule(source="your answer", quote="Offer the waitlist")
+    assert _check(answer, ("Offer the waitlist",))[1] == {
+        "kind": "answer",
+        "quote": "Offer the waitlist",
+    }
+    with pytest.raises(ValueError, match="not one of the clinic's answers"):
+        _check(answer, ("Ask them to call back",))
 
 
 @pytest.mark.parametrize(
     "changes, problem",
     [
         ({"quote": "Always give medical advice."}, "is not in 'your notes' word for word"),
-        ({"source": "rules.pdf"}, "not one of the sources: your notes, hours.txt"),
+        ({"source": "rules.pdf"}, "not one of the sources: your notes, hours.txt, your answer"),
         ({"step": "waitlist"}, "is for step 'waitlist', which the agent does not have"),
     ],
 )
 def test_a_rule_that_cannot_be_traced_is_refused(changes, problem):
     with pytest.raises(ValueError, match=problem):
-        artifacts.check_rules(_rule(**changes), _config(), SOURCES)
+        _check(_rule(**changes))
 
 
 def test_a_path_check_must_name_a_step_or_a_field():
@@ -227,14 +232,6 @@ def test_a_test_checks_what_happens_not_how_it_is_said(checks, problem):
 
     with pytest.raises(ValueError, match=problem):
         artifacts.check_tests([test], _config())
-
-
-def test_a_setup_writes_five_to_seven_tests():
-    test = {"name": "Books", "caller": "Maria.", "checks": ["Reaches Confirm", "Ends the call"]}
-
-    artifacts.check_tests([test] * 5, _config(), artifacts.SETUP_TESTS)
-    with pytest.raises(ValueError, match="Write 5 to 7 tests, not 9"):
-        artifacts.check_tests([test] * 9, _config(), artifacts.SETUP_TESTS)
 
 
 def test_a_task_is_three_short_sentences_and_a_rule_one():
@@ -279,15 +276,24 @@ def test_a_task_or_condition_that_changes_is_held_to_the_product_words():
     artifacts.check_rule_text("Ask whether it is their first visit before moving on.")
 
 
-def test_at_most_two_questions_each_with_two_or_three_options():
+def test_questions_are_few_with_two_or_three_options():
+    steps = {node["name"] for node in _config()["nodes"]}
     option = {"label": "Waitlist", "rule": {"step": None, "text": "Offer the waitlist."}}
     question = {"text": "What if no time works?", "options": [option, option]}
-    artifacts.check_questions({"questions": [question, question]}, _config())
+    artifacts.check_questions([question, question], steps)
 
     with pytest.raises(ValueError, match="2 questions at most"):
-        artifacts.check_questions({"questions": [question] * 3}, _config())
+        artifacts.check_questions([question] * 3, steps)
     with pytest.raises(ValueError, match="needs 2 or 3 options"):
-        artifacts.check_questions({"questions": [{**question, "options": [option]}]}, _config())
+        artifacts.check_questions([{**question, "options": [option]}], steps)
+    with pytest.raises(ValueError, match="for step 'Waitlist', which the agent does not have"):
+        wrong = {**option, "rule": {"step": "Waitlist", "text": "Offer the waitlist."}}
+        artifacts.check_questions([{**question, "options": [wrong, option]}], steps)
+    # Before anything is drawn: three at most, and an option is only a choice.
+    picked = {"label": "Waitlist", "rule": None}
+    artifacts.check_questions([{**question, "options": [picked, picked]}] * 3, None)
+    with pytest.raises(ValueError, match="Nothing is drawn yet"):
+        artifacts.check_questions([question], None)
 
 
 # ---- the retry ---------------------------------------------------------------
@@ -295,29 +301,29 @@ def test_at_most_two_questions_each_with_two_or_three_options():
 
 def test_a_refused_answer_goes_back_with_its_error():
     broken = {**DRAFT, "initial_node": "start"}
-    model = ScriptedModel({"agent": [broken, DRAFT]})
+    model = ScriptedModel({"title": [broken, DRAFT]})
 
     def check(answer):
         artifacts.check_agent(artifacts.to_config("R", answer))
 
-    assert model.ask("agent", "Guidelines.", artifacts.AGENT, check) == DRAFT
-    first, second = model.asked["agent"]
+    assert model.ask("title", "Guidelines.", artifacts.AGENT, check) == DRAFT
+    first, second = model.asked["title"]
     assert len(first) == 2
     assert "initial_node 'start' is not a defined node" in second[-1]["content"]
     assert second[-2]["role"] == "assistant"
 
 
 def test_it_gives_up_after_three_refusals():
-    model = ScriptedModel({"agent": [{**DRAFT, "initial_node": "start"}] * 3})
+    model = ScriptedModel({"title": [{**DRAFT, "initial_node": "start"}] * 3})
 
     with pytest.raises(Failed, match="initial_node 'start'"):
         model.ask(
-            "agent",
+            "title",
             "x",
             artifacts.AGENT,
             lambda a: artifacts.check_agent(artifacts.to_config("R", a)),
         )
-    assert len(model.asked["agent"]) == 3
+    assert len(model.asked["title"]) == 3
 
 
 def test_an_answer_cut_off_is_asked_for_again_once():
@@ -330,10 +336,10 @@ def test_an_answer_cut_off_is_asked_for_again_once():
 
     model = Stuck({})
     with pytest.raises(CutOff):
-        model.ask("agent", "x", artifacts.AGENT)
-    assert len(model.asked["agent"]) == 2
+        model.ask("title", "x", artifacts.AGENT)
+    assert len(model.asked["title"]) == 2
     # The same request again, not the cut-off answer fed back.
-    assert model.asked["agent"][0] == model.asked["agent"][1]
+    assert model.asked["title"][0] == model.asked["title"][1]
 
 
 def test_usage_is_priced_by_model():

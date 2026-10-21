@@ -20,7 +20,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field, StringConstraints
 
 import store
-from copilot import agent, facts, setup
+from copilot import agent, facts
 
 from .models import Problem
 from .pulls import _MISSING, _REFUSED, Pull, _answer
@@ -157,5 +157,5 @@ def create_pull(agent_id: str, chat_id: int, index: int) -> Any:
     """Open the pull request message `index` of an older chat offers; Prosper AI starts on it."""
     work = {"state": "working", "doing": "Writing a test of it", "questions": []}
     pull, chat = _answer(store.chats.open_offer, agent_id, chat_id, index, work)
-    setup.fix(agent_id, pull["number"])
+    agent.start(agent_id, pull["number"])
     return {"pull": pull, "chat": chat}

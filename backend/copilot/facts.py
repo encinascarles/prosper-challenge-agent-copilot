@@ -6,6 +6,7 @@
 # best. The agent itself is given in the shape Prosper AI edits it in.
 #
 
+import json
 import re
 from collections import Counter
 from datetime import datetime
@@ -16,6 +17,7 @@ from simulate.suite import REPEATS
 from store.prosper import PROSPER
 from store.runs import verdict
 
+from . import artifacts
 from .calls import _ENDED, _context
 
 CALLS_LISTED = 30  # the latest, one line each
@@ -279,3 +281,236 @@ def _did(message: dict) -> str:
         "running": "being done",
     }[action["state"]]
     return f" [proposed: {proposed} → {outcome}]"
+
+
+# ---- at work on a pull request ------------------------------------------------
+
+CALLS_SHOWN = 3  # of an issue's calls, the latest, given to write its test from
+LINES_BEFORE = 10  # of each, the lines before the turn that went wrong
+EVENTS_SHOWN = 40  # of a pull request's conversation, the latest
+_REPORTERS = {"you": "the deployment team", "clinic": "the clinic"}
+
+
+def words(name: Optional[str]) -> str:
+    # A step as the editor shows it: "offer_times" is "Offer times".
+    return (name or "").replace("_", " ").capitalize()
+
+
+def callers(issue: dict) -> str:
+    names = list(dict.fromkeys(found["caller"] for found in issue["findings"]))
+    if not names:
+        return "calls like the one reported"
+    if len(names) == 1:
+        return f"calls like {names[0]}"
+    return f"calls like these {len(names)} callers"
+
+
+def the_call(result: dict, whole: bool = False) -> str:
+    """A test's call as Prosper AI reads it: what failed, the path, the last lines (or all)."""
+    failed = "; ".join(f"{c['text']} ({c['detail']})" for c in result["checks"] if not c["pass"])
+    path = " > ".join(step["node"] for step in result["path"]) or "nowhere"
+    shown = result["transcript"] if whole else result["transcript"][-14:]
+    lines = "\n".join(f"  {line['role']}: {line['text']}" for line in shown)
+    return f"  failed: {failed or 'nothing'}\n  path: {path} · ended: {result['ended']}\n{lines}"
+
+
+def issue_about(issue: dict) -> str:
+    severity = f" ({issue['severity']})" if issue["severity"] else ""
+    if issue["reported"]:
+        where = f"in step {issue['step']}" if issue["step"] else "step not known"
+        return (
+            f"Issue #{issue['number']}{severity}, reported by {_REPORTERS[issue['reported']]} "
+            f"({where}): {issue['title']}.\nWhat they said happened: {issue['description']}"
+        )
+    return (
+        f"Issue #{issue['number']}{severity}, first seen in step {issue['step']}: "
+        f"{issue['title']}. {issue['description']}"
+    )
+
+
+def issue_calls(agent_id: str, issue: dict) -> str:
+    """The issue's latest calls as a test writer reads them: who called, up to the bad turn.
+
+    A call a person linked has no bad turn: it is given whole. With no calls
+    at all, the test is written from what the person said happened.
+    """
+    shown = []
+    for found in issue["findings"][:CALLS_SHOWN]:
+        call = store.calls.get_call(agent_id, found["call"])
+        if call is None:
+            continue
+        linked = found["turn"] < 0
+        end = len(call["transcript"]) if linked else found["turn"] + 1
+        start = 0 if linked else max(0, end - 1 - LINES_BEFORE)
+        lines = "\n".join(
+            f"  [{i}] {line['role']}: {line['text']}"
+            for i, line in enumerate(call["transcript"][start:end], start)
+        )
+        where = (
+            "Linked by the person who reported it: the whole call."
+            if linked
+            else f'It went wrong on turn {found["turn"]} ("{found["quote"]}"): {found["why"]}'
+        )
+        shown.append(
+            f"- {call['caller']}, on v{call['version']}. Who they were: {call['situation']}\n"
+            f"  {where}\n{lines}"
+        )
+    if not shown:
+        return (
+            "It has no calls: write the caller from what was reported, the situation it "
+            "describes and what the caller says when it goes wrong."
+        )
+    return f"Its calls ({issue['calls']} in all, the latest {len(shown)} here):\n" + "\n\n".join(
+        shown
+    )
+
+
+def _guidelines(agent_id: str, pull: dict) -> tuple[str, str]:
+    """The guidelines and the clinic's answers: the setup's own, or what the agent was built
+    from, with what was answered in this pull request."""
+    work = store.prosper.work_of(agent_id, pull["number"])
+    sources, answered = store.prosper.guidelines(agent_id)
+    if pull["kind"] == "setup":
+        sources, answered = work.get("sources", []), []
+    answered = answered + [q for q in work.get("questions", []) if q["answer"]]
+    if sources:
+        names = ", ".join(f'"{source["name"]}"' for source in sources)
+        texts = "\n\n".join(f"=== {s['name']} ===\n{s['text']}" for s in sources)
+        guidelines = f"The guidelines, from {len(sources)} sources: {names}.\n\n{texts}"
+    else:
+        guidelines = "No written guidelines: the agent's steps and rules are what the clinic asked."
+    given = "\n".join(f'- "{q["text"]}" → "{q["answer"]}"' for q in answered) or "(none)"
+    return guidelines, given
+
+
+_KINDS = {
+    "setup": "the setup of a new agent, from the clinic's guidelines",
+    "fix": "a fix of Issue #{fixes}, on v{base_version}",
+    "change": "a change asked for in a chat, on v{base_version}",
+    "edit": "the person's own changes, on v{base_version}",
+}
+
+
+def _rule_line(rule: dict) -> str:
+    quote = (rule.get("source") or {}).get("quote")
+    said = f' (quotes: "{quote}")' if quote else ""
+    return f"- [{rule['id']}] {words(rule['step']) or 'every step'}: {rule['text']}{said}"
+
+
+def _event_line(event: dict) -> Optional[str]:
+    who = "They" if event["by"] == "you" else event["by"]
+    kind = event["type"]
+    if kind == "checks":
+        return f"- Checks: {event['passed']} of {event['total']} pass, {event['flaky']} flaky"
+    if kind in ("rule", "test"):
+        verb = (
+            "took out" if event.get("removed") else "rewrote" if event.get("rewritten") else "added"
+        )
+        return f"- {who} {verb} a {kind}: {event.get('text')}"
+    if kind == "question":
+        return f"- {who} asked: {event['text']} Options: {' / '.join(event['options'])}"
+    if kind == "answer":
+        return f"- They answered: {event['text']}"
+    if kind in ("request", "message", "step", "reproduced", "proposed", "proved"):
+        details = "".join(f"\n    {line}" for line in event.get("details") or [])
+        return f"- {who}: {event.get('text') or ''}{details}"
+    if kind in ("saved", "updated", "merged", "closed", "reopened", "interrupted"):
+        return f"- {who} {kind} it" + (f": {event['summary']}" if event.get("summary") else "")
+    return None
+
+
+def at_work(agent_id: str, pull: dict, said: Optional[str]) -> str:
+    """What a turn of Prosper AI's work on `pull` starts from: the guidelines, what it is for,
+    the copy and how its tests went, where the work stands, the conversation, and what
+    starts this turn (`said`: the person's message or answer; None to start or go on)."""
+    from . import work as working  # it builds on this module
+
+    record = store.prosper.work_of(agent_id, pull["number"])
+    done = set(record.get("built", []))
+    label = store.label(pull["number"])
+    now = datetime.now().astimezone().strftime("%A %d %B %Y, %H:%M")
+    what = _KINDS[pull["kind"]].format(**pull)
+    guidelines, given = _guidelines(agent_id, pull)
+    parts = [
+        f'Now: {now}. You are working on {label} "{pull["title"]}": {what}. Nothing in it '
+        "reaches callers until the person merges it.",
+        guidelines,
+        f"The clinic's answers to your questions:\n{given}",
+    ]
+    if subject := working.subject_of(agent_id, pull):
+        if subject.issue:
+            parts.append(f"What it fixes: {issue_about(subject.issue)}")
+            parts.append(issue_calls(agent_id, subject.issue))
+        else:
+            parts.append(
+                f'What it changes, as the person asked in a chat: "{subject.request["text"]}"'
+                + (
+                    f"\nAs you offered it: {subject.request['what']}"
+                    if subject.request["what"]
+                    else ""
+                )
+            )
+    config = pull["config"]
+    agent = (
+        json.dumps(artifacts.from_config(config), indent=1)
+        if config["nodes"]
+        else "(nothing drawn yet)"
+    )
+    tests = "\n".join(
+        f"- [{t['id']}] {t['name']}\n  caller: {t['caller']}\n  checks: {'; '.join(t['checks'])}"
+        for t in pull["tests"]
+    )
+    parts += [
+        f"The agent in {label} (it has no calendar and no patient records):\n{agent}",
+        "Its rules:\n" + ("\n".join(_rule_line(r) for r in pull["rules"]) or "(none)"),
+        f"Its tests:\n{tests or '(none)'}",
+        working.results(agent_id, pull),
+    ]
+    if pull["kind"] != "setup" and (flaky := working.flaky_on_base(agent_id, pull)):
+        names = ", ".join(flaky.values())
+        parts.append(f"Already flaky (2/3) on v{pull['base_version']}: {names}.")
+    parts.append("Where the work stands:\n" + _standing(agent_id, pull, record, done))
+    lines = [line for e in pull["events"][-EVENTS_SHOWN:] if (line := _event_line(e))]
+    parts.append("The conversation so far, latest last:\n" + ("\n".join(lines) or "(nothing)"))
+    if said is not None:
+        parts.append(f"Their message: {said}")
+    elif record.get("state") == "failed" or pull["events"][-1]["type"] == "interrupted":
+        parts.append("You were stopped before you finished: go on from where the work stands.")
+    else:
+        parts.append("Start.")
+    return "\n\n".join(parts)
+
+
+def _standing(agent_id: str, pull: dict, record: dict, done: set) -> str:
+    from . import work as working
+
+    questions = record.get("questions", [])
+    open_ = [q for q in questions if q["answer"] is None]
+    lines = []
+    if pull["kind"] == "setup":
+        if "asked" not in done:
+            lines.append("- You have not asked the clinic about the guidelines' gaps yet.")
+        elif open_:
+            lines.append("- Waiting for the clinic's answers.")
+        else:
+            lines.append("- Every question you asked has its answer.")
+        lines.append(f"- Drawn: {'yes' if pull['config']['nodes'] else 'not yet'}.")
+    if subject := working.subject_of(agent_id, pull):
+        if "reproduced" in done:
+            test = next((t for t in pull["tests"] if working.is_test_of(t, pull["number"])), None)
+            before = (test or {}).get("source", {}).get("before") or {}
+            lines.append(
+                f'- Reproduced: "{(test or {}).get("name")}" passed {before.get("passed")}/'
+                f"{before.get('runs')} on v{before.get('version')}"
+                + (
+                    "."
+                    if before.get("runs", 0) - before.get("passed", 0) > 1
+                    else ": it did not fail there; the person said to go on."
+                )
+            )
+        else:
+            left = subject.tries - record.get("tries", 0)
+            lines.append(
+                f"- Not reproduced yet: {max(left, 0)} tries left on v{pull['base_version']}."
+            )
+    return "\n".join(lines) or "- Nothing in particular: the conversation says what is asked."
